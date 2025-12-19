@@ -198,7 +198,7 @@ def download_youtube_video(url, output_dir="."):
     cookies_env = os.environ.get("YOUTUBE_COOKIES")
     if cookies_env:
         print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file inside container...")
-        print(f"📄 YOUTUBE_COOKIES raw value:\n{cookies_env}")
+        #print(f"📄 YOUTUBE_COOKIES raw value:\n{cookies_env}")
         try:
             with open(cookies_path, 'w') as f:
                 f.write(cookies_env)
@@ -464,7 +464,7 @@ def get_viral_clips(transcript_result, video_duration):
     # We use gemini-1.5-flash which is the standard current fast model.
     # 'gemini-2.5-flash' does not exist in public API as of my knowledge cutoff or might be typo.
     # Reverting to 'gemini-1.5-flash' to be safe, or use 'gemini-1.5-pro' for better quality.
-    model_name = 'gemini-1.5-flash' 
+    model_name = 'gemini-2.5-flash' 
     
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
