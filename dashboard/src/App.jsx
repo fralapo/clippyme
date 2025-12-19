@@ -3,6 +3,7 @@ import { Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut, Chevro
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
+import ProcessingAnimation from './components/ProcessingAnimation';
 
 // Simple TikTok icon sine Lucide might not have it or it varies
 const TikTokIcon = ({ size = 16, className = "" }) => (
@@ -100,6 +101,7 @@ function App() {
   const [results, setResults] = useState(null);
   const [logs, setLogs] = useState([]);
   const [logsVisible, setLogsVisible] = useState(false);
+  const [processingMedia, setProcessingMedia] = useState(null);
 
   useEffect(() => {
     if (apiKey) localStorage.setItem('gemini_key', apiKey);
@@ -179,6 +181,7 @@ function App() {
     setStatus('processing');
     setLogs(["Starting process..."]);
     setResults(null);
+    setProcessingMedia(data);
 
     try {
       let body;
@@ -302,6 +305,10 @@ function App() {
 
         <div className="space-y-8">
           <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
+
+          {status === 'processing' && processingMedia && (
+            <ProcessingAnimation media={processingMedia} />
+          )}
 
           {(status === 'processing' || status === 'error') && (
             <div className={`glass-panel p-6 ${status === 'error' ? 'border-red-500/30' : ''}`}>

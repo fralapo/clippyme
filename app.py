@@ -353,20 +353,6 @@ async def post_to_socials(req: SocialPostRequest):
             "Authorization": f"Apikey {req.api_key}"
         }
         
-        data = {
-            "user": req.user_id,
-            "title": final_title,
-            "privacy_level": "PUBLIC_TO_EVERYONE", # TikTok
-            "privacyStatus": "public", # YouTube
-            "media_type": "REELS", # Instagram
-        }
-        
-        # Add platforms
-        for p in req.platforms:
-             data.update({f"platform[{len(data.get('platform', [])) if 'platform' in data else 0}]": p})
-        # Wait, httpx/requests handling of list params can be tricky.
-        # Usually list of tuples [('platform[]', 'tiktok'), ('platform[]', 'instagram')] works.
-        
         # Prepare data as dict (httpx handles lists for multiple values)
         data_payload = {
             "user": req.user_id,
@@ -376,17 +362,18 @@ async def post_to_socials(req: SocialPostRequest):
         
         # Add Platform specifics
         if "tiktok" in req.platforms:
-             desc = req.tiktok_description or clip.get('social_descriptions', {}).get('tiktok', final_title)
+             desc = req.tiktok_description or clip.get('video_description_for_tiktok', final_title)
              data_payload["tiktok_title"] = desc
              
         if "instagram" in req.platforms:
-             desc = req.instagram_description or clip.get('social_descriptions', {}).get('instagram', final_title)
+             desc = req.instagram_description or clip.get('video_description_for_instagram', final_title)
              data_payload["instagram_title"] = desc
              data_payload["media_type"] = "REELS"
 
         if "youtube" in req.platforms:
-             desc = req.youtube_description or clip.get('social_descriptions', {}).get('instagram', final_title) # Fallback
-             data_payload["youtube_title"] = final_title
+             yt_title = req.title or clip.get('video_title_for_youtube_short', final_title)
+             desc = req.youtube_description or clip.get('video_description_for_instagram', final_title) # Fallback
+             data_payload["youtube_title"] = yt_title
              data_payload["youtube_description"] = desc
              data_payload["privacyStatus"] = "public"
 
