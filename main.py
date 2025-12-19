@@ -249,6 +249,11 @@ def download_youtube_video(url, output_dir="."):
                             
                             f.write(f"{domain}\t{flag}\t{path}\t{secure}\t{expiration}\t{name}\t{value}\n")
                     print("✅ Converted JSON cookies to Netscape format.")
+                    
+                    # Log first few lines of cookies to verify format (for debugging)
+                    with open(cookies_path, 'r') as f:
+                        print(f"👀 Cookie file preview:\n{f.read(300)}...")
+                        
                 except json.JSONDecodeError as e:
                      print(f"⚠️ JSON Decode Error: {e}. Content start: {clean_content[:20]}...")
                      # Fallback if not valid JSON, assume it's already Netscape
@@ -296,6 +301,10 @@ def download_youtube_video(url, output_dir="."):
             'max_sleep_interval': 5,
         }
         
+        # EXPERIMENTAL: If client is web, try skipping client args to use default
+        if client == 'web':
+            current_opts.pop('extractor_args', None)
+
         try:
             with yt_dlp.YoutubeDL(current_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
