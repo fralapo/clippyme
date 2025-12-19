@@ -192,17 +192,46 @@ def download_youtube_video(url, output_dir="."):
     Returns the path to the downloaded video and the video title.
     """
     print("📥 Downloading video from YouTube...")
+    
+    # 1. Handle Cookies from ENV (Easier for deployment)
+    cookies_path = '/app/cookies.txt'
+    if os.environ.get("YOUTUBE_COOKIES") and not os.path.exists(cookies_path):
+        print("🍪 Found YOUTUBE_COOKIES env var, creating cookies.txt...")
+        try:
+            with open(cookies_path, 'w') as f:
+                f.write(os.environ.get("YOUTUBE_COOKIES"))
+        except Exception as e:
+            print(f"⚠️ Failed to write cookies file: {e}")
+
     step_start_time = time.time()
     
-    ydl_opts_info = {
+    # 2. Common Options (Try Android client to bypass bot check)
+    common_opts = {
         'quiet': True,
         'no_warnings': True,
+        'cookiefile': cookies_path if os.path.exists(cookies_path) else None,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        }
     }
     
-    with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-        info = ydl.extract_info(url, download=False)
-        video_title = info.get('title', 'youtube_video')
-        sanitized_title = sanitize_filename(video_title)
+    # Extract Info
+    try:
+        with yt_dlp.YoutubeDL(common_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as e:
+        print(f"⚠️ Extraction with Android client failed: {e}")
+        print("🔄 Retrying with default client...")
+        # Fallback to default client
+        fallback_opts = common_opts.copy()
+        fallback_opts.pop('extractor_args', None)
+        with yt_dlp.YoutubeDL(fallback_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+    video_title = info.get('title', 'youtube_video')
+    sanitized_title = sanitize_filename(video_title)
     
     output_template = os.path.join(output_dir, f'{sanitized_title}.%(ext)s')
     expected_file = os.path.join(output_dir, f'{sanitized_title}.mp4')
@@ -210,15 +239,18 @@ def download_youtube_video(url, output_dir="."):
         os.remove(expected_file)
         print(f"🗑️  Removed existing file to re-download with H.264 codec")
     
-    ydl_opts = {
+    # Download
+    ydl_opts = common_opts.copy()
+    ydl_opts.update({
         'format': 'bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1]+bestaudio/best[ext=mp4]/best',
         'outtmpl': output_template,
         'merge_output_format': 'mp4',
         'quiet': False,
-        'no_warnings': True,
         'overwrites': True,
-    }
+    })
     
+    # We use the same opts logic (try Android first, fallback implies logic complexity so for download we stick to opts)
+    # If extraction worked with common_opts, download should too.
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([url])
     
