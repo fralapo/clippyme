@@ -181,6 +181,7 @@ async def run_job(job_id, job_data):
                             
                         base_name = os.path.basename(target_json).replace('_metadata.json', '')
                         clips = data.get('shorts', [])
+                        cost_analysis = data.get('cost_analysis')
                         
                         # Check which clips actually exist on disk
                         ready_clips = []
@@ -194,7 +195,7 @@ async def run_job(job_id, job_data):
                                  ready_clips.append(clip)
                         
                         if ready_clips:
-                             jobs[job_id]['result'] = {'clips': ready_clips}
+                             jobs[job_id]['result'] = {'clips': ready_clips, 'cost_analysis': cost_analysis}
             except Exception as e:
                 # Ignore read errors during processing
                 pass
@@ -215,11 +216,13 @@ async def run_job(job_id, job_data):
                 # Enhance result with video URLs
                 base_name = os.path.basename(target_json).replace('_metadata.json', '')
                 clips = data.get('shorts', [])
+                cost_analysis = data.get('cost_analysis')
+
                 for i, clip in enumerate(clips):
                      clip_filename = f"{base_name}_clip_{i+1}.mp4"
                      clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
                 
-                jobs[job_id]['result'] = {'clips': clips}
+                jobs[job_id]['result'] = {'clips': clips, 'cost_analysis': cost_analysis}
             else:
                  jobs[job_id]['status'] = 'failed'
                  jobs[job_id]['logs'].append("No metadata file generated.")

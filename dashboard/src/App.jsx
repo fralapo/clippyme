@@ -499,6 +499,11 @@ function App() {
                       {results.clips.length} Clips
                     </span>
                   )}
+                  {results?.cost_analysis && (
+                     <span className="text-xs bg-green-500/10 border border-green-500/20 text-green-400 px-2 py-0.5 rounded-full ml-2" title={`Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}`}>
+                        ${results.cost_analysis.total_cost.toFixed(5)}
+                     </span>
+                  )}
                 </h2>
 
                  <div className="flex-1 overflow-y-auto custom-scrollbar p-1">

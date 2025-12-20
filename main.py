@@ -454,9 +454,7 @@ def get_viral_clips(transcript_result, video_duration):
 
     client = genai.Client(api_key=api_key)
     
-    # We use gemini-1.5-flash which is the standard current fast model.
-    # 'gemini-2.5-flash' does not exist in public API as of my knowledge cutoff or might be typo.
-    # Reverting to 'gemini-1.5-flash' to be safe, or use 'gemini-1.5-pro' for better quality.
+    # We use gemini-2.5-flash as requested.
     model_name = 'gemini-2.5-flash' 
     
     print(f"🤖  Initializing Gemini with model: {model_name}")
@@ -482,6 +480,44 @@ def get_viral_clips(transcript_result, video_duration):
             model=model_name,
             contents=prompt
         )
+        
+        # --- Cost Calculation ---
+        try:
+            usage = response.usage_metadata
+            if usage:
+                # Gemini 2.5 Flash Pricing (Dec 2025)
+                # Input: $0.10 per 1M tokens
+                # Output: $0.40 per 1M tokens
+                
+                input_price_per_million = 0.10
+                output_price_per_million = 0.40
+                
+                prompt_tokens = usage.prompt_token_count
+                output_tokens = usage.candidates_token_count
+                
+                input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
+                output_cost = (output_tokens / 1_000_000) * output_price_per_million
+                total_cost = input_cost + output_cost
+                
+                cost_analysis = {
+                    "input_tokens": prompt_tokens,
+                    "output_tokens": output_tokens,
+                    "input_cost": input_cost,
+                    "output_cost": output_cost,
+                    "total_cost": total_cost,
+                    "model": model_name
+                }
+
+                print(f"💰 Token Usage ({model_name}):")
+                print(f"   - Input Tokens: {prompt_tokens} (${input_cost:.6f})")
+                print(f"   - Output Tokens: {output_tokens} (${output_cost:.6f})")
+                print(f"   - Total Estimated Cost: ${total_cost:.6f}")
+                
+        except Exception as e:
+            print(f"⚠️ Could not calculate cost: {e}")
+            cost_analysis = None
+        # ------------------------
+
         # Clean response if it contains markdown code blocks
         text = response.text
         if text.startswith("```json"):
@@ -490,7 +526,11 @@ def get_viral_clips(transcript_result, video_duration):
             text = text[:-3]
         text = text.strip()
         
-        return json.loads(text)
+        result_json = json.loads(text)
+        if cost_analysis:
+            result_json['cost_analysis'] = cost_analysis
+            
+        return result_json
     except Exception as e:
         print(f"❌ Gemini Error: {e}")
         return None
