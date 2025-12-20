@@ -34,7 +34,7 @@ OpenShorts leverages state-of-the-art AI to handle the entire content lifecycle:
 
 *   **Docker & Docker Compose**.
 *   **Google Gemini API Key** ([Get it for free here](https://aistudio.google.com/app/apikey)).
-*   **Upload-Post API Key** (Optional, for direct social posting).
+*   **Upload-Post API Key** (Optional, for direct social posting. **Free tier available, no credit card required**).
 
 ### 📲 Social Media Setup (Upload-Post)
 To enable direct posting, follow these steps:
@@ -44,7 +44,6 @@ To enable direct posting, follow these steps:
 4.  **Get API Key**: Navigate to [API Keys](https://app.upload-post.com/api-keys) and generate your key.
 5.  **Use in OpenShorts**: Paste the API Key and select your Profile in the dashboard.
 
-![Upload-Post Setup Guide](file:///Users/juancarlos.cavero/.gemini/antigravity/brain/d72ee29e-ee3b-45f0-b00b-fe2d705bb56f/uploaded_image_1766201890395.png)
 
 ---
 

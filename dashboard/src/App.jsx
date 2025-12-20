@@ -8,7 +8,7 @@ import { getApiUrl } from './config';
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
 // This is better than plain Base64 but still client-side.
-const SECRET_KEY = import.meta.env.VITE_ENCRYPTION_KEY || "OpenShorts-Secret-Key-2025-V1";
+const SECRET_KEY = import.meta.env.VITE_ENCRYPTION_KEY || "OpenShorts-Static-Salt-Change-Me";
 const ENCRYPTION_PREFIX = "ENC:";
 
 const encrypt = (text) => {
@@ -368,7 +368,15 @@ function App() {
               <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
 
               <div className="glass-panel p-6 mt-8">
-                <h2 className="text-lg font-semibold mb-4">Social Integration</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold">Social Integration</h2>
+                  <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
+                </div>
+                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
+                  Automatically publish your clips to TikTok, Instagram Reels, and YouTube Shorts via <strong>Upload-Post</strong>.
+                  Includes a <strong>free tier</strong> (no credit card required).
+                  If you prefer, you can skip this and manually download/upload your videos.
+                </p>
                 <div className="space-y-4">
                   <label className="block text-sm text-zinc-400">Upload-Post API Key</label>
                   <div className="flex gap-2">
@@ -445,8 +453,8 @@ function App() {
                     Live Analysis
                   </h2>
                   <span className={`text-xs px-2 py-1 rounded-full border ${status === 'processing' ? 'bg-primary/10 border-primary/20 text-primary' :
-                      status === 'complete' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
-                        'bg-red-500/10 border-red-500/20 text-red-400'
+                    status === 'complete' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
+                      'bg-red-500/10 border-red-500/20 text-red-400'
                     }`}>
                     {status.toUpperCase()}
                   </span>
@@ -493,21 +501,21 @@ function App() {
                   )}
                 </h2>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
-                  {results && results.clips && results.clips.length > 0 ? (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 pb-10">
-                      {results.clips.map((clip, i) => (
-                        <ResultCard
-                          key={i}
-                          clip={clip}
-                          index={i}
-                          jobId={jobId}
-                          uploadPostKey={uploadPostKey}
-                          uploadUserId={uploadUserId}
-                        />
-                      ))}
-                    </div>
-                  ) : (
+                 <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
+                    {results && results.clips && results.clips.length > 0 ? (
+                       <div className={`grid gap-4 pb-10 ${status === 'complete' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'}`}>
+                           {results.clips.map((clip, i) => (
+                              <ResultCard
+                                key={i}
+                                clip={clip}
+                                index={i}
+                                jobId={jobId}
+                                uploadPostKey={uploadPostKey}
+                                uploadUserId={uploadUserId}
+                              />
+                           ))}
+                       </div>
+                    ) : (
                     status === 'processing' ? (
                       <div className="h-full flex flex-col items-center justify-center text-zinc-500 space-y-4 opacity-50">
                         <div className="w-12 h-12 rounded-full border-2 border-zinc-800 border-t-primary animate-spin" />

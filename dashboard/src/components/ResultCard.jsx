@@ -66,9 +66,9 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
     const videoUrl = getApiUrl(clip.video_url);
 
     return (
-        <div className="bg-surface border border-white/5 rounded-2xl overflow-hidden flex flex-col md:flex-row group hover:border-white/10 transition-all animate-[fadeIn_0.5s_ease-out] h-auto md:h-[350px]" style={{ animationDelay: `${index * 0.1}s` }}>
-            {/* Left: Video Preview (Fixed Width on Desktop) */}
-            <div className="w-full md:w-[200px] bg-black relative shrink-0 aspect-[9/16] md:aspect-auto">
+        <div className="bg-surface border border-white/5 rounded-2xl overflow-hidden flex flex-col md:flex-row group hover:border-white/10 transition-all animate-[fadeIn_0.5s_ease-out] min-h-[300px] h-auto" style={{ animationDelay: `${index * 0.1}s` }}>
+            {/* Left: Video Preview (Responsive Width) */}
+            <div className="w-full md:w-[180px] lg:w-[200px] bg-black relative shrink-0 aspect-[9/16] md:aspect-auto">
                 <video
                     src={videoUrl}
                     controls
@@ -84,15 +84,15 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
             </div>
 
             {/* Right: Content & Details */}
-            <div className="flex-1 p-5 flex flex-col bg-[#121214] overflow-hidden">
+            <div className="flex-1 p-4 md:p-5 flex flex-col bg-[#121214] overflow-hidden min-w-0">
                 <div className="mb-4">
-                     <h3 className="text-base font-bold text-white leading-tight line-clamp-2 mb-2" title={clip.video_title_for_youtube_short}>
+                     <h3 className="text-base font-bold text-white leading-tight line-clamp-2 mb-2 break-words" title={clip.video_title_for_youtube_short}>
                         {clip.video_title_for_youtube_short || "Viral Clip Generated"}
                     </h3>
-                    <div className="flex gap-2 text-[10px] text-zinc-500 font-mono">
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5">{Math.floor(clip.end - clip.start)}s</span>
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5">#shorts</span>
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5">#viral</span>
+                    <div className="flex flex-wrap gap-2 text-[10px] text-zinc-500 font-mono">
+                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">{Math.floor(clip.end - clip.start)}s</span>
+                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">#shorts</span>
+                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">#viral</span>
                     </div>
                 </div>
 
@@ -101,9 +101,9 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                      {/* YouTube */}
                      <div className="bg-black/20 rounded-lg p-3 border border-white/5">
                         <div className="flex items-center gap-2 text-[10px] font-bold text-red-400 mb-1.5 uppercase tracking-wider">
-                            <Youtube size={12} /> YouTube Title
+                            <Youtube size={12} className="shrink-0" /> <span className="truncate">YouTube Title</span>
                         </div>
-                        <p className="text-xs text-zinc-300 select-all">
+                        <p className="text-xs text-zinc-300 select-all break-words">
                             {clip.video_title_for_youtube_short || "Viral Short Video"}
                         </p>
                      </div>
@@ -111,12 +111,12 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                      {/* TikTok / IG */}
                      <div className="bg-black/20 rounded-lg p-3 border border-white/5">
                         <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 mb-1.5 uppercase tracking-wider">
-                            <Video size={12} className="text-cyan-400" /> 
+                            <Video size={12} className="text-cyan-400 shrink-0" /> 
                             <span className="text-zinc-500">/</span>
-                            <Instagram size={12} className="text-pink-400" />
-                            Caption
+                            <Instagram size={12} className="text-pink-400 shrink-0" />
+                            <span className="truncate">Caption</span>
                         </div>
-                        <p className="text-xs text-zinc-300 line-clamp-3 hover:line-clamp-none transition-all cursor-pointer select-all">
+                        <p className="text-xs text-zinc-300 line-clamp-3 hover:line-clamp-none transition-all cursor-pointer select-all break-words">
                             {clip.video_description_for_tiktok || clip.video_description_for_instagram}
                         </p>
                      </div>
@@ -126,16 +126,16 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                 <div className="grid grid-cols-2 gap-3 mt-auto pt-4 border-t border-white/5">
                     <button
                         onClick={() => setShowModal(true)}
-                        className="col-span-1 py-2 bg-primary hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-lg shadow-primary/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                        className="col-span-1 py-2 bg-primary hover:bg-blue-600 text-white rounded-lg text-xs font-bold shadow-lg shadow-primary/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 truncate px-2"
                     >
-                        <Share2 size={14} /> Post
+                        <Share2 size={14} className="shrink-0" /> Post
                     </button>
                     <a
                         href={videoUrl}
                         download
-                        className="col-span-1 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2 border border-white/5"
+                        className="col-span-1 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2 border border-white/5 truncate px-2"
                     >
-                        <Download size={14} /> Download
+                        <Download size={14} className="shrink-0" /> Download
                     </a>
                 </div>
             </div>

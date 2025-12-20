@@ -451,13 +451,6 @@ def get_viral_clips(transcript_result, video_duration):
         print("❌ Error: GEMINI_API_KEY not found in environment variables.")
         return None
 
-    # Debug: Print masked key to verify it's loaded correctly
-    print(f"🔑 Loaded API Key: {api_key[:4]}...{api_key[-4:]} (Length: {len(api_key)})")
-    
-    if not api_key.startswith("AIza"):
-        print("\n⚠️  WARNING: The API Key does not start with 'AIza'. Google AI Studio keys typically start with 'AIza'.")
-        print("    Please check that you copied the 'API Key' and not a Client ID, Secret, or Token.")
-        print("    Get your key here: https://aistudio.google.com/app/apikey\n")
 
     client = genai.Client(api_key=api_key)
     
