@@ -4,6 +4,9 @@ OpenShorts is an all-in-one open-source solution to automate the creation and di
 
 ![OpenShorts Demo](https://github.com/kamilstanuch/Autocrop-vertical/blob/main/churchil_queen_vertical_short.gif?raw=true)
 
+### 📺 Watch how it works 
+[![Watch the video](https://img.youtube.com/vi/xlyjD1qCaX0/0.jpg)](https://www.youtube.com/watch?v=xlyjD1qCaX0)
+
 ---
 
 ## ✨ Key Features
