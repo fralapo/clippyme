@@ -480,7 +480,14 @@ def download_youtube_video(url, output_dir="."):
         'quiet': False,
         'verbose': True,
         'no_warnings': False,
-        'cookiefile': cookies_path if cookies_path else None
+        'cookiefile': cookies_path if cookies_path else None,
+        'sleep_interval_requests': 5,
+        'sleep_interval': 10,
+        'max_sleep_interval': 30,
+        'socket_timeout': 30,
+        'retries': 10,
+        'nocheckcertificate': True,
+        'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
     
     with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
