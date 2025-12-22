@@ -317,6 +317,7 @@ class EditRequest(BaseModel):
     job_id: str
     clip_index: int
     api_key: Optional[str] = None
+    input_filename: Optional[str] = None
 
 @app.post("/api/edit")
 async def edit_clip(
@@ -337,10 +338,17 @@ async def edit_clip(
         raise HTTPException(status_code=400, detail="Job result not available")
         
     try:
-        clip = job['result']['clips'][req.clip_index]
-        # Resolve file path
-        filename = clip['video_url'].split('/')[-1]
-        input_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
+        # Resolve Input Path: Prefer explict input_filename from frontend (chaining edits)
+        if req.input_filename:
+            # Security: Ensure just a filename, no paths
+            safe_name = os.path.basename(req.input_filename)
+            input_path = os.path.join(OUTPUT_DIR, req.job_id, safe_name)
+            filename = safe_name
+        else:
+            # Fallback to original clip
+            clip = job['result']['clips'][req.clip_index]
+            filename = clip['video_url'].split('/')[-1]
+            input_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
         
         if not os.path.exists(input_path):
              raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
@@ -428,6 +436,7 @@ class SubtitleRequest(BaseModel):
     clip_index: int
     position: str = "bottom" # top, middle, bottom
     font_size: int = 16
+    input_filename: Optional[str] = None
 
 @app.post("/api/subtitle")
 async def add_subtitles(req: SubtitleRequest):
@@ -455,29 +464,18 @@ async def add_subtitles(req: SubtitleRequest):
     if req.clip_index >= len(clips):
         raise HTTPException(status_code=404, detail="Clip not found")
         
-    clip = clips[req.clip_index]
+    clip_data = clips[req.clip_index]
     
     # Video Path
-    # Handle current video (might have been edited already)
-    # We use the video_url from job/data. If it points to an edited one, we subtitle THAT one.
-    # Note: job['result']['clips'] might be in memory, but data is from disk.
-    # We should trust what's current.
-    
-    # Let's verify what video_url is in data vs job.
-    # We'll use the one from disk data as it's fresh? No, job dict is main truth in memory.
-    # But transcript is only in disk data now.
-    
-    # Sync: Use data's clips but check job status?
-    # Actually, job['result'] is populated from disk in run_job. 
-    # But let's assume `data` is correct.
-    
-    clip_data = clips[req.clip_index]
-    filename = clip_data.get('video_url', '').split('/')[-1]
-    
-    if not filename:
-         # Fallback to standard naming
-         base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
-         filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
+    if req.input_filename:
+        # Use chained file
+        filename = os.path.basename(req.input_filename)
+    else:
+        # Fallback to standard naming
+        filename = clip_data.get('video_url', '').split('/')[-1]
+        if not filename:
+             base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+             filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
          
     input_path = os.path.join(output_dir, filename)
     if not os.path.exists(input_path):

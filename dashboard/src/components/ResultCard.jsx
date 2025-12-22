@@ -41,8 +41,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                 body: JSON.stringify({
                     job_id: jobId,
                     clip_index: index,
-                    // We send it in header now, but backend might expect it in body too currently.
-                    // We will update backend to be flexible.
+                    input_filename: currentVideoUrl.split('/').pop()
                 })
              });
 
@@ -84,7 +83,8 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                     job_id: jobId,
                     clip_index: index,
                     position: options.position,
-                    font_size: options.fontSize
+                    font_size: options.fontSize,
+                    input_filename: currentVideoUrl.split('/').pop()
                 })
             });
 
