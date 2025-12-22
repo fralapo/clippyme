@@ -880,6 +880,7 @@ if __name__ == '__main__':
             print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
             
             # Save metadata
+            clips_data['transcript'] = transcript # Save full transcript for subtitles
             metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
             with open(metadata_file, 'w') as f:
                 json.dump(clips_data, f, indent=2)

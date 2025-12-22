@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2 } from 'lucide-react';
+import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type } from 'lucide-react';
 import { getApiUrl } from '../config';
+import SubtitleModal from './SubtitleModal';
 
 export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, geminiApiKey, onPlay, onPause }) {
     const [showModal, setShowModal] = useState(false);
+    const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const videoRef = React.useRef(null);
     const [currentVideoUrl, setCurrentVideoUrl] = useState(getApiUrl(clip.video_url));
 
@@ -16,6 +18,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
     const [postResult, setPostResult] = useState(null);
 
     const [isEditing, setIsEditing] = useState(false);
+    const [isSubtitling, setIsSubtitling] = useState(false);
     const [editError, setEditError] = useState(null);
 
     const handleAutoEdit = async () => {
@@ -67,6 +70,43 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
             setTimeout(() => setEditError(null), 5000);
         } finally {
             setIsEditing(false);
+        }
+    };
+
+    const handleSubtitle = async (options) => {
+        setIsSubtitling(true);
+        setEditError(null);
+        try {
+            const res = await fetch(getApiUrl('/api/subtitle'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    job_id: jobId,
+                    clip_index: index,
+                    position: options.position,
+                    font_size: options.fontSize
+                })
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(errText);
+            }
+
+            const data = await res.json();
+            if (data.new_video_url) {
+                setCurrentVideoUrl(getApiUrl(data.new_video_url));
+                if (videoRef.current) {
+                    videoRef.current.load();
+                }
+                setShowSubtitleModal(false);
+            }
+
+        } catch (e) {
+            setEditError(e.message);
+            setTimeout(() => setEditError(null), 5000);
+        } finally {
+            setIsSubtitling(false);
         }
     };
 
@@ -211,10 +251,19 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                     <button
                         onClick={handleAutoEdit}
                         disabled={isEditing}
-                        className="col-span-2 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-purple-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1"
+                        className="col-span-1 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-purple-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
                     >
                         {isEditing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />} 
-                        {isEditing ? 'Editing with AI...' : 'Auto Edit with AI'}
+                        {isEditing ? 'Editing...' : 'Auto Edit'}
+                    </button>
+
+                    <button
+                        onClick={() => setShowSubtitleModal(true)}
+                        disabled={isSubtitling}
+                        className="col-span-1 py-2 bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-orange-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
+                    >
+                        {isSubtitling ? <Loader2 size={14} className="animate-spin" /> : <Type size={14} />} 
+                        {isSubtitling ? 'Adding...' : 'Subtitles'}
                     </button>
 
                     <button
@@ -303,6 +352,14 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                     </div>
                 </div>
             )}
+
+            <SubtitleModal 
+                isOpen={showSubtitleModal}
+                onClose={() => setShowSubtitleModal(false)}
+                onGenerate={handleSubtitle}
+                isProcessing={isSubtitling}
+                videoUrl={currentVideoUrl}
+            />
         </div>
     );
 }

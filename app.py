@@ -311,6 +311,7 @@ async def get_status(job_id: str):
     }
 
 from editor import VideoEditor
+from subtitles import generate_srt, burn_subtitles
 
 class EditRequest(BaseModel):
     job_id: str
@@ -420,6 +421,104 @@ async def edit_clip(
 
     except Exception as e:
         print(f"❌ Edit Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SubtitleRequest(BaseModel):
+    job_id: str
+    clip_index: int
+    position: str = "bottom" # top, middle, bottom
+    font_size: int = 16
+
+@app.post("/api/subtitle")
+async def add_subtitles(req: SubtitleRequest):
+    if req.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Reload job data from disk just in case metadata was updated
+    job = jobs[req.job_id]
+    
+    # We need to access metadata.json to get the transcript
+    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
+    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+        
+    with open(json_files[0], 'r') as f:
+        data = json.load(f)
+        
+    transcript = data.get('transcript')
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Transcript not found in metadata. Please process a new video.")
+        
+    clips = data.get('shorts', [])
+    if req.clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+        
+    clip = clips[req.clip_index]
+    
+    # Video Path
+    # Handle current video (might have been edited already)
+    # We use the video_url from job/data. If it points to an edited one, we subtitle THAT one.
+    # Note: job['result']['clips'] might be in memory, but data is from disk.
+    # We should trust what's current.
+    
+    # Let's verify what video_url is in data vs job.
+    # We'll use the one from disk data as it's fresh? No, job dict is main truth in memory.
+    # But transcript is only in disk data now.
+    
+    # Sync: Use data's clips but check job status?
+    # Actually, job['result'] is populated from disk in run_job. 
+    # But let's assume `data` is correct.
+    
+    clip_data = clips[req.clip_index]
+    filename = clip_data.get('video_url', '').split('/')[-1]
+    
+    if not filename:
+         # Fallback to standard naming
+         base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+         filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
+         
+    input_path = os.path.join(output_dir, filename)
+    if not os.path.exists(input_path):
+        # Try looking for edited version if url implied it?
+        # Just fail if not found.
+        raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
+        
+    # Define outputs
+    srt_filename = f"subs_{req.clip_index}_{int(time.time())}.srt"
+    srt_path = os.path.join(output_dir, srt_filename)
+    
+    # Output video
+    # We create a new file "subtitled_..."
+    output_filename = f"subtitled_{filename}"
+    output_path = os.path.join(output_dir, output_filename)
+    
+    try:
+        # 1. Generate SRT
+        success = generate_srt(transcript, clip_data['start'], clip_data['end'], srt_path)
+        if not success:
+             raise HTTPException(status_code=400, detail="No words found for this clip range.")
+             
+        # 2. Burn Subtitles
+        # Run in thread pool
+        def run_burn():
+             burn_subtitles(input_path, srt_path, output_path, alignment=req.position, fontsize=req.font_size)
+        
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, run_burn)
+        
+        # 3. Update Result?
+        # We return the new URL.
+        new_video_url = f"/videos/{req.job_id}/{output_filename}"
+        
+        return {
+            "success": True,
+            "new_video_url": new_video_url
+        }
+        
+    except Exception as e:
+        print(f"❌ Subtitle Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 class SocialPostRequest(BaseModel):
