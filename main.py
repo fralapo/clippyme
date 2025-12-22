@@ -499,12 +499,29 @@ def download_youtube_video(url, output_dir="."):
             video_title = info.get('title', 'youtube_video')
             sanitized_title = sanitize_filename(video_title)
         except Exception as e:
-            print(f"❌ Error extracting info: {e}")
-            print("\n🚨 POSSIBLE USER SOLUTION:")
-            print("   YouTube has blocked downloads from this server (Error 429/Unavailable).")
-            print("   This is usually a temporary IP ban by YouTube.")
-            print("   👉 Please download the video manually on your PC and upload it directly using the 'Upload Video' option.")
-            print("   Alternative: Wait a few hours before trying again.")
+            # Force print to stderr/stdout immediately so it's captured before crash
+            import sys
+            error_msg = f"""
+            
+❌ ================================================================= ❌
+❌ FATAL ERROR: YOUTUBE DOWNLOAD FAILED
+❌ ================================================================= ❌
+            
+REASON: YouTube has blocked the download request (Error 429/Unavailable).
+        This is likely a temporary IP ban on this server.
+
+👇 SOLUTION FOR USER 👇
+---------------------------------------------------------------------
+1. Download the video manually to your computer.
+2. Use the 'Upload Video' tab in this app to process it.
+---------------------------------------------------------------------
+
+Technical Details: {str(e)}
+            """
+            print(error_msg, file=sys.stderr)
+            print(error_msg, file=sys.stdout)
+            sys.stdout.flush()
+            sys.stderr.flush()
             raise e
     
     output_template = os.path.join(output_dir, f'{sanitized_title}.%(ext)s')
