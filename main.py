@@ -487,7 +487,8 @@ def download_youtube_video(url, output_dir="."):
         'socket_timeout': 30,
         'retries': 10,
         'nocheckcertificate': True,
-        'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
+        'user_agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36'
     }
     
     with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
