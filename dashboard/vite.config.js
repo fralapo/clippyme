@@ -6,7 +6,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     allowedHosts: [
-      'm8kg4cgo8kswcokskskcgkco.178.63.85.114.sslip.io',
       'openshorts.app',
       'www.openshorts.app'
     ],
