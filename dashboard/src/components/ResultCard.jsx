@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Download, Share2, Instagram, Youtube, Video, CheckCircle, AlertCircle, X, Loader2, Copy, Wand2, Type, Calendar, Clock } from 'lucide-react';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
+import HookModal from './HookModal';
 
 export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, geminiApiKey, onPlay, onPause }) {
     const [showModal, setShowModal] = useState(false);
@@ -24,6 +25,8 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
 
     const [isEditing, setIsEditing] = useState(false);
     const [isSubtitling, setIsSubtitling] = useState(false);
+    const [isHooking, setIsHooking] = useState(false);
+    const [showHookModal, setShowHookModal] = useState(false);
     const [editError, setEditError] = useState(null);
 
     // Initialize/Reset form when modal opens
@@ -41,44 +44,44 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
         setIsEditing(true);
         setEditError(null);
         try {
-             // Use passed prop or fallback
-             const apiKey = geminiApiKey || localStorage.getItem('gemini_key');
-             
-             if (!apiKey) {
-                 throw new Error("Gemini API Key is missing. Please set it in Settings.");
-             }
+            // Use passed prop or fallback
+            const apiKey = geminiApiKey || localStorage.getItem('gemini_key');
 
-             const res = await fetch(getApiUrl('/api/edit'), {
+            if (!apiKey) {
+                throw new Error("Gemini API Key is missing. Please set it in Settings.");
+            }
+
+            const res = await fetch(getApiUrl('/api/edit'), {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
-                    'X-Gemini-Key': apiKey 
+                    'X-Gemini-Key': apiKey
                 },
                 body: JSON.stringify({
                     job_id: jobId,
                     clip_index: index,
                     input_filename: currentVideoUrl.split('/').pop()
                 })
-             });
+            });
 
-             if (!res.ok) {
-                 const errText = await res.text();
-                 try {
-                     const jsonErr = JSON.parse(errText);
-                     throw new Error(jsonErr.detail || errText);
-                 } catch (e) {
-                     throw new Error(errText);
-                 }
-             }
+            if (!res.ok) {
+                const errText = await res.text();
+                try {
+                    const jsonErr = JSON.parse(errText);
+                    throw new Error(jsonErr.detail || errText);
+                } catch (e) {
+                    throw new Error(errText);
+                }
+            }
 
-             const data = await res.json();
-             if (data.new_video_url) {
-                 setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                 // Reload video
-                 if (videoRef.current) {
-                     videoRef.current.load();
-                 }
-             }
+            const data = await res.json();
+            if (data.new_video_url) {
+                setCurrentVideoUrl(getApiUrl(data.new_video_url));
+                // Reload video
+                if (videoRef.current) {
+                    videoRef.current.load();
+                }
+            }
 
         } catch (e) {
             setEditError(e.message);
@@ -123,6 +126,50 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
             setTimeout(() => setEditError(null), 5000);
         } finally {
             setIsSubtitling(false);
+        }
+    };
+
+    const handleHook = async (hookData) => {
+        setIsHooking(true);
+        setEditError(null);
+        try {
+            // Support both string (legacy) and object
+            const payload = typeof hookData === 'string'
+                ? { text: hookData, position: 'top', size: 'M' }
+                : hookData;
+
+            const res = await fetch(getApiUrl('/api/hook'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    job_id: jobId,
+                    clip_index: index,
+                    text: payload.text,
+                    position: payload.position,
+                    size: payload.size,
+                    input_filename: currentVideoUrl.split('/').pop()
+                })
+            });
+
+            if (!res.ok) {
+                const errText = await res.text();
+                throw new Error(errText);
+            }
+
+            const data = await res.json();
+            if (data.new_video_url) {
+                setCurrentVideoUrl(getApiUrl(data.new_video_url));
+                if (videoRef.current) {
+                    videoRef.current.load();
+                }
+                setShowHookModal(false);
+            }
+
+        } catch (e) {
+            setEditError(e.message);
+            setTimeout(() => setEditError(null), 5000);
+        } finally {
+            setIsHooking(false);
         }
     };
 
@@ -220,7 +267,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                         Clip {index + 1}
                     </span>
                 </div>
-                
+
                 {/* Auto Edit Overlay if Processing */}
                 {isEditing && (
                     <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-10 p-4 text-center">
@@ -234,7 +281,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
             {/* Right: Content & Details */}
             <div className="flex-1 p-4 md:p-5 flex flex-col bg-[#121214] overflow-hidden min-w-0">
                 <div className="mb-4">
-                     <h3 className="text-base font-bold text-white leading-tight line-clamp-2 mb-2 break-words" title={clip.video_title_for_youtube_short}>
+                    <h3 className="text-base font-bold text-white leading-tight line-clamp-2 mb-2 break-words" title={clip.video_title_for_youtube_short}>
                         {clip.video_title_for_youtube_short || "Viral Clip Generated"}
                     </h3>
                     <div className="flex flex-wrap gap-2 text-[10px] text-zinc-500 font-mono">
@@ -246,20 +293,20 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
 
                 {/* Scrollable Descriptions Area */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-2 mb-4">
-                     {/* YouTube */}
-                     <div className="bg-black/20 rounded-lg p-3 border border-white/5">
+                    {/* YouTube */}
+                    <div className="bg-black/20 rounded-lg p-3 border border-white/5">
                         <div className="flex items-center gap-2 text-[10px] font-bold text-red-400 mb-1.5 uppercase tracking-wider">
                             <Youtube size={12} className="shrink-0" /> <span className="truncate">YouTube Title</span>
                         </div>
                         <p className="text-xs text-zinc-300 select-all break-words">
                             {clip.video_title_for_youtube_short || "Viral Short Video"}
                         </p>
-                     </div>
+                    </div>
 
-                     {/* TikTok / IG */}
-                     <div className="bg-black/20 rounded-lg p-3 border border-white/5">
+                    {/* TikTok / IG */}
+                    <div className="bg-black/20 rounded-lg p-3 border border-white/5">
                         <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 mb-1.5 uppercase tracking-wider">
-                            <Video size={12} className="text-cyan-400 shrink-0" /> 
+                            <Video size={12} className="text-cyan-400 shrink-0" />
                             <span className="text-zinc-500">/</span>
                             <Instagram size={12} className="text-pink-400 shrink-0" />
                             <span className="truncate">Caption</span>
@@ -267,7 +314,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                         <p className="text-xs text-zinc-300 line-clamp-3 hover:line-clamp-none transition-all cursor-pointer select-all break-words">
                             {clip.video_description_for_tiktok || clip.video_description_for_instagram}
                         </p>
-                     </div>
+                    </div>
                 </div>
 
                 {/* Error Message */}
@@ -285,7 +332,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                         disabled={isEditing}
                         className="col-span-1 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-purple-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
                     >
-                        {isEditing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />} 
+                        {isEditing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
                         {isEditing ? 'Editing...' : 'Auto Edit'}
                     </button>
 
@@ -294,8 +341,17 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                         disabled={isSubtitling}
                         className="col-span-1 py-2 bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-orange-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
                     >
-                        {isSubtitling ? <Loader2 size={14} className="animate-spin" /> : <Type size={14} />} 
+                        {isSubtitling ? <Loader2 size={14} className="animate-spin" /> : <Type size={14} />}
                         {isSubtitling ? 'Adding...' : 'Subtitles'}
+                    </button>
+
+                    <button
+                        onClick={() => setShowHookModal(true)}
+                        disabled={isHooking}
+                        className="col-span-1 py-2 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-black rounded-lg text-xs font-bold shadow-lg shadow-yellow-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 mb-1 truncate px-1"
+                    >
+                        {isHooking ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                        {isHooking ? 'Adding...' : 'Viral Hook'}
                     </button>
 
                     <button
@@ -356,8 +412,8 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                             {/* Title & Description */}
                             <div>
                                 <label className="block text-xs font-bold text-zinc-400 mb-1">Video Title</label>
-                                <input 
-                                    type="text" 
+                                <input
+                                    type="text"
                                     value={postTitle}
                                     onChange={(e) => setPostTitle(e.target.value)}
                                     className="w-full bg-black/40 border border-white/10 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-primary/50 placeholder-zinc-600"
@@ -367,7 +423,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
 
                             <div>
                                 <label className="block text-xs font-bold text-zinc-400 mb-1">Caption / Description</label>
-                                <textarea 
+                                <textarea
                                     value={postDescription}
                                     onChange={(e) => setPostDescription(e.target.value)}
                                     rows={4}
@@ -387,13 +443,13 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                                         <div className="w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
                                     </label>
                                 </div>
-                                
+
                                 {isScheduling && (
                                     <div className="mt-3 animate-[fadeIn_0.2s_ease-out]">
                                         <label className="block text-xs text-zinc-400 mb-1">Select Date & Time</label>
                                         <div className="relative">
-                                            <input 
-                                                type="datetime-local" 
+                                            <input
+                                                type="datetime-local"
                                                 value={scheduleDate}
                                                 onChange={(e) => setScheduleDate(e.target.value)}
                                                 className="w-full bg-black/40 border border-white/10 rounded-lg p-2 pl-9 text-sm text-white focus:outline-none focus:border-purple-500/50 [color-scheme:dark]"
@@ -442,12 +498,21 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                 </div>
             )}
 
-            <SubtitleModal 
+            <SubtitleModal
                 isOpen={showSubtitleModal}
                 onClose={() => setShowSubtitleModal(false)}
                 onGenerate={handleSubtitle}
                 isProcessing={isSubtitling}
                 videoUrl={currentVideoUrl}
+            />
+
+            <HookModal
+                isOpen={showHookModal}
+                onClose={() => setShowHookModal(false)}
+                onGenerate={handleHook}
+                isProcessing={isHooking}
+                videoUrl={currentVideoUrl}
+                initialText={clip.viral_hook_text}
             />
         </div>
     );

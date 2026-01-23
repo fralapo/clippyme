@@ -14,3 +14,4 @@ fastapi
 uvicorn
 python-multipart
 httpx
+Pillow

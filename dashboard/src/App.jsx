@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield } from 'lucide-react';
+import { Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
+// import Gallery from './components/Gallery';
 import { getApiUrl } from './config';
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
@@ -143,7 +144,7 @@ function App() {
   const [logsVisible, setLogsVisible] = useState(true);
   const [processingMedia, setProcessingMedia] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, settings
-  
+
   // Sync state for original video playback
   const [syncedTime, setSyncedTime] = useState(0);
   const [isSyncedPlaying, setIsSyncedPlaying] = useState(false);
@@ -300,6 +301,14 @@ function App() {
           <span className="font-medium hidden lg:block">Dashboard</span>
         </button>
 
+        {/* <button
+          onClick={() => setActiveTab('gallery')}
+          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'gallery' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+        >
+          <LayoutGrid size={20} />
+          <span className="font-medium hidden lg:block">Gallery</span>
+        </button> */}
+
         <button
           onClick={() => setActiveTab('settings')}
           className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'settings' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
@@ -433,6 +442,11 @@ function App() {
             </div>
           )}
 
+          {/* View: Gallery */}
+          {/* {activeTab === 'gallery' && (
+            <Gallery />
+          )} */}
+
           {/* View: Dashboard (Idle) */}
           {activeTab === 'dashboard' && status === 'idle' && (
             <div className="h-full flex flex-col items-center justify-center p-6 animate-[fadeIn_0.3s_ease-out]">
@@ -478,9 +492,9 @@ function App() {
 
                 {/* Video Preview */}
                 {processingMedia && (
-                  <ProcessingAnimation 
-                    media={processingMedia} 
-                    isComplete={status === 'complete'} 
+                  <ProcessingAnimation
+                    media={processingMedia}
+                    isComplete={status === 'complete'}
                     syncedTime={syncedTime}
                     isSyncedPlaying={isSyncedPlaying}
                     syncTrigger={syncTrigger}
@@ -524,30 +538,30 @@ function App() {
                     </span>
                   )}
                   {results?.cost_analysis && (
-                     <span className="text-xs bg-green-500/10 border border-green-500/20 text-green-400 px-2 py-0.5 rounded-full ml-2" title={`Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}`}>
-                        ${results.cost_analysis.total_cost.toFixed(5)}
-                     </span>
+                    <span className="text-xs bg-green-500/10 border border-green-500/20 text-green-400 px-2 py-0.5 rounded-full ml-2" title={`Input: ${results.cost_analysis.input_tokens} | Output: ${results.cost_analysis.output_tokens}`}>
+                      ${results.cost_analysis.total_cost.toFixed(5)}
+                    </span>
                   )}
                 </h2>
 
-                 <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
-                    {results && results.clips && results.clips.length > 0 ? (
-                       <div className={`grid gap-4 pb-10 ${status === 'complete' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'}`}>
-                           {results.clips.map((clip, i) => (
-                          <ResultCard
-                               key={i}
-                               clip={clip}
-                               index={i}
-                               jobId={jobId}
-                               uploadPostKey={uploadPostKey}
-                               uploadUserId={uploadUserId}
-                               geminiApiKey={apiKey}
-                               onPlay={(time) => handleClipPlay(time)}
-                               onPause={handleClipPause}
-                             />
-                           ))}
-                       </div>
-                    ) : (
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-1">
+                  {results && results.clips && results.clips.length > 0 ? (
+                    <div className={`grid gap-4 pb-10 ${status === 'complete' ? 'grid-cols-1 xl:grid-cols-2' : 'grid-cols-1'}`}>
+                      {results.clips.map((clip, i) => (
+                        <ResultCard
+                          key={i}
+                          clip={clip}
+                          index={i}
+                          jobId={jobId}
+                          uploadPostKey={uploadPostKey}
+                          uploadUserId={uploadUserId}
+                          geminiApiKey={apiKey}
+                          onPlay={(time) => handleClipPlay(time)}
+                          onPause={handleClipPause}
+                        />
+                      ))}
+                    </div>
+                  ) : (
                     status === 'processing' ? (
                       <div className="h-full flex flex-col items-center justify-center text-zinc-500 space-y-4 opacity-50">
                         <div className="w-12 h-12 rounded-full border-2 border-zinc-800 border-t-primary animate-spin" />

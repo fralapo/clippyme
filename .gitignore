@@ -1,5 +1,8 @@
 # Video files
 *.mp4
+*.webm
+*.mov
+*.mkv
 
 # YOLO model
 *.pt
@@ -10,7 +13,8 @@ __pycache__/
 *.pyc
 
 # Temporary files
-temp_*.mp4
+temp_*
+uploads/
 
 .DS_Store
 

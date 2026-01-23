@@ -14,7 +14,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Hea
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from s3_uploader import upload_job_artifacts
+from s3_uploader import upload_job_artifacts, list_all_clips
 
 load_dotenv()
 
@@ -364,6 +364,7 @@ async def get_status(job_id: str):
 
 from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles
+from hooks import add_hook_to_video
 
 class EditRequest(BaseModel):
     job_id: str
@@ -569,18 +570,117 @@ async def add_subtitles(req: SubtitleRequest):
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, run_burn)
         
-        # 3. Update Result?
-        # We return the new URL.
-        new_video_url = f"/videos/{req.job_id}/{output_filename}"
-        
-        return {
-            "success": True,
-            "new_video_url": new_video_url
-        }
-        
     except Exception as e:
         print(f"❌ Subtitle Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+        
+    # 3. Update Result and Metadata
+    # Update InMemory Jobs
+    if req.clip_index < len(job['result']['clips']):
+         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+    
+    # Update Metadata on Disk (Persistence)
+    try:
+        if req.clip_index < len(clips):
+            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+            # Update the main data structure
+            data['shorts'] = clips
+            
+            # Write back
+            with open(json_files[0], 'w') as f:
+                json.dump(data, f, indent=4)
+                print(f"✅ Metadata updated with subtitled video for clip {req.clip_index}")
+    except Exception as e:
+        print(f"⚠️ Failed to update metadata.json: {e}")
+        # Non-critical, but good for persistence
+
+    return {
+        "success": True,
+        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
+    }
+
+class HookRequest(BaseModel):
+    job_id: str
+    clip_index: int
+    text: str
+    input_filename: Optional[str] = None
+    position: Optional[str] = "top" # top, center, bottom
+    size: Optional[str] = "M" # S, M, L
+
+@app.post("/api/hook")
+async def add_hook(req: HookRequest):
+    if req.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = jobs[req.job_id]
+    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
+    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+        
+    with open(json_files[0], 'r') as f:
+        data = json.load(f)
+        
+    clips = data.get('shorts', [])
+    if req.clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+        
+    clip_data = clips[req.clip_index]
+    
+    # Video Path
+    if req.input_filename:
+        filename = os.path.basename(req.input_filename)
+    else:
+        filename = clip_data.get('video_url', '').split('/')[-1]
+        if not filename:
+             base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+             filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
+         
+    input_path = os.path.join(output_dir, filename)
+    if not os.path.exists(input_path):
+        raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
+        
+    # Output video
+    output_filename = f"hook_{filename}"
+    output_path = os.path.join(output_dir, output_filename)
+    
+    # Map Size to Scale
+    size_map = {"S": 0.8, "M": 1.0, "L": 1.3}
+    font_scale = size_map.get(req.size, 1.0)
+    
+    try:
+        # Run in thread pool
+        def run_hook():
+             add_hook_to_video(input_path, req.text, output_path, position=req.position, font_scale=font_scale)
+        
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, run_hook)
+        
+    except Exception as e:
+        print(f"❌ Hook Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+        
+    # Update Persistence (Same logic as subtitles)
+    # Update InMemory Jobs
+    if req.clip_index < len(job['result']['clips']):
+         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+    
+    # Update Metadata on Disk
+    try:
+        if req.clip_index < len(clips):
+            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+            data['shorts'] = clips
+            with open(json_files[0], 'w') as f:
+                json.dump(data, f, indent=4)
+                print(f"✅ Metadata updated with hook video for clip {req.clip_index}")
+    except Exception as e:
+        print(f"⚠️ Failed to update metadata.json: {e}")
+
+    return {
+        "success": True,
+        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
+    }
 
 class SocialPostRequest(BaseModel):
     job_id: str
@@ -731,5 +831,37 @@ async def get_social_user(api_key: str = Header(..., alias="X-Upload-Post-Key"))
                 
             return {"profiles": profiles_list}
             
+            
         except Exception as e:
              raise HTTPException(status_code=500, detail=str(e))
+
+# @app.get("/api/gallery/clips")
+# async def get_gallery_clips(limit: int = 20, offset: int = 0, refresh: bool = False):
+#     """
+#     Fetch clips from S3 for the gallery with pagination.
+#     
+#     Args:
+#         limit: Number of clips to return (default 20, max 100)
+#         offset: Starting position for pagination
+#         refresh: Force refresh cache
+#     """
+#     try:
+#         # Clamp limit to reasonable values
+#         limit = min(max(1, limit), 100)
+#         
+#         # Get clips (uses cache internally)
+#         all_clips = list_all_clips(limit=limit + offset, force_refresh=refresh)
+#         
+#         # Apply offset for pagination
+#         clips = all_clips[offset:offset + limit]
+#         
+#         return {
+#             "clips": clips,
+#             "total": len(all_clips),
+#             "limit": limit,
+#             "offset": offset,
+#             "has_more": len(all_clips) > offset + limit
+#         }
+#     except Exception as e:
+#         print(f"❌ Gallery Error: {e}")
+#         raise HTTPException(status_code=500, detail=str(e))
