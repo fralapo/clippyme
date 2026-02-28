@@ -48,6 +48,14 @@ OpenShorts leverages state-of-the-art AI to handle the entire content lifecycle:
     *   **Log Streaming**: Follow the technical process with real-time log updates.
     *   **Responsive Design**: A premium, dark-mode glassmorphism interface.
 
+7.  **📺 YouTube Studio (Full Publishing Pipeline):**
+    *   **AI Title Generation**: Upload a video and let Gemini analyze the transcript to suggest viral, SEO-optimized titles with AI-ranked top picks.
+    *   **Title Refinement Chat**: Iteratively refine suggested titles via a built-in chat interface — ask for more clickbait, different tone, etc.
+    *   **AI Thumbnail Generation**: Generate professional thumbnails with optional face overlay, custom background, and extra creative instructions.
+    *   **AI Description with Chapters**: Automatically generates a YouTube description with chapter timestamps derived from the Whisper transcript.
+    *   **One-Click YouTube Publishing**: Publish the final video with its title, thumbnail, and description directly to YouTube via Upload-Post integration.
+    *   **Manual Mode**: Skip video analysis and enter your own title to jump straight to thumbnail generation.
+
 ---
 
 ## 🛠️ Requirements
@@ -113,6 +121,7 @@ Open your browser and navigate to:
 5.  **Reframing**: AI-powered visual tracking crops clips to vertical format.
 6.  **Backup**: Automated silent upload of clips and metadata to AWS S3.
 7.  **Distribution**: One-click posting via Upload-Post API.
+8.  **YouTube Studio**: Full publishing pipeline — AI titles, thumbnails, descriptions with chapters, and direct YouTube upload.
 
 ---
 

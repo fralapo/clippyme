@@ -312,12 +312,21 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
   };
 
   const handleDownload = async (url) => {
-    const a = document.createElement('a');
-    a.href = getApiUrl(url);
-    a.download = url.split('/').pop();
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    try {
+      const response = await fetch(getApiUrl(url));
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = url.split('/').pop() || 'thumbnail.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      // Fallback: open in new tab if fetch fails
+      window.open(getApiUrl(url), '_blank');
+    }
   };
 
   // --- Description Generation ---
