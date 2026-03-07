@@ -509,6 +509,12 @@ class SubtitleRequest(BaseModel):
     clip_index: int
     position: str = "bottom" # top, middle, bottom
     font_size: int = 16
+    font_name: str = "Verdana"
+    font_color: str = "#FFFFFF"
+    border_color: str = "#000000"
+    border_width: int = 2
+    bg_color: str = "#000000"
+    bg_opacity: float = 0.0
     input_filename: Optional[str] = None
 
 @app.post("/api/subtitle")
@@ -586,7 +592,11 @@ async def add_subtitles(req: SubtitleRequest):
         # 2. Burn Subtitles
         # Run in thread pool
         def run_burn():
-             burn_subtitles(input_path, srt_path, output_path, alignment=req.position, fontsize=req.font_size)
+             burn_subtitles(input_path, srt_path, output_path,
+                           alignment=req.position, fontsize=req.font_size,
+                           font_name=req.font_name, font_color=req.font_color,
+                           border_color=req.border_color, border_width=req.border_width,
+                           bg_color=req.bg_color, bg_opacity=req.bg_opacity)
         
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, run_burn)

@@ -106,6 +106,12 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                     clip_index: index,
                     position: options.position,
                     font_size: options.fontSize,
+                    font_name: options.fontName,
+                    font_color: options.fontColor,
+                    border_color: options.borderColor,
+                    border_width: options.borderWidth,
+                    bg_color: options.bgColor,
+                    bg_opacity: options.bgOpacity,
                     input_filename: currentVideoUrl.split('/').pop()
                 })
             });

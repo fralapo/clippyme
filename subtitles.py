@@ -133,66 +133,77 @@ def format_srt_block(index, start, end, text):
         
     return f"{index}\n{format_time(start)} --> {format_time(end)}\n{text}\n\n"
 
-def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16):
+def hex_to_ass_color(hex_color, opacity=1.0):
+    """Convert #RRGGBB to ASS &HAABBGGRR format. opacity: 0.0=transparent, 1.0=opaque"""
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) != 6:
+        hex_color = "FFFFFF"
+    r = int(hex_color[0:2], 16)
+    g = int(hex_color[2:4], 16)
+    b = int(hex_color[4:6], 16)
+    alpha = round((1.0 - opacity) * 255)
+    return f"&H{alpha:02X}{b:02X}{g:02X}{r:02X}"
+
+
+def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
+                   font_name="Verdana", font_color="#FFFFFF",
+                   border_color="#000000", border_width=2,
+                   bg_color="#000000", bg_opacity=0.0):
     """
     Burns subtitles into the video using FFmpeg.
-    Alignment: 2 (Bottom), 5 (Middle), 8 (Top)
+    Supports two modes:
+    - Outline mode (bg_opacity=0): Text with colored outline/border
+    - Box mode (bg_opacity>0): Text with semi-transparent background box
     """
-    # Convert styling options to ASS format
-    # FontSize is roughly pixels for 720p? It scales.
-    # For 1080x1920, fontsize 16 is tiny. 
-    # Let's assume standard vertical resolution (1080w). 
-    # Try a larger default or let it be scaled.
-    # We will accept a 'scale' factor or just big font.
-    # Default 16 in ASS is small. 
-    # Let's use a reasonable default if user says "small/medium/large".
-    
-    # Mapping alignment:
-    # Top: 6 or 10? ASS: 8 = Top Center. 2 = Bottom Center. 5 = Middle Center.
-    
-    # Position mapping (Numpad)
-    ass_alignment = 2 # Default Bottom Center
+    # Position mapping
+    ass_alignment = 2
     align_lower = str(alignment).lower()
-    if align_lower == 'top': 
-        ass_alignment = 6 # 6 is Top-Center in libass (legacy mode usually 6, standard is 8. Let's force 2 (bottom) 10 (center) ? No. 
-        # Actually libass follows SSA/ASS V4+.
-        # 1=Left, 2=Center, 3=Right (Subtitles Filter treats these as "Bottom")
-        # 5=Top-Left, 6=Top-Center, 7=Top-Right ??
-        # 9=Mid-Left, 10=Mid-Center, 11=Mid-Right ??
-        # Standard: 2=Bottom, 6=Top, 10=Middle
+    if align_lower == 'top':
         ass_alignment = 6
-    elif align_lower == 'middle': 
+    elif align_lower == 'middle':
         ass_alignment = 10
-    elif align_lower == 'bottom': 
+    elif align_lower == 'bottom':
         ass_alignment = 2
 
-    # Font size logic
-    # Scale: Libass uses 384x288 virtual resolution unless PlayResX/Y set.
-    # The frontend sends a value like 24 (pixels).
-    # In 288p land, 24 is HUGE (approx 1/12th of screen height).
-    # We want it to be smaller, around 10-12 units.
-    # Factor: 0.5 is safe.
-    final_fontsize = int(fontsize * 0.5) 
-    if final_fontsize < 8: final_fontsize = 8
+    # Font size scaling for ASS virtual resolution (PlayResY=288 default)
+    # For vertical 1080x1920 video, we need larger text for readability
+    final_fontsize = int(fontsize * 0.85)
+    if final_fontsize < 10:
+        final_fontsize = 10
 
-    # Path handling for filter string
-    try:
-        # Use absolute path but replace special chars for FFmpeg filter syntax
-        # : -> \: and \ -> / (forward slash is safer on windows too usually in ffmpeg filters if escaped)
-        # But for standard os paths on linux/mac: /path/to/file.srt
-        # FFmpeg expects: subtitles='/path/to/file.srt'
-        # If there are colons (e.g. C:), they need escaping: C\:
-        safe_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
-    except:
-        safe_srt_path = srt_path
+    # Path handling for FFmpeg filter syntax
+    safe_srt_path = srt_path.replace('\\', '/').replace(':', '\\:')
 
-    # Style String
-    # BorderStyle=3 (Opaque Box)
-    # OutlineColour is Box Background. Alpha 60 (approx 40% opacity) -> &H60000000
-    # Fontname: 'Verdana' or 'Arial' are safe. 'Verdana' is slightly more "modern/web".
-    # Bold=1
-    style_string = f"Alignment={ass_alignment},Fontname=Verdana,Fontsize={final_fontsize},PrimaryColour=&H00FFFFFF,OutlineColour=&H60000000,BackColour=&H00000000,BorderStyle=3,Outline=1,Shadow=0,MarginV=25,Bold=1"
-    
+    # Convert colors to ASS format and build style
+    primary_colour = hex_to_ass_color(font_color, 1.0)
+
+    if bg_opacity > 0:
+        # Box mode: opaque background box
+        border_style = 3
+        outline_colour = hex_to_ass_color(bg_color, bg_opacity)
+        outline_width = 1
+    else:
+        # Outline mode: text border/outline
+        border_style = 1
+        outline_colour = hex_to_ass_color(border_color, 1.0)
+        outline_width = max(1, border_width)
+
+    back_colour = hex_to_ass_color("#000000", 0.0)
+
+    style_string = (
+        f"Alignment={ass_alignment},"
+        f"Fontname={font_name},"
+        f"Fontsize={final_fontsize},"
+        f"PrimaryColour={primary_colour},"
+        f"OutlineColour={outline_colour},"
+        f"BackColour={back_colour},"
+        f"BorderStyle={border_style},"
+        f"Outline={outline_width},"
+        f"Shadow=0,"
+        f"MarginV=25,"
+        f"Bold=1"
+    )
+
     cmd = [
         'ffmpeg', '-y',
         '-i', video_path,
@@ -201,10 +212,10 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16):
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
         output_path
     ]
-    
+
     print(f"🎬 Burning subtitles: {' '.join(cmd)}")
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    
+
     if result.returncode != 0:
         print(f"❌ FFmpeg Subtitle Error: {result.stderr.decode()}")
         raise Exception(f"FFmpeg failed: {result.stderr.decode()}")

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe } from 'lucide-react';
+import { Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut, ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle, History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
@@ -120,6 +120,9 @@ const UserProfileSelector = ({ profiles, selectedUserId, onSelect }) => {
   );
 };
 
+const SESSION_KEY = 'openshorts_session';
+const SESSION_MAX_AGE = 3600000; // 1 hour (matches server job retention)
+
 // Mock polling function
 const pollJob = async (jobId) => {
   const res = await fetch(getApiUrl(`/api/status/${jobId}`));
@@ -152,6 +155,8 @@ function App() {
   const [processingMedia, setProcessingMedia] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard'); // dashboard, settings
 
+  const [sessionRecovered, setSessionRecovered] = useState(false);
+
   // Sync state for original video playback
   const [syncedTime, setSyncedTime] = useState(0);
   const [isSyncedPlaying, setIsSyncedPlaying] = useState(false);
@@ -166,6 +171,52 @@ function App() {
   const handleClipPause = () => {
     setIsSyncedPlaying(false);
   };
+
+  // Session Recovery: Restore on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_KEY);
+      if (!saved) return;
+      const session = JSON.parse(saved);
+      if (Date.now() - session.timestamp > SESSION_MAX_AGE) {
+        localStorage.removeItem(SESSION_KEY);
+        return;
+      }
+      if (session.jobId && session.status && session.status !== 'idle') {
+        setJobId(session.jobId);
+        setResults(session.results || null);
+        if (session.processingMedia) setProcessingMedia(session.processingMedia);
+        if (session.activeTab) setActiveTab(session.activeTab);
+        // If was processing, resume polling; if complete/error, just show results
+        setStatus(session.status === 'processing' ? 'processing' : session.status);
+        setSessionRecovered(true);
+        setTimeout(() => setSessionRecovered(false), 5000);
+      }
+    } catch (e) {
+      localStorage.removeItem(SESSION_KEY);
+    }
+  }, []);
+
+  // Session Recovery: Save state changes
+  useEffect(() => {
+    if (status === 'idle') {
+      localStorage.removeItem(SESSION_KEY);
+      return;
+    }
+    try {
+      const sessionData = {
+        jobId,
+        status,
+        results,
+        processingMedia: processingMedia?.type === 'url' ? processingMedia : null,
+        activeTab,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+    } catch (e) {
+      // localStorage full or serialization error - ignore
+    }
+  }, [jobId, status, results, activeTab]);
 
   useEffect(() => {
     // Encrypt Gemini Key too for consistency if desired, but user asked specifically about Social integration not saving well.
@@ -292,6 +343,7 @@ function App() {
     setResults(null);
     setLogs([]);
     setProcessingMedia(null);
+    localStorage.removeItem(SESSION_KEY);
   };
 
   // --- UI Components ---
@@ -411,6 +463,20 @@ function App() {
             )}
           </div>
         </header>
+
+        {/* Session Recovery Banner */}
+        {sessionRecovered && (
+          <div className="mx-6 mt-2 p-3 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-between animate-[fadeIn_0.3s_ease-out] shrink-0">
+            <div className="flex items-center gap-2 text-sm text-primary">
+              <RotateCcw size={16} />
+              <span className="font-medium">Session recovered</span>
+              <span className="text-zinc-400 text-xs">Your previous work has been restored.</span>
+            </div>
+            <button onClick={() => setSessionRecovered(false)} className="text-zinc-500 hover:text-white transition-colors">
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         {/* Main Workspace */}
         <div className="flex-1 overflow-hidden relative">
