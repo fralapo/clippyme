@@ -236,11 +236,12 @@ DESIGN REQUIREMENTS:
     prompt_parts.append(text_prompt)
 
     thumbnails = []
+    last_error = None
     for i in range(count):
         print(f"🎨 [Thumbnail] Generating thumbnail {i + 1}/{count}...")
         try:
             response = client.models.generate_content(
-                model="gemini-3-pro-image-preview",
+                model="gemini-3.1-flash-image-preview",
                 contents=prompt_parts,
                 config=types.GenerateContentConfig(
                     response_modalities=["TEXT", "IMAGE"],
@@ -263,7 +264,11 @@ DESIGN REQUIREMENTS:
                     break
 
         except Exception as e:
+            last_error = str(e)
             print(f"❌ [Thumbnail] Generation {i + 1} failed: {e}")
+
+    if not thumbnails and last_error:
+        raise RuntimeError(f"All thumbnail generations failed. Last error: {last_error}")
 
     return thumbnails
 

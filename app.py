@@ -1234,8 +1234,13 @@ async def thumbnail_generate(
             video_context
         )
 
+        if not thumbnails:
+            raise HTTPException(status_code=500, detail="Thumbnail generation failed. Please check your Gemini API key has access to image generation (gemini-3.1-flash-image-preview model).")
+
         return {"thumbnails": thumbnails}
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"❌ Thumbnail Generate Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

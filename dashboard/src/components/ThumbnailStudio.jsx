@@ -298,12 +298,15 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
       });
 
       if (!res.ok) {
-        const err = await res.text();
-        throw new Error(err);
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.detail || `Server error ${res.status}`);
       }
 
       const data = await res.json();
-      setGeneratedThumbnails(data.thumbnails || []);
+      if (!data.thumbnails || data.thumbnails.length === 0) {
+        throw new Error('No thumbnails were generated. Your Gemini API key may not have access to image generation.');
+      }
+      setGeneratedThumbnails(data.thumbnails);
     } catch (e) {
       alert(`Generation failed: ${e.message}`);
     } finally {
