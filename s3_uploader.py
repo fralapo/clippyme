@@ -19,7 +19,7 @@ def upload_file_to_s3(file_path, bucket_name, s3_key):
     """
     access_key = os.environ.get('AWS_ACCESS_KEY_ID')
     secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = os.environ.get('AWS_REGION', 'eu-west-3')
 
     if not access_key or not secret_key:
         return False
@@ -56,7 +56,7 @@ def get_s3_client():
     """Returns an authenticated S3 client."""
     access_key = os.environ.get('AWS_ACCESS_KEY_ID')
     secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = os.environ.get('AWS_REGION', 'eu-west-3')
 
     if not access_key or not secret_key:
         return None
@@ -196,7 +196,7 @@ def upload_actor_to_s3(file_path, description=""):
     Returns the public URL or None on failure.
     """
     bucket_name = os.environ.get('AWS_S3_PUBLIC_BUCKET', 'my-public-bucket')
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = os.environ.get('AWS_REGION', 'eu-west-3')
 
     s3_client = get_s3_client()
     if not s3_client:
@@ -248,7 +248,7 @@ def list_actor_gallery():
     Returns list with URLs and descriptions, newest first.
     """
     bucket_name = os.environ.get('AWS_S3_PUBLIC_BUCKET', 'my-public-bucket')
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = os.environ.get('AWS_REGION', 'eu-west-3')
 
     s3_client = get_s3_client()
     if not s3_client:
@@ -315,7 +315,7 @@ def upload_video_to_gallery(video_path, actor_image_path, metadata, video_id=Non
     """
     import uuid
     bucket_name = os.environ.get('AWS_S3_PUBLIC_BUCKET', 'my-public-bucket')
-    region = os.environ.get('AWS_REGION', 'us-east-1')
+    region = os.environ.get('AWS_REGION', 'eu-west-3')
 
     s3_client = get_s3_client()
     if not s3_client:
