@@ -116,6 +116,23 @@ export default function SaaShortsTab({ geminiApiKey, elevenLabsKey, falKey, uplo
     }
   }, [elevenLabsKey]);
 
+  // Reset selected voice when actor gender changes
+  useEffect(() => {
+    const genderDefaults = {
+      'en-female': '21m00Tcm4TlvDq8ikWAM',  // Rachel
+      'en-male': '29vD33N1CtxCmqQRPOHJ',    // Drew
+      'es-female': 'EXAVITQu4vr4xnSDxMaL',  // Bella
+      'es-male': 'ErXwobaYiN019PkySvjV',     // Antoni
+    };
+    // If we have fetched voices, pick the first matching one; otherwise use hardcoded default
+    const matchingVoice = voices.find(v => (v.labels?.gender || '').toLowerCase() === actorGender);
+    if (matchingVoice) {
+      setSelectedVoice(matchingVoice.voice_id);
+    } else {
+      setSelectedVoice(genderDefaults[`${language}-${actorGender}`] || genderDefaults['en-female']);
+    }
+  }, [actorGender, language]);
+
   // Poll generation status
   useEffect(() => {
     let interval;

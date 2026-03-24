@@ -3,6 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Open Source](https://badges.frapsoft.com/os/v1/open-source.svg?v=103)](https://opensource.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](http://makeapullrequest.com)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![GitHub stars](https://img.shields.io/github/stars/kamilstanuch/Autocrop-vertical?style=social)](https://github.com/kamilstanuch/Autocrop-vertical)
+[![Last Commit](https://img.shields.io/github/last-commit/kamilstanuch/Autocrop-vertical)](https://github.com/kamilstanuch/Autocrop-vertical/commits/main)
 
 **Free & open source AI video platform** with 3 tools in one: **Clip Generator**, **AI Shorts (UGC videos with AI actors)**, and **YouTube Studio**. Self-hosted with Docker. No watermarks, no limits.
 
@@ -84,9 +87,10 @@ All generated videos and avatars are saved to a public gallery with SEO pages fo
 - Auto descriptions with chapter timestamps from Whisper transcript
 - Direct YouTube publishing via Upload-Post
 
-### Social Publishing
-- One-click posting to TikTok, Instagram Reels, and YouTube Shorts
-- Schedule posts for later
+### Social Auto-Publishing
+- **One-click posting** to TikTok, Instagram Reels, and YouTube Shorts simultaneously
+- **Schedule uploads** for any date and time — plan your content calendar and let OpenShorts publish automatically
+- **Multi-platform distribution** — publish to all your social networks at once from a single interface
 - Upload-Post integration with async uploads
 
 ### Infrastructure
@@ -94,6 +98,69 @@ All generated videos and avatars are saved to a public gallery with SEO pages fo
 - SEO gallery pages served by FastAPI with JSON-LD structured data
 - Shared avatar gallery across all users
 - Async job queue with configurable concurrency
+
+---
+
+## Who Is This For?
+
+- **Content creators** — Turn long videos into shorts automatically, publish to all platforms at once
+- **Marketing agencies** — Generate UGC videos for clients at scale, no actors or studios needed
+- **SaaS founders** — Create product demos and marketing shorts from just a URL
+- **E-commerce brands** — Product videos with AI actors for TikTok Shop, Instagram, YouTube
+- **Local businesses** — Restaurants, gyms, real estate, coaching — affordable video marketing
+- **Developers** — Self-host, customize the pipeline, integrate via API
+
+---
+
+## AI Shorts Showcase
+
+Videos generated with OpenShorts AI Shorts — no camera, no studio, no actors:
+
+| | | |
+|:---:|:---:|:---:|
+| [![Biohacking for Investors](https://test-videos-upload-post.s3.eu-west-3.amazonaws.com/videos/cdceec1b/actor.png)](https://openshorts.app/video/cdceec1b) | [![Secret Weapon for Devs](https://test-videos-upload-post.s3.eu-west-3.amazonaws.com/videos/d3a80b6b/actor.png)](https://openshorts.app/video/d3a80b6b) | [![El Secreto de los Agentes de IA](https://test-videos-upload-post.s3.eu-west-3.amazonaws.com/videos/8ab7de92/actor.png)](https://openshorts.app/video/8ab7de92) |
+| **Biohacking for Investors** · LOW COST | **Secret Weapon for Devs** · LOW COST | **El Secreto de los Agentes de IA** · PREMIUM |
+
+> Browse all videos at [openshorts.app/gallery](https://openshorts.app/gallery)
+
+---
+
+## OpenShorts vs Competitors
+
+| Feature | OpenShorts | Opus Clip | CapCut | Vizard | Klap | Descript |
+|---------|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Price** | **Free** | $15-29/mo | $8/mo | $15-20/mo | $23-63/mo | $24-65/mo |
+| **Self-hosted** | **Yes** | No | No | No | No | No |
+| **Open source** | **Yes** | No | No | No | No | No |
+| **Watermark** | **Never** | Free tier | Some | Free tier | Free tier | Free tier |
+| **Upload limits** | **None** | 10-30GB | Credit-based | 60min-10hr | 10-100 vids/mo | 60min-40hr |
+| **AI clip detection** | Yes | Yes | Yes | Yes | Yes | Yes |
+| **Smart 9:16 reframing** | Yes | Yes | Yes | Yes | Yes | No |
+| **Auto subtitles** | Yes | Yes | Yes | Yes | Yes | Yes |
+| **Voice dubbing (30+ langs)** | Yes | No | Pro only | No | Pro only | Business only |
+| **AI UGC actors** | **Yes** | No | No | No | No | No |
+| **AI video effects** | Yes | No | Yes | No | No | No |
+| **Hook text overlays** | Yes | No | No | No | No | No |
+| **YouTube Studio (titles, thumbnails)** | **Yes** | No | No | No | No | No |
+| **Social auto-publishing** | Yes | Pro only | TikTok only | Paid only | Paid only | No |
+| **Schedule uploads** | Yes | Pro only | No | Paid only | Paid only | No |
+| **Data privacy** | **Your server** | Their cloud | Their cloud | Their cloud | Their cloud | Their cloud |
+
+---
+
+## How Much Does It Cost?
+
+OpenShorts is free. You only pay for the AI APIs you use — and most have generous free tiers:
+
+| Service | Free Tier | Paid Cost | Used For |
+|---------|-----------|-----------|----------|
+| **Google Gemini** | Free trial with generous limits | < $0.01 per 10-min video | Viral moment detection, script generation, web research |
+| **fal.ai** | Pay-per-use | ~$0.50-1.50 per AI Short | Actor generation, talking head video, lip-sync |
+| **ElevenLabs** | Free tier available | Pay-per-use | Voiceover, voice dubbing |
+| **Upload-Post** | **10 free uploads/month** to all networks (no credit card) | Pay-per-use | Auto-publishing to TikTok, Instagram, YouTube |
+| **AWS S3** | Optional | ~$0.023/GB | Cloud backup for clips and gallery |
+
+**Bottom line:** You can clip videos for practically free with Gemini, and publish 10 videos/month to all social networks at zero cost with Upload-Post.
 
 ---
 
