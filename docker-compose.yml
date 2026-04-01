@@ -14,7 +14,7 @@ services:
     volumes:
       - .:/app
       - /app/__pycache__
-      - ./config.json:/app/config.json
+      - ./data:/app/data
     networks:
       - clippyme-net
     restart: unless-stopped

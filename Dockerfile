@@ -40,7 +40,7 @@ RUN pip install --upgrade --no-cache-dir yt-dlp
 
 # Create a non-root user and directories FIRST to maximize cache
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
-    mkdir -p /app/uploads /app/output /tmp/Ultralytics && \
+    mkdir -p /app/uploads /app/output /app/data /tmp/Ultralytics && \
     chown -R appuser:appuser /app /tmp/Ultralytics
 
 # Switch to non-root user

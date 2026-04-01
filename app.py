@@ -22,9 +22,12 @@ load_dotenv()
 # Constants
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
-CONFIG_FILE = "config.json"
+DATA_DIR = "data"
+CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
+print(f"🔧 CONFIG_FILE path: {os.path.abspath(CONFIG_FILE)}")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 def load_persistent_config():
     """Load config from JSON file if exists, falling back to environment variables."""
