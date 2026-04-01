@@ -1,72 +1,100 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Serif:wght@700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=JetBrains+Mono&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
+  :root {
+    color-scheme: dark;
+  }
+
   body {
-    @apply bg-background text-white antialiased;
+    @apply bg-background text-zinc-300 antialiased selection:bg-primary/30 selection:text-white;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display text-white tracking-tight;
   }
 }
 
-.glass-panel {
-  @apply bg-surface/50 backdrop-blur-xl border border-white/10 rounded-2xl shadow-xl;
-}
+@layer components {
+  .glass-panel {
+    @apply bg-surface/40 backdrop-blur-xl border border-white/10 rounded-2xl shadow-glass;
+  }
 
-.input-field {
-  @apply w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all text-sm placeholder:text-zinc-500;
-}
+  .glass-card {
+    @apply bg-surface/20 backdrop-blur-md border border-white/5 rounded-xl hover:border-white/10 transition-all duration-300;
+  }
 
-.btn-primary {
-  @apply bg-primary hover:bg-blue-600 text-white px-6 py-3 rounded-xl font-medium transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-primary/20;
+  .input-field {
+    @apply w-full bg-white/[0.03] border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-primary/50 focus:ring-4 focus:ring-primary/10 transition-all text-sm placeholder:text-zinc-600 text-white;
+  }
+
+  .btn-modern {
+    @apply relative overflow-hidden px-6 py-3 rounded-xl font-semibold transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2;
+  }
+
+  .btn-primary-glow {
+    @apply btn-modern bg-primary text-white shadow-glow-primary hover:bg-primary-light hover:shadow-primary/40;
+  }
+
+  .btn-secondary {
+    @apply btn-modern bg-white/5 border border-white/10 text-white hover:bg-white/10;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-white via-white/90 to-white/60 bg-clip-text text-transparent;
+  }
+
+  .brand-gradient-text {
+    @apply bg-gradient-to-r from-primary-light via-accent-light to-pink-400 bg-clip-text text-transparent;
+  }
 }
 
 /* Custom Scrollbar */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+::-webkit-scrollbar {
+  width: 10px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+::-webkit-scrollbar-track {
+  @apply bg-background;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+::-webkit-scrollbar-thumb {
+  @apply bg-zinc-800 border-4 border-background rounded-full hover:bg-zinc-700;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+/* Grid Background */
+.bg-grid {
+  background-size: 40px 40px;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
 }
 
-/* Custom Animations */
+/* Shimmer Effect */
+.shimmer {
+  @apply relative overflow-hidden before:absolute before:inset-0 before:-translate-x-full before:animate-shimmer before:bg-gradient-to-r before:from-transparent before:via-white/5 before:to-transparent;
+}
+
+/* Animations */
 @keyframes scan {
-  0% {
-    top: 0%;
-    opacity: 0;
-  }
-
-  10% {
-    opacity: 1;
-  }
-
-  90% {
-    opacity: 1;
-  }
-
-  100% {
-    top: 100%;
-    opacity: 0;
-  }
+  0% { top: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
 }
 
-@keyframes scan-overlay {
-  0% {
-    top: -20%;
-  }
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
 
-  100% {
-    top: 100%;
-  }
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.5s ease-out forwards;
 }

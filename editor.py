@@ -6,44 +6,66 @@ import time
 from google import genai
 from google.genai import types
 
+DEFAULT_UPLOAD_TIMEOUT_SECONDS = int(os.getenv("GEMINI_UPLOAD_TIMEOUT_SECONDS", "300"))
+DEFAULT_UPLOAD_POLL_INTERVAL_SECONDS = float(os.getenv("GEMINI_UPLOAD_POLL_INTERVAL_SECONDS", "2"))
+
+
+def wait_for_uploaded_file_ready(
+    get_file_info,
+    file_name,
+    timeout_seconds=DEFAULT_UPLOAD_TIMEOUT_SECONDS,
+    poll_interval_seconds=DEFAULT_UPLOAD_POLL_INTERVAL_SECONDS,
+):
+    """Poll Gemini file processing until ACTIVE/FAILED or timeout."""
+    deadline = time.monotonic() + timeout_seconds
+
+    while True:
+        file_info = get_file_info(file_name)
+        state = getattr(file_info, "state", None)
+
+        if state == "ACTIVE":
+            return file_info
+        if state == "FAILED":
+            raise RuntimeError("Video processing failed by Gemini.")
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Timed out waiting for Gemini to process {file_name}.")
+
+        time.sleep(poll_interval_seconds)
+
+
 class VideoEditor:
     def __init__(self, api_key):
         self.client = genai.Client(api_key=api_key)
         # Use selected model from env, or default to gemini-2.5-flash
-        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash") 
+        self.model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     def upload_video(self, video_path):
         """Uploads video to Gemini File API."""
-        print(f"📤 Uploading {video_path} to Gemini...")
-        
-        # Ensure we are passing a path that exists
+        print(f"Uploading {video_path} to Gemini...")
+
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
-            
-        # Using 'file' keyword instead of 'path'
+
         try:
             file_upload = self.client.files.upload(file=video_path)
         except Exception as e:
-            print(f"❌ Gemini Upload Error: {e}")
-            raise e
-        
-        # Wait for processing
-        print("⏳ Waiting for video processing by Gemini...")
-        while True:
-            file_info = self.client.files.get(name=file_upload.name)
-            if file_info.state == "ACTIVE":
-                print("✅ Video processed and ready.")
-                return file_upload
-            elif file_info.state == "FAILED":
-                raise Exception("Video processing failed by Gemini.")
-            time.sleep(2)
+            print(f"Gemini Upload Error: {e}")
+            raise
+
+        print("Waiting for video processing by Gemini...")
+        file_info = wait_for_uploaded_file_ready(
+            lambda name: self.client.files.get(name=name),
+            file_upload.name,
+        )
+        print("Video processed and ready.")
+        return file_info
 
     def get_ffmpeg_filter(self, video_file_obj, duration, fps=30, width=None, height=None, transcript=None):
         """Asks Gemini for a raw FFmpeg filter string."""
         if width is None or height is None:
             # Keep prompt usable even if caller didn't pass dimensions.
             width, height = 1080, 1920
-        
+
         transcript_text = json.dumps(transcript) if transcript else "Not available."
 
         prompt = f"""
@@ -52,7 +74,7 @@ class VideoEditor:
         Video Duration: {duration} seconds.
         Video FPS: {fps}
         Video Resolution (MUST KEEP EXACT): {width}x{height}
-        
+
         TRANSCRIPT (Context of what is being said):
         {transcript_text}
 
@@ -76,8 +98,8 @@ class VideoEditor:
              - `lt(x,y)`, `lte(x,y)`, `gt(x,y)`, `gte(x,y)`
              - `if(cond,then,else)`
            - Always wrap expression values in single quotes: `z='...'`, `x='...'`, `y='...'`, `enable='...'`.
-           
-           - FOR `zoompan`: 
+
+           - FOR `zoompan`:
              - Prefer `on` (output frame index) to avoid time-variable quirks.
              - Convert seconds to frames using FPS={fps}: `frame = seconds * {fps}`.
              - Use `between(on, startFrame, endFrame)` for segmenting and pacing.
@@ -86,8 +108,8 @@ class VideoEditor:
              - ALWAYS set zoompan output size to EXACT `{width}x{height}` using `s={width}x{height}`.
              - ALWAYS set `fps={fps}` and `d=1`.
              - DO NOT use `scale`, `crop`, `pad` unless you keep EXACT `{width}x{height}` (no aspect ratio changes).
-             
-           - FOR `eq`, `hue`, `curves`, `unsharp` (Visual Effects): 
+
+           - FOR `eq`, `hue`, `curves`, `unsharp` (Visual Effects):
              - **DO NOT** use dynamic expressions for parameter values (e.g. `contrast='1+0.5*t'`).
              - **USE TIMELINE EDITING** via the `enable` option.
              - Create MULTIPLE filter instances for different time ranges.
@@ -97,22 +119,22 @@ class VideoEditor:
               - **Example:** `eq=contrast=1.2:enable='between(t,0,3)'`
               - **Example:** `hue=s=0:enable='between(t,10,12)'`
              - This is much safer and robust than boolean multiplication.
-        
+
         Constraints:
         - Output JSON with a single key: "filter_string".
         - The value must be the RAW filter string ready to be passed to `-vf`.
         - OUTPUT MUST KEEP EXACT RESOLUTION AND ASPECT RATIO: {width}x{height}.
         - Do NOT output 1280x720 or 1080x1080 unless the input is exactly that.
         - IMPORTANT: Do NOT include the `-vf` flag itself, just the filter content.
-        - IMPORTANT: Ensure syntax is correct for FFmpeg. 
-        
+        - IMPORTANT: Ensure syntax is correct for FFmpeg.
+
         Output JSON:
         {{
             "filter_string": "..."
         }}
         """
 
-        print("🤖 Asking Gemini for FFmpeg filter...")
+        print("Asking Gemini for FFmpeg filter...")
         response = self.client.models.generate_content(
             model=self.model_name,
             contents=[video_file_obj, prompt],
@@ -120,8 +142,8 @@ class VideoEditor:
                 response_mime_type="application/json"
             )
         )
-        
-        print(f"🔍 DEBUG: Gemini Raw Response:\n{response.text}")
+
+        print(f"DEBUG: Gemini Raw Response:\n{response.text}")
 
         try:
             # Clean response text (remove potential markdown blocks)
@@ -130,25 +152,25 @@ class VideoEditor:
                 text = text[7:]
             elif text.startswith("```"):
                 text = text[3:]
-            
+
             if text.endswith("```"):
                 text = text[:-3]
-                
+
             text = text.strip()
-            
+
             # Additional cleanup for potential trailing characters outside JSON
             # Find the first '{' and last '}'
             start_idx = text.find('{')
             end_idx = text.rfind('}')
-            
+
             if start_idx != -1 and end_idx != -1:
-                text = text[start_idx:end_idx+1]
-            
-            print(f"🔍 DEBUG: Cleaned JSON Text:\n{text}")
-                
+                text = text[start_idx:end_idx + 1]
+
+            print(f"DEBUG: Cleaned JSON Text:\n{text}")
+
             return json.loads(text)
         except json.JSONDecodeError:
-            print(f"❌ Failed to parse JSON: {response.text}")
+            print(f"Failed to parse JSON: {response.text}")
             return None
 
     @staticmethod
@@ -204,44 +226,44 @@ class VideoEditor:
 
     def apply_edits(self, input_path, output_path, filter_data):
         """Executes FFmpeg with the generated filter."""
-        
+
         if not filter_data or "filter_string" not in filter_data:
-            print("⚠️ No filter string found. Copying original.")
+            print("No filter string found. Copying original.")
             subprocess.run(['ffmpeg', '-y', '-i', input_path, '-c', 'copy', output_path])
             return
 
         filter_string = filter_data["filter_string"]
-        
+
         # Get input dimensions so we can enforce geometry (avoid broken aspect ratios).
         try:
             probe_cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', input_path]
             res_out = subprocess.check_output(probe_cmd, env={**os.environ, "LANG": "C.UTF-8"}).decode().strip()
             w, h = map(int, res_out.split('x'))
         except Exception as e:
-            print(f"⚠️ Could not probe resolution: {e}")
+            print(f"Could not probe resolution: {e}")
             w, h = None, None
 
         # Sanitize common expression pitfalls (e.g., t<3 / on>=75) before executing FFmpeg.
         sanitized = self._sanitize_filter_string(filter_string)
         if sanitized != filter_string:
-            print("🧼 Sanitized AI Filter (converted comparisons to lt/lte/gt/gte functions)")
-            print(f"🧼 Before: {filter_string}")
-            print(f"🧼 After:  {sanitized}")
+            print("Sanitized AI Filter (converted comparisons to lt/lte/gt/gte functions)")
+            print(f"Before: {filter_string}")
+            print(f"After:  {sanitized}")
             filter_string = sanitized
 
         # Enforce zoompan output size to preserve aspect ratio / resolution.
         if w and h:
             enforced = self._enforce_zoompan_output_size(filter_string, w, h)
             if enforced != filter_string:
-                print(f"📐 Enforced zoompan output size to {w}x{h}")
+                print(f"Enforced zoompan output size to {w}x{h}")
                 filter_string = enforced
 
             # Ensure square pixels (avoid weird display stretching in some players).
             if "setsar=" not in filter_string:
                 filter_string = f"{filter_string},setsar=1"
 
-        print(f"🎬 Executing AI Filter: {filter_string}")
-        
+        print(f"Executing AI Filter: {filter_string}")
+
         cmd = [
             'ffmpeg', '-y',
             '-i', input_path,
@@ -250,33 +272,26 @@ class VideoEditor:
             '-c:a', 'copy',
             output_path
         ]
-        
+
         # Use explicit environment with UTF-8 to avoid ascii errors in subprocess
         env = os.environ.copy()
-        # On some minimal docker images, we need to ensure we use a UTF-8 locale
-        # Try C.UTF-8 first, fallback to en_US.UTF-8 if available, but C.UTF-8 is usually safer for minimal
         env["LANG"] = "C.UTF-8"
         env["LC_ALL"] = "C.UTF-8"
-        
+
         try:
-            # We must encode arguments if filesystem is ascii but we have unicode chars
-            # But subprocess in Python 3 handles unicode args by encoding them with os.fsencode().
-            # If sys.getfilesystemencoding() is ascii, this fails.
-            # We can't change fs encoding at runtime easily.
-            # Workaround: pass bytes directly? subprocess allows bytes in args.
-            
-            # Convert command elements to bytes assuming utf-8 if they are strings
+            # Preserve UTF-8 handling even on minimal containers.
             cmd_bytes = []
             for arg in cmd:
                 if isinstance(arg, str):
                     cmd_bytes.append(arg.encode('utf-8'))
                 else:
                     cmd_bytes.append(arg)
-            
+
             subprocess.run(cmd_bytes, check=True, env=env)
         except subprocess.CalledProcessError as e:
-            print(f"❌ FFmpeg failed: {e}")
-            raise e
+            print(f"FFmpeg failed: {e}")
+            raise
+
 
 if __name__ == "__main__":
     pass

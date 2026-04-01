@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Key, Eye, EyeOff, Check, Save, ShieldCheck, Loader2, AlertCircle, Cpu } from 'lucide-react';
 import { config } from '../config';
 
@@ -6,7 +6,7 @@ const KEY_TYPES = [
     { id: 'GEMINI_API_KEY', label: 'Gemini API Key', icon: <Key size={18} />, link: 'https://aistudio.google.com/app/apikey', placeholder: 'AIzaSy...' }
 ];
 
-export default function KeyInput({ onKeySet, savedKey }) {
+export default function KeyInput({ onKeySet }) {
     const [keys, setKeys] = useState({});
     const [serverConfig, setServerConfig] = useState({});
     const [visibleKeys, setVisibleKeys] = useState({});
@@ -18,12 +18,27 @@ export default function KeyInput({ onKeySet, savedKey }) {
     const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
     const [isLoadingModels, setIsLoadingModels] = useState(false);
 
-    // Fetch current config from server on mount
-    useEffect(() => {
-        fetchConfig();
+    const fetchModels = useCallback(async (key) => {
+        if (!key) return;
+        setIsLoadingModels(true);
+        try {
+            const response = await fetch(`${config.API_BASE_URL}/api/config/models`, {
+                headers: { 'X-Gemini-Key': key }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.models && data.models.length > 0) {
+                    setModels(data.models);
+                }
+            }
+        } catch (error) {
+            console.error("Failed to fetch models:", error);
+        } finally {
+            setIsLoadingModels(false);
+        }
     }, []);
 
-    const fetchConfig = async () => {
+    const fetchConfig = useCallback(async () => {
         try {
             const response = await fetch(`${config.API_BASE_URL}/api/config`);
             if (response.ok) {
@@ -43,27 +58,12 @@ export default function KeyInput({ onKeySet, savedKey }) {
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [fetchModels]);
 
-    const fetchModels = async (key) => {
-        if (!key) return;
-        setIsLoadingModels(true);
-        try {
-            const response = await fetch(`${config.API_BASE_URL}/api/config/models`, {
-                headers: { 'X-Gemini-Key': key }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.models && data.models.length > 0) {
-                    setModels(data.models);
-                }
-            }
-        } catch (error) {
-            console.error("Failed to fetch models:", error);
-        } finally {
-            setIsLoadingModels(false);
-        }
-    };
+    // Fetch current config from server on mount
+    useEffect(() => {
+        fetchConfig();
+    }, [fetchConfig]);
 
     const handleSave = async (keyId) => {
         const value = keys[keyId];

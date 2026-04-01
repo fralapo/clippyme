@@ -27,6 +27,7 @@ load_dotenv()
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 GEMINI_PROMPT_TEMPLATE = """
 You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between 15 and 60 seconds long.
@@ -1009,15 +1010,6 @@ if __name__ == '__main__':
                 # Clean up temp cut
                 if os.path.exists(clip_temp_path):
                     os.remove(clip_temp_path)
-
-    # Clean up original if requested
-    if args.url and not args.keep_original and os.path.exists(input_video):
-        os.remove(input_video)
-        print(f"🗑️  Cleaned up downloaded video.")
-
-    total_time = time.time() - script_start_time
-    print(f"\n⏱️  Total execution time: {total_time:.2f}s")
-emp_path)
 
     # Clean up original if requested
     if args.url and not args.keep_original and os.path.exists(input_video):

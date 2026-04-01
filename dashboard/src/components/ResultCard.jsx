@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Download, Youtube, Video, AlertCircle, X, Loader2, Wand2, Type, Instagram } from 'lucide-react';
+import React, { useState } from 'react';
+import { Download, Youtube, Video, AlertCircle, X, Loader2, Wand2, Type, Instagram, Share2, Copy, Check } from 'lucide-react';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
 
@@ -11,6 +11,13 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
     const [isEditing, setIsEditing] = useState(false);
     const [isSubtitling, setIsSubtitling] = useState(false);
     const [editError, setEditError] = useState(null);
+    const [copiedField, setCopiedField] = useState(null);
+
+    const copyToClipboard = (text, field) => {
+        navigator.clipboard.writeText(text);
+        setCopiedField(field);
+        setTimeout(() => setCopiedField(null), 2000);
+    };
 
     const handleAutoEdit = async () => {
         setIsEditing(true);
@@ -106,14 +113,13 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
     };
 
     return (
-        <div className="bg-surface border border-white/5 rounded-2xl overflow-hidden flex flex-col md:flex-row group hover:border-white/10 transition-all animate-[fadeIn_0.5s_ease-out] min-h-[300px] h-auto" style={{ animationDelay: `${index * 0.1}s` }}>
-            {/* Left: Video Preview */}
-            <div className="w-full md:w-[180px] lg:w-[200px] bg-black relative shrink-0 aspect-[9/16] md:aspect-auto group/video">
+        <div className="glass-panel overflow-hidden flex flex-col md:flex-row group/card border-white/5 hover:border-primary/20 transition-all duration-500 animate-fade-in" style={{ animationDelay: `${index * 0.1}s` }}>
+            <div className="w-full md:w-[220px] bg-black relative shrink-0 aspect-[9/16] md:aspect-auto group/video overflow-hidden">
                 <video
                     ref={videoRef}
                     src={currentVideoUrl}
                     controls
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover group-hover/video:scale-105 transition-transform duration-1000"
                     playsInline
                     onPlay={() => {
                         const currentTime = videoRef.current ? videoRef.current.currentTime : 0;
@@ -127,69 +133,82 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                         }
                     }}
                 />
-                <div className="absolute top-3 left-3 flex gap-2">
-                    <span className="bg-black/60 backdrop-blur-md text-white text-[10px] font-bold px-2 py-1 rounded-md border border-white/10 uppercase tracking-wide">
-                        Clip {index + 1}
-                    </span>
+                
+                <div className="absolute top-4 left-4 z-20">
+                    <div className="bg-primary px-3 py-1.5 rounded-lg shadow-xl border border-white/10 flex items-center gap-2">
+                        <span className="text-[10px] font-black text-white uppercase tracking-widest">SEGMENT {index + 1}</span>
+                    </div>
                 </div>
 
                 {isEditing && (
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-10 p-4 text-center">
-                        <Loader2 size={32} className="text-primary animate-spin mb-3" />
-                        <span className="text-xs font-bold text-white uppercase tracking-wider">AI Magic in Progress...</span>
-                        <span className="text-[10px] text-zinc-400 mt-1">Applying viral edits & zooms</span>
+                    <div className="absolute inset-0 bg-primary/20 backdrop-blur-md flex flex-col items-center justify-center z-30 p-6 text-center animate-pulse">
+                        <Loader2 size={40} className="text-white animate-spin mb-4" />
+                        <span className="text-sm font-black text-white uppercase tracking-[0.2em]">Synthesizing...</span>
                     </div>
                 )}
             </div>
 
-            {/* Right: Content & Details */}
-            <div className="flex-1 p-4 md:p-5 flex flex-col bg-[#121214] overflow-hidden min-w-0">
-                <div className="mb-4">
-                    <h3 className="text-base font-bold text-white leading-tight line-clamp-2 mb-2 break-words" title={clip.video_title_for_youtube_short}>
-                        {clip.video_title_for_youtube_short || "Viral Clip Generated"}
-                    </h3>
-                    <div className="flex flex-wrap gap-2 text-[10px] text-zinc-500 font-mono">
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">{Math.floor(clip.end - clip.start)}s</span>
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">#shorts</span>
-                        <span className="bg-white/5 px-1.5 py-0.5 rounded border border-white/5 shrink-0">#viral</span>
+            <div className="flex-1 p-6 md:p-8 flex flex-col bg-surface-darker/40 overflow-hidden min-w-0">
+                <div className="mb-6 flex justify-between items-start gap-4">
+                    <div className="min-w-0 text-left">
+                        <h3 className="text-xl font-black text-white leading-tight mb-3 line-clamp-2 uppercase tracking-tighter text-left" title={clip.video_title_for_youtube_short}>
+                            {clip.video_title_for_youtube_short || "Viral Clip Generated"}
+                        </h3>
+                        <div className="flex flex-wrap gap-2">
+                            <span className="bg-white/5 px-2 py-1 rounded-md border border-white/5 text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{Math.floor(clip.end - clip.start)}s Duration</span>
+                            <span className="bg-primary/10 px-2 py-1 rounded-md border border-primary/10 text-[10px] font-black text-primary uppercase tracking-widest">AI Ranked</span>
+                        </div>
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-2 mb-4">
-                    <div className="bg-black/20 rounded-lg p-3 border border-white/5">
-                        <div className="flex items-center gap-2 text-[10px] font-bold text-red-400 mb-1.5 uppercase tracking-wider">
-                            <Youtube size={12} className="shrink-0" /> <span className="truncate">YouTube Title</span>
+                <div className="flex-1 space-y-4 mb-8 overflow-y-auto custom-scrollbar pr-2">
+                    <div className="relative group/field text-left">
+                        <div className="flex items-center justify-between mb-2 text-left">
+                            <label className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] flex items-center gap-2 text-left">
+                                <Youtube size={12} className="text-red-500" /> YouTube Title
+                            </label>
+                            <button 
+                                onClick={() => copyToClipboard(clip.video_title_for_youtube_short, 'title')}
+                                className="opacity-0 group-hover/field:opacity-100 transition-opacity p-1 hover:text-white"
+                            >
+                                {copiedField === 'title' ? <Check size={12} className="text-success" /> : <Copy size={12} />}
+                            </button>
                         </div>
-                        <p className="text-xs text-zinc-300 select-all break-words">
-                            {clip.video_title_for_youtube_short || "Viral Short Video"}
-                        </p>
+                        <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 text-xs text-zinc-300 font-medium leading-relaxed text-left">
+                            {clip.video_title_for_youtube_short || "Untitled Viral Short"}
+                        </div>
                     </div>
 
-                    <div className="bg-black/20 rounded-lg p-3 border border-white/5">
-                        <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-400 mb-1.5 uppercase tracking-wider">
-                            <Video size={12} className="text-cyan-400 shrink-0" />
-                            <span className="text-zinc-500">/</span>
-                            <Instagram size={12} className="text-pink-400 shrink-0" />
-                            <span className="truncate">Caption</span>
+                    <div className="relative group/field text-left">
+                        <div className="flex items-center justify-between mb-2 text-left">
+                            <label className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] flex items-center gap-2 text-left">
+                                <Instagram size={12} className="text-pink-500" /> Viral Caption
+                            </label>
+                            <button 
+                                onClick={() => copyToClipboard(clip.video_description_for_tiktok, 'caption')}
+                                className="opacity-0 group-hover/field:opacity-100 transition-opacity p-1 hover:text-white"
+                            >
+                                {copiedField === 'caption' ? <Check size={12} className="text-success" /> : <Copy size={12} />}
+                            </button>
                         </div>
-                        <p className="text-xs text-zinc-300 line-clamp-3 hover:line-clamp-none transition-all cursor-pointer select-all break-words">
+                        <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 text-xs text-zinc-400 italic line-clamp-3 hover:line-clamp-none transition-all cursor-text text-left">
                             {clip.video_description_for_tiktok || clip.video_description_for_instagram}
-                        </p>
+                        </div>
                     </div>
                 </div>
 
                 {editError && (
-                    <div className="mb-3 p-2 bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] rounded-lg flex items-center gap-2">
-                        <AlertCircle size={12} className="shrink-0" />
+                    <div className="mb-6 p-3 bg-error/10 border border-error/20 text-error text-[10px] font-bold rounded-xl flex items-center gap-3 animate-fade-in uppercase tracking-widest text-left">
+                        <AlertCircle size={16} className="shrink-0" />
                         {editError}
                     </div>
                 )}
 
-                <div className="grid grid-cols-3 gap-3 mt-auto pt-4 border-t border-white/5">
+                <div className="grid grid-cols-3 gap-4 mt-auto">
                     <button
                         onClick={handleAutoEdit}
                         disabled={isEditing}
-                        className="col-span-1 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-purple-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 truncate px-1"
+                        className="col-span-1 btn-primary-glow !py-3 text-[10px] font-black uppercase tracking-widest"
                     >
                         {isEditing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
                         {isEditing ? '...' : 'Auto Edit'}
@@ -198,10 +217,10 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                     <button
                         onClick={() => setShowSubtitleModal(true)}
                         disabled={isSubtitling}
-                        className="col-span-1 py-2 bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-500 hover:to-orange-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-orange-500/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2 truncate px-1"
+                        className="col-span-1 py-3 bg-warning hover:bg-warning/90 text-black rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-warning/10 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                     >
                         {isSubtitling ? <Loader2 size={14} className="animate-spin" /> : <Type size={14} />}
-                        {isSubtitling ? '...' : 'Subtitles'}
+                        {isSubtitling ? '...' : 'Captions'}
                     </button>
 
                     <button
@@ -215,7 +234,7 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                                 const a = document.createElement('a');
                                 a.style.display = 'none';
                                 a.href = url;
-                                a.download = `clip-${index + 1}.mp4`;
+                                a.download = `clippyme-segment-${index + 1}.mp4`;
                                 document.body.appendChild(a);
                                 a.click();
                                 window.URL.revokeObjectURL(url);
@@ -225,9 +244,9 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                                 window.open(currentVideoUrl, '_blank');
                             }
                         }}
-                        className="col-span-1 py-2 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white rounded-lg text-xs font-medium transition-colors flex items-center justify-center gap-2 border border-white/5 truncate px-2"
+                        className="col-span-1 btn-secondary !py-3 text-[10px] font-black uppercase tracking-widest"
                     >
-                        <Download size={14} className="shrink-0" /> Download
+                        <Download size={14} className="shrink-0" /> Save
                     </button>
                 </div>
             </div>

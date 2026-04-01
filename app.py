@@ -27,17 +27,61 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
+VALID_CONFIG_KEYS = ("GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES")
+DEFAULT_ALLOWED_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:5175",
+    "http://127.0.0.1:5175",
+)
+
+
+def parse_allowed_origins(raw_value: Optional[str] = None) -> List[str]:
+    """Parse a comma-separated ALLOWED_ORIGINS env var with safe localhost defaults."""
+    if raw_value is None:
+        return list(DEFAULT_ALLOWED_ORIGINS)
+
+    origins = [origin.strip().rstrip("/") for origin in raw_value.split(",") if origin.strip()]
+    return origins or list(DEFAULT_ALLOWED_ORIGINS)
+
+
+ALLOWED_ORIGINS = parse_allowed_origins(os.environ.get("ALLOWED_ORIGINS"))
+
+
+def is_trusted_origin(origin: Optional[str]) -> bool:
+    if not origin:
+        return False
+    return origin.rstrip("/") in ALLOWED_ORIGINS
+
+
+def require_trusted_config_request(request: Request) -> None:
+    """Protect config endpoints from cross-site browser access."""
+    origin = request.headers.get("origin")
+    if origin:
+        if is_trusted_origin(origin):
+            return
+        raise HTTPException(status_code=403, detail="Origin not allowed for config access.")
+
+    client_host = request.client.host if request.client else ""
+    if client_host in {"127.0.0.1", "::1", "localhost"}:
+        return
+
+    raise HTTPException(status_code=403, detail="Config access requires a trusted local origin.")
+
+
+def build_edit_temp_paths(job_id: str, job_output_dir: str) -> Dict[str, str]:
+    """Generate unique temp file paths per edit request to avoid collisions."""
+    suffix = uuid.uuid4().hex[:12]
+    return {
+        "input_path": os.path.join(job_output_dir, f"temp_input_{job_id}_{suffix}.mp4"),
+        "output_path": os.path.join(job_output_dir, f"temp_output_{job_id}_{suffix}.mp4"),
+    }
+
 def load_persistent_config():
     """Load config from JSON file if exists, falling back to environment variables."""
     config = {
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
-        "ELEVENLABS_API_KEY": os.environ.get("X_ELEVENLABS_KEY", ""),
-        "UPLOAD_POST_API_KEY": os.environ.get("X_UPLOAD_POST_KEY", ""),
-        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""),
-        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-        "AWS_S3_BUCKET": os.environ.get("AWS_S3_BUCKET", ""),
-        "AWS_S3_PUBLIC_BUCKET": os.environ.get("AWS_S3_PUBLIC_BUCKET", ""),
         "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", "")
     }
     
@@ -45,7 +89,9 @@ def load_persistent_config():
         try:
             with open(CONFIG_FILE, "r") as f:
                 persistent = json.load(f)
-                config.update(persistent)
+                # Filter to only keep valid keys
+                filtered = {k: v for k, v in persistent.items() if k in VALID_CONFIG_KEYS}
+                config.update(filtered)
         except Exception as e:
             print(f"⚠️ Error loading config.json: {e}")
             
@@ -60,14 +106,17 @@ def save_persistent_config(new_config: dict):
             with open(CONFIG_FILE, "r") as f:
                 current = json.load(f)
         
-        current.update(new_config)
+        sanitized = {k: new_config.get(k) for k in VALID_CONFIG_KEYS if k in new_config}
+        for key, value in sanitized.items():
+            if value in (None, ""):
+                current.pop(key, None)
+                os.environ.pop(key, None)
+            else:
+                current[key] = value
+                os.environ[key] = str(value)
+
         with open(CONFIG_FILE, "w") as f:
             json.dump(current, f, indent=4)
-            
-        # Update current process environment so sub-processes (main.py) see them
-        for key, value in new_config.items():
-            if value:
-                os.environ[key] = str(value)
         return True
     except Exception as e:
         print(f"❌ Error saving config.json: {e}")
@@ -208,8 +257,8 @@ app = FastAPI(lifespan=lifespan)
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -458,8 +507,9 @@ async def get_status(job_id: str):
     }
 
 @app.get("/api/config")
-async def get_config():
+async def get_config(request: Request):
     """Return current active configuration (keys are partially masked for safety)."""
+    require_trusted_config_request(request)
     config = load_persistent_config()
     masked = {}
     for k, v in config.items():
@@ -473,8 +523,9 @@ class ConfigUpdateRequest(BaseModel):
     keys: dict
 
 @app.post("/api/config")
-async def update_config(req: ConfigUpdateRequest):
+async def update_config(req: ConfigUpdateRequest, request: Request):
     """Update and persist API keys."""
+    require_trusted_config_request(request)
     if save_persistent_config(req.keys):
         return {"success": True, "message": "Configuration updated and persisted."}
     else:
@@ -524,16 +575,16 @@ async def edit_clip(
              raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
 
         # Define output path for edited video
-        edited_filename = f"edited_{filename}"
+        edited_filename = f"edited_{uuid.uuid4().hex[:8]}_{filename}"
         output_path = os.path.join(OUTPUT_DIR, req.job_id, edited_filename)
+        temp_paths = build_edit_temp_paths(req.job_id, os.path.join(OUTPUT_DIR, req.job_id))
         
         # Run editing in a thread to avoid blocking main loop
         def run_edit():
             editor = VideoEditor(api_key=final_api_key)
             
-            # SAFE FILE RENAMING STRATEGY
-            safe_filename = f"temp_input_{req.job_id}.mp4"
-            safe_input_path = os.path.join(OUTPUT_DIR, req.job_id, safe_filename)
+            safe_input_path = temp_paths["input_path"]
+            safe_output_path = temp_paths["output_path"]
             
             shutil.copy(input_path, safe_input_path)
             
@@ -561,7 +612,6 @@ async def edit_clip(
 
                 filter_data = editor.get_ffmpeg_filter(vid_file, duration, fps=fps, width=width, height=height, transcript=transcript)
                 
-                safe_output_path = os.path.join(OUTPUT_DIR, req.job_id, f"temp_output_{req.job_id}.mp4")
                 editor.apply_edits(safe_input_path, safe_output_path, filter_data)
                 
                 if os.path.exists(safe_output_path):
@@ -571,6 +621,8 @@ async def edit_clip(
             finally:
                 if os.path.exists(safe_input_path):
                     os.remove(safe_input_path)
+                if os.path.exists(safe_output_path):
+                    os.remove(safe_output_path)
 
         # Run in thread pool
         loop = asyncio.get_event_loop()
