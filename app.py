@@ -219,6 +219,14 @@ THUMBNAILS_DIR = os.path.join(OUTPUT_DIR, "thumbnails")
 os.makedirs(THUMBNAILS_DIR, exist_ok=True)
 app.mount("/thumbnails", StaticFiles(directory=THUMBNAILS_DIR), name="thumbnails")
 
+@app.get("/")
+async def root():
+    return {"status": "online", "message": "ClippyMe API is running"}
+
+@app.get("/api/health")
+async def health():
+    return {"status": "healthy"}
+
 class ProcessRequest(BaseModel):
     url: str
 
