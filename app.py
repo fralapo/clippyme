@@ -24,7 +24,6 @@ UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
 DATA_DIR = "data"
 CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
-print(f"🔧 CONFIG_FILE path: {os.path.abspath(CONFIG_FILE)}")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
