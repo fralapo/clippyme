@@ -449,7 +449,7 @@ def sanitize_filename(filename):
     return filename[:100]
 
 
-def download_youtube_video(url, output_dir="."):
+def download_youtube_video(url, output_dir=".", cookies_file_path=None):
     """
     Downloads a YouTube video using yt-dlp.
     Returns the path to the downloaded video and the video title.
@@ -900,6 +900,7 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output', type=str, help="Output directory or file (if processing whole video).")
     parser.add_argument('--keep-original', action='store_true', help="Keep the downloaded YouTube video.")
     parser.add_argument('--skip-analysis', action='store_true', help="Skip AI analysis and convert the whole video.")
+    parser.add_argument('-c', '--cookies', type=str, help="Path to cookies.txt file for yt-dlp")
     
     args = parser.parse_args()
 
@@ -926,7 +927,7 @@ if __name__ == '__main__':
             else:
                 output_dir = "."
         
-        input_video, video_title = download_youtube_video(args.url, output_dir)
+        input_video, video_title = download_youtube_video(args.url, output_dir, args.cookies)
     else:
         input_video = args.input
         video_title = os.path.splitext(os.path.basename(input_video))[0]
