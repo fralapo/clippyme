@@ -1,14 +1,14 @@
-# GEMINI.md - OpenShorts.app Project Context
+# GEMINI.md - ClippyMe Project Context
 
 ## Project Overview
-**OpenShorts.app** is a self-hosted AI video platform designed to automate the creation of short-form content. It specializes in transforming long-form videos (from YouTube or local uploads) into viral 9:16 vertical clips using AI-driven moment detection and smart reframing.
+**ClippyMe** is a self-hosted AI video platform designed to automate the creation of short-form content. It specializes in transforming long-form videos (from YouTube or local uploads) into viral 9:16 vertical clips using AI-driven moment detection and smart reframing.
 
 ### Core Tools
 1.  **Clip Generator:** Converts YouTube URLs or local uploads into vertical shorts. It uses AI to detect viral moments, transcribes audio, and performs smart reframing with subject tracking.
 2.  **AI Editor & Subtitles:** Provides automated cropping logic and dynamic subtitle generation with customizable styles to enhance clip engagement.
 
 ### Architecture
-- **Frontend:** React 18, Vite 4, Tailwind CSS. Located in the `dashboard/` directory. Runs as a non-root `node` user in Docker for improved security.
+- **Frontend:** React 18, Vite 4, Tailwind CSS. Located in the `dashboard/` directory. Runs as a non-root `node` user in Docker.
 - **Backend:** FastAPI (Python 3.11). Main entry point is `app.py`. Runs as a non-root `appuser` in Docker.
 - **Processing Engine:**
     - `main.py`: Orchestrates the pipeline (transcription, scene detection, AI clipping). Uses Deno for YouTube JS challenges.
@@ -27,19 +27,18 @@
 ## Building and Running
 
 ### Using Docker (Recommended)
-1.  Clone the repository and copy `.env.example` to `.env` (optional).
-2.  Run the application:
+1.  Run the application:
     ```bash
     docker compose up --build
     ```
-3.  Access the dashboard at `http://localhost:5175`.
-4.  Configure your API keys directly from the "API Configuration" section in the Dashboard. These are persisted in `data/config.json`.
+2.  Access the dashboard at `http://localhost:5175`.
+3.  Configure your API keys directly from the "Settings" section in the Dashboard. These are persisted in `data/config.json`.
 
 ## Development Conventions
 
 ### API Key Management
-- API keys can be managed via the Dashboard.
-- **Persistent Configuration:** The system uses `data/config.json` (mounted as a Docker volume) to store keys. This file takes precedence over `.env`.
+- API keys are managed via the Dashboard.
+- **Persistent Configuration:** The system uses `data/config.json` (mounted as a Docker volume) to store keys. 
 - Keys are updated in the process environment in real-time for all new jobs.
 
 ### Environment Variables
@@ -56,3 +55,4 @@
 - **Layer Caching:** Dockerfiles are optimized to maximize build speed.
 - **Healthchecks:** The backend includes a Docker healthcheck to monitor API availability.
 - **Networking:** Services communicate over an isolated `clippyme-net` network.
+- **Privacy:** `data/` directory is ignored by Git to prevent accidental leakage of API keys.
