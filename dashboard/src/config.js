@@ -4,6 +4,10 @@
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
+export const config = {
+    API_BASE_URL
+};
+
 export const getApiUrl = (path) => {
     if (path.startsWith('http')) return path;
     // Ensure path starts with / if not present

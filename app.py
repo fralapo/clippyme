@@ -22,8 +22,57 @@ load_dotenv()
 # Constants
 UPLOAD_DIR = "uploads"
 OUTPUT_DIR = "output"
+CONFIG_FILE = "config.json"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+def load_persistent_config():
+    """Load config from JSON file if exists, falling back to environment variables."""
+    config = {
+        "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
+        "ELEVENLABS_API_KEY": os.environ.get("X_ELEVENLABS_KEY", ""),
+        "UPLOAD_POST_API_KEY": os.environ.get("X_UPLOAD_POST_KEY", ""),
+        "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+        "AWS_SECRET_ACCESS_KEY": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+        "AWS_S3_BUCKET": os.environ.get("AWS_S3_BUCKET", ""),
+        "AWS_S3_PUBLIC_BUCKET": os.environ.get("AWS_S3_PUBLIC_BUCKET", ""),
+        "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", "")
+    }
+    
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                persistent = json.load(f)
+                config.update(persistent)
+        except Exception as e:
+            print(f"⚠️ Error loading config.json: {e}")
+            
+    return config
+
+def save_persistent_config(new_config: dict):
+    """Save new configuration to JSON file."""
+    try:
+        # Load existing first to merge
+        current = {}
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r") as f:
+                current = json.load(f)
+        
+        current.update(new_config)
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(current, f, indent=4)
+            
+        # Update current process environment so sub-processes (main.py) see them
+        for key, value in new_config.items():
+            if value:
+                os.environ[key] = str(value)
+        return True
+    except Exception as e:
+        print(f"❌ Error saving config.json: {e}")
+        return False
+
+# Initial load to env
+save_persistent_config(load_persistent_config())
 
 # Configuration
 # Default to 1 if not set, but user can set higher for powerful servers
@@ -987,31 +1036,6 @@ async def get_social_user(api_key: str = Header(..., alias="X-Upload-Post-Key"))
                 return {"profiles": [], "error": "No profiles found"}
                 
             return {"profiles": profiles_list}
-            
-            
-        except Exception as e:
-             raise HTTPException(status_code=500, detail=str(e))
-
-        socials = p.get('social_accounts', {})
-                             connected = []
-                             # Check typical platforms
-                             for platform in ['tiktok', 'instagram', 'youtube']:
-                                 account_info = socials.get(platform)
-                                 # If it's a dict and typically has data, or just not empty string
-                                 if isinstance(account_info, dict):
-                                     connected.append(platform)
-                             
-                             profiles_list.append({
-                                 "username": username,
-                                 "connected": connected
-                             })
-            
-            if not profiles_list:
-                # Fallback if no profiles found
-                return {"profiles": [], "error": "No profiles found"}
-                
-            return {"profiles": profiles_list}
-            
             
         except Exception as e:
              raise HTTPException(status_code=500, detail=str(e))
