@@ -458,24 +458,28 @@ def download_youtube_video(url, output_dir="."):
     print("📥 Downloading video from YouTube...")
     step_start_time = time.time()
 
-    cookies_path = '/app/cookies.txt'
-    cookies_env = os.environ.get("YOUTUBE_COOKIES")
-    if cookies_env:
-        print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file inside container...")
-        try:
-            with open(cookies_path, 'w') as f:
-                f.write(cookies_env)
-            if os.path.exists(cookies_path):
-                 print(f"   Debug: Cookies file created. Size: {os.path.getsize(cookies_path)} bytes")
-                 with open(cookies_path, 'r') as f:
-                     content = f.read(100)
-                     print(f"   Debug: First 100 chars of cookie file: {content}")
-        except Exception as e:
-            print(f"⚠️ Failed to write cookies file: {e}")
-            cookies_path = None
+    if cookies_file_path:
+        cookies_path = cookies_file_path
+        print(f"🍪 Using provided cookies file: {cookies_path}")
     else:
-        cookies_path = None
-        print("⚠️ YOUTUBE_COOKIES env var not found.")
+        cookies_path = '/app/cookies.txt'
+        cookies_env = os.environ.get("YOUTUBE_COOKIES")
+        if cookies_env:
+            print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file inside container...")
+            try:
+                with open(cookies_path, 'w') as f:
+                    f.write(cookies_env)
+                if os.path.exists(cookies_path):
+                     print(f"   Debug: Cookies file created. Size: {os.path.getsize(cookies_path)} bytes")
+                     with open(cookies_path, 'r') as f:
+                         content = f.read(100)
+                         print(f"   Debug: First 100 chars of cookie file: {content}")
+            except Exception as e:
+                print(f"⚠️ Failed to write cookies file: {e}")
+                cookies_path = None
+        else:
+            cookies_path = None
+            print("⚠️ YOUTUBE_COOKIES env var not found.")
     
     # Common yt-dlp options to work around YouTube bot detection.
     # extractor_args tries multiple player clients in order; tv_embed / android
