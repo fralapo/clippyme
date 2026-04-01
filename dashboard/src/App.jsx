@@ -6,119 +6,13 @@ import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
 import { getApiUrl } from './config';
 
-// Enhanced "Encryption" using XOR + Base64 with a Salt
-// This is better than plain Base64 but still client-side.
-const SECRET_KEY = import.meta.env.VITE_ENCRYPTION_KEY || "OpenShorts-Static-Salt-Change-Me";
-const ENCRYPTION_PREFIX = "ENC:";
-
-const encrypt = (text) => {
-  if (!text) return '';
-  try {
-    const xor = text.split('').map((c, i) =>
-      String.fromCharCode(c.charCodeAt(0) ^ SECRET_KEY.charCodeAt(i % SECRET_KEY.length))
-    ).join('');
-    return ENCRYPTION_PREFIX + btoa(xor);
-  } catch (e) {
-    console.error("Encryption failed", e);
-    return text;
-  }
-};
-
-const decrypt = (text) => {
-  if (!text) return '';
-  if (text.startsWith(ENCRYPTION_PREFIX)) {
-    try {
-      const raw = text.slice(ENCRYPTION_PREFIX.length);
-      // Check if it's plain base64 or our custom XOR (simple try)
-      const xor = atob(raw);
-      const result = xor.split('').map((c, i) =>
-        String.fromCharCode(c.charCodeAt(0) ^ SECRET_KEY.charCodeAt(i % SECRET_KEY.length))
-      ).join('');
-      return result;
-    } catch (e) {
-      // Fallback if decryption fails (might be old plain text)
-      return '';
-    }
-  }
-  // Backward compatibility: If no prefix, assume old plain text (or return empty if you want to force re-login)
-  // For migration: Return text as is, so it populates the field, and next save will encrypt it.
-  return text;
-};
-
-// Simple TikTok icon sine Lucide might not have it or it varies
 const TikTokIcon = ({ size = 16, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
     <path d="M19.589 6.686a4.793 4.793 0 0 1-3.77-4.245V2h-3.445v13.672a2.896 2.896 0 0 1-5.201 1.743l-.002-.001.002.001a2.895 2.895 0 0 1 3.183-4.51v-3.5a6.329 6.329 0 0 0-5.394 10.692 6.33 6.33 0 0 0 10.857-4.424V8.687a8.182 8.182 0 0 0 4.773 1.526V6.79a4.831 4.831 0 0 1-1.003-.104z" />
   </svg>
 );
 
-const UserProfileSelector = ({ profiles, selectedUserId, onSelect }) => {
-  const [isOpen, setIsOpen] = useState(false);
-
-  if (!profiles || profiles.length === 0) return null;
-
-  const selectedProfile = profiles.find(p => p.username === selectedUserId) || profiles[0];
-
-  return (
-    <div className="relative z-50">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between bg-surface border border-white/10 rounded-lg px-3 py-2 text-sm text-zinc-300 hover:bg-white/5 transition-colors min-w-[180px]"
-      >
-        <span className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-[10px] font-bold text-white">
-            {selectedProfile?.username?.substring(0, 1).toUpperCase() || "U"}
-          </div>
-          <span className="font-medium text-white truncate max-w-[100px]">{selectedProfile?.username || "Select User"}</span>
-        </span>
-        <ChevronDown size={14} className={`text-zinc-500 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-      </button>
-
-      {isOpen && (
-        <div className="absolute top-full mt-2 right-0 w-64 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden">
-          <div className="max-h-60 overflow-y-auto custom-scrollbar">
-            {profiles.map((profile) => (
-              <button
-                key={profile.username}
-                onClick={() => {
-                  onSelect(profile.username);
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors text-left group border-b border-white/5 last:border-0"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary/20 to-purple-500/20 flex items-center justify-center text-xs font-bold text-white border border-white/10 shrink-0">
-                    {profile.username.substring(0, 2).toUpperCase()}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-zinc-200 group-hover:text-white transition-colors truncate">
-                      {profile.username}
-                    </div>
-                    <div className="flex gap-2 mt-0.5">
-                      {/* Status indicators */}
-                      <div className={`flex items-center gap-1 text-[10px] ${profile.connected.includes('tiktok') ? 'text-zinc-300' : 'text-zinc-600'}`}>
-                        <TikTokIcon size={10} />
-                      </div>
-                      <div className={`flex items-center gap-1 text-[10px] ${profile.connected.includes('instagram') ? 'text-pink-400' : 'text-zinc-600'}`}>
-                        <Instagram size={10} />
-                      </div>
-                      <div className={`flex items-center gap-1 text-[10px] ${profile.connected.includes('youtube') ? 'text-red-400' : 'text-zinc-600'}`}>
-                        <Youtube size={10} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                {selectedUserId === profile.username && <Check size={14} className="text-primary shrink-0" />}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-const SESSION_KEY = 'openshorts_session';
+const SESSION_KEY = 'clippyme_session';
 const SESSION_MAX_AGE = 3600000; // 1 hour (matches server job retention)
 
 // Mock polling function
@@ -130,22 +24,6 @@ const pollJob = async (jobId) => {
 
 function App() {
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
-  // Social API State - Load encrypted or plain
-  const [uploadPostKey, setUploadPostKey] = useState(() => {
-    const stored = localStorage.getItem('uploadPostKey_v3');
-    if (stored) return decrypt(stored);
-    return '';
-  });
-  // ElevenLabs API State - Load encrypted
-  const [elevenLabsKey, setElevenLabsKey] = useState(() => {
-    const stored = localStorage.getItem('elevenLabsKey_v1');
-    if (stored) return decrypt(stored);
-    return '';
-  });
-
-
-  const [uploadUserId, setUploadUserId] = useState(() => localStorage.getItem('uploadUserId') || '');
-  const [userProfiles, setUserProfiles] = useState([]); // List of {username, connected: []}
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
@@ -187,7 +65,6 @@ function App() {
         setResults(session.results || null);
         if (session.processingMedia) setProcessingMedia(session.processingMedia);
         if (session.activeTab) setActiveTab(session.activeTab);
-        // If was processing, resume polling; if complete/error, just show results
         setStatus(session.status === 'processing' ? 'processing' : session.status);
         setSessionRecovered(true);
         setTimeout(() => setSessionRecovered(false), 5000);
@@ -219,32 +96,8 @@ function App() {
   }, [jobId, status, results, activeTab]);
 
   useEffect(() => {
-    // Encrypt Gemini Key too for consistency if desired, but user asked specifically about Social integration not saving well.
-    // For now keeping gemini plain for compatibility unless requested.
     if (apiKey) localStorage.setItem('gemini_key', apiKey);
   }, [apiKey]);
-
-  useEffect(() => {
-    if (uploadPostKey) {
-      localStorage.setItem('uploadPostKey_v3', encrypt(uploadPostKey));
-    }
-    if (uploadUserId) {
-      localStorage.setItem('uploadUserId', uploadUserId);
-    }
-  }, [uploadPostKey, uploadUserId]);
-
-  useEffect(() => {
-    if (elevenLabsKey) {
-      localStorage.setItem('elevenLabsKey_v1', encrypt(elevenLabsKey));
-    }
-  }, [elevenLabsKey]);
-
-
-  useEffect(() => {
-    if (uploadPostKey && userProfiles.length === 0) {
-      fetchUserProfiles();
-    }
-  }, [uploadPostKey]);
 
   useEffect(() => {
     let interval;
@@ -254,7 +107,6 @@ function App() {
           const data = await pollJob(jobId);
           console.log("Job status:", data);
 
-          // Update results if available (real-time)
           if (data.result) {
             setResults(data.result);
           }
@@ -268,7 +120,6 @@ function App() {
             setLogs(prev => [...prev, "Error: " + errorMsg]);
             clearInterval(interval);
           } else {
-            // Update logs if available
             if (data.logs) setLogs(data.logs);
           }
         } catch (e) {
@@ -278,30 +129,6 @@ function App() {
     }
     return () => clearInterval(interval);
   }, [status, jobId]);
-
-
-  const fetchUserProfiles = async () => {
-    if (!uploadPostKey) return;
-    try {
-      const res = await fetch(getApiUrl('/api/social/user'), {
-        headers: { 'X-Upload-Post-Key': uploadPostKey }
-      });
-      if (!res.ok) throw new Error("Failed to fetch");
-      const data = await res.json();
-      if (data.profiles && data.profiles.length > 0) {
-        setUserProfiles(data.profiles);
-        // Auto select first if none selected
-        if (!uploadUserId) {
-          setUploadUserId(data.profiles[0].username);
-        }
-      } else {
-        alert("No profiles found for this API Key.");
-      }
-    } catch (e) {
-      alert("Error fetching User Profiles. Please check key.");
-      console.error(e);
-    }
-  };
 
   const handleProcess = async (data) => {
     if (!apiKey) {
@@ -358,15 +185,13 @@ function App() {
     localStorage.removeItem(SESSION_KEY);
   };
 
-  // --- UI Components ---
-
   const Sidebar = () => (
     <div className="w-20 lg:w-64 bg-surface border-r border-white/5 flex flex-col h-full shrink-0 transition-all duration-300">
       <div className="p-6 flex items-center gap-3">
         <div className="w-8 h-8 bg-white/5 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-white/5">
           <img src="/logo-openshorts.png" alt="Logo" className="w-full h-full object-cover" />
         </div>
-        <span className="font-bold text-lg text-white hidden lg:block tracking-tight">Clippyme</span>
+        <span className="font-bold text-lg text-white hidden lg:block tracking-tight">ClippyMe</span>
       </div>
 
       <nav className="flex-1 px-4 py-4 space-y-2">
@@ -377,7 +202,6 @@ function App() {
           <LayoutDashboard size={20} />
           <span className="font-medium hidden lg:block">Clip Generator</span>
         </button>
-
 
         <button
           onClick={() => setActiveTab('settings')}
@@ -403,7 +227,7 @@ function App() {
           </div>
         </a>
         <a
-          href="https://github.com/mutonby/openshorts"
+          href="https://github.com/fralapo/clippyme"
           target="_blank"
           rel="noopener noreferrer"
           className="flex items-center gap-2 p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors group"
@@ -413,7 +237,7 @@ function App() {
           </div>
           <div className="hidden lg:block overflow-hidden">
             <p className="text-sm font-bold text-white leading-none mb-0.5">Open Source</p>
-            <p className="text-[10px] text-zinc-400 group-hover:text-zinc-300 transition-colors truncate">Free & Community Driven</p>
+            <p className="text-[10px] text-zinc-400 group-hover:text-zinc-300 transition-colors truncate">View Code</p>
           </div>
         </a>
       </div>
@@ -425,12 +249,10 @@ function App() {
       <Sidebar />
 
       <main className="flex-1 flex flex-col h-full overflow-hidden relative">
-        {/* Background Gradients */}
         <div className="absolute inset-0 overflow-hidden -z-10 pointer-events-none">
           <div className="absolute -top-[10%] -right-[10%] w-[50%] h-[50%] bg-primary/5 rounded-full blur-[120px]" />
         </div>
 
-        {/* Top Header */}
         <header className="h-16 border-b border-white/5 bg-background/50 backdrop-blur-md flex items-center justify-between px-6 shrink-0 z-10">
           <div className="flex items-center gap-4">
             {status !== 'idle' && (
@@ -445,14 +267,6 @@ function App() {
           </div>
 
           <div className="flex items-center gap-4">
-            {userProfiles.length > 0 && (
-              <UserProfileSelector
-                profiles={userProfiles}
-                selectedUserId={uploadUserId}
-                onSelect={setUploadUserId}
-              />
-            )}
-
             {!apiKey && (
               <span className="text-xs text-amber-500 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
                 API Key Missing
@@ -461,7 +275,6 @@ function App() {
           </div>
         </header>
 
-        {/* Session Recovery Banner */}
         {sessionRecovered && (
           <div className="mx-6 mt-2 p-3 bg-primary/10 border border-primary/20 rounded-xl flex items-center justify-between animate-[fadeIn_0.3s_ease-out] shrink-0">
             <div className="flex items-center gap-2 text-sm text-primary">
@@ -475,126 +288,19 @@ function App() {
           </div>
         )}
 
-        {/* Main Workspace */}
         <div className="flex-1 overflow-hidden relative">
-
-          {/* View: Settings */}
           {activeTab === 'settings' && (
             <div className="h-full overflow-y-auto p-8 max-w-2xl mx-auto animate-[fadeIn_0.3s_ease-out]">
               <div className="flex items-center justify-between mb-8">
                 <h1 className="text-2xl font-bold">Settings</h1>
                 <div className="px-3 py-1 bg-green-500/10 border border-green-500/20 rounded-full text-[10px] text-green-400 font-medium flex items-center gap-2">
-                  <Shield size={12} /> Privacy: keys only live in your browser (sent to backend just to process)
+                  <Shield size={12} /> Privacy: keys are managed securely on your server
                 </div>
               </div>
               <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
-
-              <div className="glass-panel p-6 mt-8">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold">Social Integration</h2>
-                  <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
-                </div>
-                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
-                  Automatically publish your clips to TikTok, Instagram Reels, and YouTube Shorts via <strong>Upload-Post</strong>.
-                  Includes a <strong>free tier</strong> (no credit card required).
-                  If you prefer, you can skip this and manually download/upload your videos.
-                </p>
-                <div className="space-y-4">
-                  <label className="block text-sm text-zinc-400">Upload-Post API Key</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={uploadPostKey}
-                      onChange={(e) => setUploadPostKey(e.target.value)}
-                      className="input-field"
-                      placeholder="ey..."
-                    />
-                    <button onClick={fetchUserProfiles} className="btn-primary py-2 px-4 text-sm">
-                      Connect
-                    </button>
-                  </div>
-                  <p className="text-xs text-zinc-500 leading-relaxed">
-                    Connect your Upload-Post account to enable one-click publishing.
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      <a href="https://app.upload-post.com/login" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">1. Login</span>
-                        <span className="text-[10px] text-zinc-600">Register account</span>
-                      </a>
-                      <a href="https://app.upload-post.com/manage-users" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">2. Profiles</span>
-                        <span className="text-[10px] text-zinc-600">Create & Connect</span>
-                      </a>
-                      <a href="https://app.upload-post.com/api-keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">3. API Key</span>
-                        <span className="text-[10px] text-zinc-600">Generate key</span>
-                      </a>
-                    </div>
-                    <br />
-                    <span className="text-zinc-600 italic">
-                      Keys are only stored in your browser. They are sent to the backend only to process your request, never stored server-side.
-                    </span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="glass-panel p-6 mt-8">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold">Video Translation</h2>
-                  <span className="text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded text-zinc-500 uppercase tracking-wider">Optional</span>
-                </div>
-                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
-                  Translate your clips to different languages using <strong>ElevenLabs</strong> AI dubbing.
-                  Automatically translates speech while preserving the original voice characteristics.
-                </p>
-                <div className="space-y-4">
-                  <label className="block text-sm text-zinc-400">ElevenLabs API Key</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={elevenLabsKey}
-                      onChange={(e) => setElevenLabsKey(e.target.value)}
-                      className="input-field"
-                      placeholder="sk_..."
-                    />
-                    <button
-                      onClick={() => {
-                        if (elevenLabsKey) {
-                          localStorage.setItem('elevenLabsKey_v1', encrypt(elevenLabsKey));
-                          alert('ElevenLabs API Key saved!');
-                        }
-                      }}
-                      className="btn-primary py-2 px-4 text-sm"
-                    >
-                      Save
-                    </button>
-                  </div>
-                  <p className="text-xs text-zinc-500 leading-relaxed">
-                    Get your API key from ElevenLabs to enable video translation.
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <a href="https://elevenlabs.io/sign-up" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">1. Sign Up</span>
-                        <span className="text-[10px] text-zinc-600">Create account</span>
-                      </a>
-                      <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">2. API Key</span>
-                        <span className="text-[10px] text-zinc-600">Generate key</span>
-                      </a>
-                    </div>
-                    <br />
-                    <span className="text-zinc-600 italic">
-                      Keys are only stored in your browser. They are sent to the backend only to process your request, never stored server-side.
-                    </span>
-                  </p>
-                </div>
-              </div>
-
-
             </div>
           )}
 
-
-
-          {/* View: Dashboard (Idle) */}
           {activeTab === 'dashboard' && status === 'idle' && (
             <div className="h-full flex flex-col items-center justify-center p-6 animate-[fadeIn_0.3s_ease-out]">
               <div className="max-w-xl w-full text-center space-y-8">
@@ -618,11 +324,8 @@ function App() {
             </div>
           )}
 
-          {/* View: Processing / Results (Split View) */}
           {activeTab === 'dashboard' && (status === 'processing' || status === 'complete' || status === 'error') && (
             <div className="h-full flex flex-col md:flex-row animate-[fadeIn_0.3s_ease-out]">
-
-              {/* Left Panel: Preview & Status */}
               <div className={`${status === 'complete' ? 'w-full md:w-[30%] lg:w-[25%]' : 'w-full md:w-[55%] lg:w-[60%]'} h-full flex flex-col border-r border-white/5 bg-black/20 p-6 overflow-y-auto custom-scrollbar transition-all duration-700 ease-in-out`}>
                 <div className="mb-6 flex items-center justify-between">
                   <h2 className="text-lg font-semibold flex items-center gap-2">
@@ -637,7 +340,6 @@ function App() {
                   </span>
                 </div>
 
-                {/* Video Preview */}
                 {processingMedia && (
                   <ProcessingAnimation
                     media={processingMedia}
@@ -648,7 +350,6 @@ function App() {
                   />
                 )}
 
-                {/* Logs Terminal */}
                 <div className={`bg-[#0c0c0e] rounded-xl border border-white/10 overflow-hidden flex flex-col transition-all duration-500 ${status === 'complete' ? 'h-32 min-h-0 opacity-50 hover:opacity-100' : 'flex-1 min-h-[200px]'}`}>
                   <div className="px-4 py-2 border-b border-white/5 flex items-center justify-between bg-white/5 shrink-0">
                     <span className="text-xs font-mono text-zinc-400 flex items-center gap-2">
@@ -674,7 +375,6 @@ function App() {
                 </div>
               </div>
 
-              {/* Right Panel: Results Grid */}
               <div className={`${status === 'complete' ? 'w-full md:w-[70%] lg:w-[75%]' : 'w-full md:w-[45%] lg:w-[40%]'} h-full flex flex-col bg-background p-6 transition-all duration-700 ease-in-out`}>
                 <h2 className="text-lg font-semibold mb-6 flex items-center gap-2 shrink-0">
                   <Sparkles className="text-yellow-400" size={20} />
@@ -700,10 +400,7 @@ function App() {
                           clip={clip}
                           index={i}
                           jobId={jobId}
-                          uploadPostKey={uploadPostKey}
-                          uploadUserId={uploadUserId}
                           geminiApiKey={apiKey}
-                          elevenLabsKey={elevenLabsKey}
                           onPlay={(time) => handleClipPlay(time)}
                           onPause={handleClipPause}
                         />
@@ -723,19 +420,15 @@ function App() {
                   )}
                 </div>
               </div>
-
             </div>
           )}
-
         </div>
 
-        {/* Footer */}
         <div className="h-8 border-t border-white/5 flex items-center justify-center shrink-0">
-          <span className="text-[10px] text-zinc-600">Made with ❤️ by <a href="https://www.upload-post.com" target="_blank" rel="noopener noreferrer" className="text-zinc-500 hover:text-white transition-colors">Upload-Post</a></span>
+          <span className="text-[10px] text-zinc-600 tracking-tight">ClippyMe — Free & Open Source AI Clip Generator</span>
         </div>
       </main>
 
-      {/* Missing API Key Modal */}
       {showKeyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowKeyModal(false)}>
           <div className="bg-[#18181b] border border-white/10 rounded-2xl p-6 max-w-md w-full mx-4 space-y-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -764,21 +457,7 @@ function App() {
               }}
             />
 
-            {/* Upload-Post info */}
-            <div className="bg-violet-500/5 border border-violet-500/20 rounded-lg p-4 space-y-2">
-              <p className="text-xs font-semibold text-violet-300">Optional: Auto-publish to social media</p>
-              <p className="text-xs text-zinc-400">
-                With an <strong className="text-zinc-300">Upload-Post</strong> API key you can publish your clips directly to TikTok, Instagram Reels, and YouTube Shorts — or schedule them for later. Free tier available, no credit card needed.
-              </p>
-              <ol className="text-xs text-zinc-400 space-y-1 list-decimal list-inside">
-                <li>Register at <a href="https://app.upload-post.com/login" target="_blank" rel="noopener noreferrer" className="text-violet-400 underline">app.upload-post.com</a></li>
-                <li>Connect your TikTok, Instagram, or YouTube accounts</li>
-                <li>Go to API Keys and generate one</li>
-                <li>Paste it in Settings — done!</li>
-              </ol>
-            </div>
-
-            <div className="flex gap-3">
+            <div className="flex gap-3 pt-2">
               <button
                 onClick={() => setShowKeyModal(false)}
                 className="flex-1 text-sm text-zinc-400 py-2 rounded-lg border border-white/10 hover:bg-white/5 transition-colors"

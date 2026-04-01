@@ -3,9 +3,7 @@ import { Key, Eye, EyeOff, Check, Save, ShieldCheck, Loader2, AlertCircle } from
 import { config } from '../config';
 
 const KEY_TYPES = [
-    { id: 'GEMINI_API_KEY', label: 'Gemini API Key', icon: <Key size={18} />, link: 'https://aistudio.google.com/app/apikey', placeholder: 'AIzaSy...' },
-    { id: 'ELEVENLABS_API_KEY', label: 'ElevenLabs API Key', icon: <ShieldCheck size={18} />, link: 'https://elevenlabs.io/app/settings/api-keys', placeholder: 'sk_...' },
-    { id: 'UPLOAD_POST_API_KEY', label: 'Upload-Post API Key', icon: <ShieldCheck size={18} />, link: 'https://upload-post.com/dashboard', placeholder: 'Apikey ...' }
+    { id: 'GEMINI_API_KEY', label: 'Gemini API Key', icon: <Key size={18} />, link: 'https://aistudio.google.com/app/apikey', placeholder: 'AIzaSy...' }
 ];
 
 export default function KeyInput({ onKeySet, savedKey }) {
@@ -27,11 +25,6 @@ export default function KeyInput({ onKeySet, savedKey }) {
             if (response.ok) {
                 const data = await response.json();
                 setServerConfig(data);
-                // Also update local state for the primary Gemini key to keep compatibility with existing onKeySet
-                if (data.GEMINI_API_KEY && !localStorage.getItem('gemini_api_key')) {
-                    // If server has a key but browser doesn't, we can't see the full key, 
-                    // but we can tell the app we are "ready"
-                }
             }
         } catch (error) {
             console.error("Failed to fetch config:", error);
@@ -167,7 +160,7 @@ export default function KeyInput({ onKeySet, savedKey }) {
             
             <div className="mt-6 pt-6 border-t border-white/5">
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    Keys are stored securely in <code>config.json</code> on the server. 
+                    Keys are stored securely in <code>data/config.json</code> on the server. 
                     Changes take effect immediately for all new processing jobs.
                 </p>
             </div>
