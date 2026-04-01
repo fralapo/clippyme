@@ -1,7 +1,10 @@
+name: clippyme
+
 services:
   backend:
     build: .
-    container_name: openshorts-backend
+    container_name: clippyme-backend
+    image: clippyme-backend
     ports:
       - "8000:8000"
     volumes:
@@ -11,7 +14,8 @@ services:
 
   frontend:
     build: ./dashboard
-    container_name: openshorts-frontend
+    container_name: clippyme-frontend
+    image: clippyme-frontend
     ports:
       - "5175:5173"
     volumes:
