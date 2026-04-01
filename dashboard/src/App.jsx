@@ -4,10 +4,6 @@ import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
-// import Gallery from './components/Gallery';
-import ThumbnailStudio from './components/ThumbnailStudio';
-import SaaShortsTab from './components/SaaShortsTab';
-import UGCGallery from './components/UGCGallery';
 import { getApiUrl } from './config';
 
 // Enhanced "Encryption" using XOR + Base64 with a Salt
@@ -147,12 +143,6 @@ function App() {
     return '';
   });
 
-  // fal.ai API State - Load encrypted
-  const [falKey, setFalKey] = useState(() => {
-    const stored = localStorage.getItem('falKey_v1');
-    if (stored) return decrypt(stored);
-    return '';
-  });
 
   const [uploadUserId, setUploadUserId] = useState(() => localStorage.getItem('uploadUserId') || '');
   const [userProfiles, setUserProfiles] = useState([]); // List of {username, connected: []}
@@ -249,11 +239,6 @@ function App() {
     }
   }, [elevenLabsKey]);
 
-  useEffect(() => {
-    if (falKey) {
-      localStorage.setItem('falKey_v1', encrypt(falKey));
-    }
-  }, [falKey]);
 
   useEffect(() => {
     if (uploadPostKey && userProfiles.length === 0) {
@@ -333,8 +318,15 @@ function App() {
       const headers = { 'X-Gemini-Key': apiKey };
 
       if (data.type === 'url') {
-        headers['Content-Type'] = 'application/json';
-        body = JSON.stringify({ url: data.payload });
+        if (data.cookiesFile) {
+          const formData = new FormData();
+          formData.append('url', data.payload);
+          formData.append('cookies_file', data.cookiesFile);
+          body = formData;
+        } else {
+          headers['Content-Type'] = 'application/json';
+          body = JSON.stringify({ url: data.payload });
+        }
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
@@ -343,7 +335,7 @@ function App() {
 
       const res = await fetch(getApiUrl('/api/process'), {
         method: 'POST',
-        headers: data.type === 'url' ? headers : { 'X-Gemini-Key': apiKey },
+        headers: data.type === 'url' && !data.cookiesFile ? headers : { 'X-Gemini-Key': apiKey },
         body
       });
 
@@ -374,7 +366,7 @@ function App() {
         <div className="w-8 h-8 bg-white/5 rounded-lg flex items-center justify-center shrink-0 overflow-hidden border border-white/5">
           <img src="/logo-openshorts.png" alt="Logo" className="w-full h-full object-cover" />
         </div>
-        <span className="font-bold text-lg text-white hidden lg:block tracking-tight">OpenShorts</span>
+        <span className="font-bold text-lg text-white hidden lg:block tracking-tight">Clippyme</span>
       </div>
 
       <nav className="flex-1 px-4 py-4 space-y-2">
@@ -386,37 +378,6 @@ function App() {
           <span className="font-medium hidden lg:block">Clip Generator</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('saasshorts')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'saasshorts' ? 'bg-violet-500/10 text-violet-400' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <Sparkles size={20} />
-          <span className="font-medium hidden lg:block">AI Shorts</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('ugc-gallery')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'ugc-gallery' ? 'bg-violet-500/10 text-violet-400' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <LayoutGrid size={20} />
-          <span className="font-medium hidden lg:block">UGC Gallery</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('thumbnails')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'thumbnails' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <Image size={20} />
-          <span className="font-medium hidden lg:block">YouTube Studio</span>
-        </button>
-
-        {/* <button
-          onClick={() => setActiveTab('gallery')}
-          className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors ${activeTab === 'gallery' ? 'bg-primary/10 text-primary' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
-        >
-          <LayoutGrid size={20} />
-          <span className="font-medium hidden lg:block">Gallery</span>
-        </button> */}
 
         <button
           onClick={() => setActiveTab('settings')}
@@ -627,78 +588,11 @@ function App() {
                 </div>
               </div>
 
-              <div className="glass-panel p-6 mt-8">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold">AI Shorts (UGC Videos)</h2>
-                  <span className="text-[10px] bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded text-violet-400 uppercase tracking-wider">New</span>
-                </div>
-                <p className="text-xs text-zinc-500 mb-6 leading-relaxed">
-                  Generate UGC-style videos with AI actors for any product or business using <strong>fal.ai</strong>.
-                  Just describe your product or paste a URL. Requires fal.ai + ElevenLabs API keys.
-                </p>
-                <div className="space-y-4">
-                  <label className="block text-sm text-zinc-400">fal.ai API Key</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="password"
-                      value={falKey}
-                      onChange={(e) => setFalKey(e.target.value)}
-                      className="input-field"
-                      placeholder="fal_..."
-                    />
-                    <button
-                      onClick={() => {
-                        if (falKey) {
-                          localStorage.setItem('falKey_v1', encrypt(falKey));
-                          alert('fal.ai API Key saved!');
-                        }
-                      }}
-                      className="btn-primary py-2 px-4 text-sm"
-                    >
-                      Save
-                    </button>
-                  </div>
-                  <p className="text-xs text-zinc-500 leading-relaxed">
-                    Get your API key from fal.ai to enable AI actor video generation.
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">1. Sign Up</span>
-                        <span className="text-[10px] text-zinc-600">Create fal.ai account</span>
-                      </a>
-                      <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-white/5 rounded-lg hover:bg-white/5 transition-colors flex flex-col gap-1">
-                        <span className="text-zinc-400 font-medium">2. API Key</span>
-                        <span className="text-[10px] text-zinc-600">Generate key</span>
-                      </a>
-                    </div>
-                    <br />
-                    <span className="text-zinc-600 italic">
-                      Keys are only stored in your browser. Sent to backend only to process requests.
-                    </span>
-                  </p>
-                </div>
-              </div>
+
             </div>
           )}
 
-          {/* View: SaaS Shorts */}
-          {activeTab === 'saasshorts' && (
-            <SaaShortsTab geminiApiKey={apiKey} elevenLabsKey={elevenLabsKey} falKey={falKey} uploadPostKey={uploadPostKey} uploadUserId={uploadUserId} />
-          )}
 
-          {/* View: UGC Gallery */}
-          {activeTab === 'ugc-gallery' && (
-            <UGCGallery />
-          )}
-
-          {/* View: Thumbnails */}
-          {activeTab === 'thumbnails' && (
-            <ThumbnailStudio geminiApiKey={apiKey} uploadPostKey={uploadPostKey} uploadUserId={uploadUserId} />
-          )}
-
-          {/* View: Gallery */}
-          {/* {activeTab === 'gallery' && (
-            <Gallery />
-          )} */}
 
           {/* View: Dashboard (Idle) */}
           {activeTab === 'dashboard' && status === 'idle' && (

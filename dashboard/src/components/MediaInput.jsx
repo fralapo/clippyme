@@ -5,11 +5,12 @@ export default function MediaInput({ onProcess, isProcessing }) {
     const [mode, setMode] = useState('url'); // 'url' | 'file'
     const [url, setUrl] = useState('');
     const [file, setFile] = useState(null);
+    const [cookiesFile, setCookiesFile] = useState(null);
 
     const handleSubmit = (e) => {
         e.preventDefault();
         if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url });
+            onProcess({ type: 'url', payload: url, cookiesFile });
         } else if (mode === 'file' && file) {
             onProcess({ type: 'file', payload: file });
         }
@@ -59,6 +60,15 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             className="input-field"
                             required
                         />
+                        <div className="mt-2 text-left">
+                            <label className="text-sm text-zinc-400 block mb-1">YouTube Cookies (Optional, to bypass blocks)</label>
+                            <input
+                                type="file"
+                                accept=".txt"
+                                onChange={(e) => setCookiesFile(e.target.files?.[0] || null)}
+                                className="block w-full text-sm text-zinc-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+                            />
+                        </div>
                     </div>
                 ) : (
                     <div
