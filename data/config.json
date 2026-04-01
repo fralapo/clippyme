@@ -6,5 +6,6 @@
     "AWS_SECRET_ACCESS_KEY": "",
     "AWS_S3_BUCKET": "",
     "AWS_S3_PUBLIC_BUCKET": "",
-    "YOUTUBE_COOKIES": ""
+    "YOUTUBE_COOKIES": "",
+    "GEMINI_MODEL": "gemini-2.5-flash"
 }
