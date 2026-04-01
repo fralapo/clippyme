@@ -17,6 +17,13 @@ services:
       - ./data:/app/data
     networks:
       - clippyme-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
 
   frontend:
@@ -30,6 +37,13 @@ services:
       - /app/node_modules
     networks:
       - clippyme-net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     restart: unless-stopped
     depends_on:
       - backend

@@ -69,6 +69,7 @@ OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by pre
 
 # Load the YOLO model once (Keep for backup or scene analysis if needed)
 model = YOLO('yolov8n.pt')
+model.to(DEVICE)
 
 # --- MediaPipe Setup ---
 # Use standard Face Detection (BlazeFace) for speed
@@ -1009,6 +1010,15 @@ if __name__ == '__main__':
                 # Clean up temp cut
                 if os.path.exists(clip_temp_path):
                     os.remove(clip_temp_path)
+
+    # Clean up original if requested
+    if args.url and not args.keep_original and os.path.exists(input_video):
+        os.remove(input_video)
+        print(f"🗑️  Cleaned up downloaded video.")
+
+    total_time = time.time() - script_start_time
+    print(f"\n⏱️  Total execution time: {total_time:.2f}s")
+emp_path)
 
     # Clean up original if requested
     if args.url and not args.keep_original and os.path.exists(input_video):
