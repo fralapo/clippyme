@@ -451,9 +451,6 @@ async def update_config(req: ConfigUpdateRequest):
 
 from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video
-from hooks import add_hook_to_video
-from translate import translate_video, get_supported_languages
-from thumbnail import analyze_video_for_titles, refine_titles, generate_thumbnail, generate_youtube_description
 
 class EditRequest(BaseModel):
     job_id: str
@@ -500,24 +497,18 @@ async def edit_clip(
         output_path = os.path.join(OUTPUT_DIR, req.job_id, edited_filename)
         
         # Run editing in a thread to avoid blocking main loop
-        # Since VideoEditor uses blocking calls (subprocess, API wait)
         def run_edit():
             editor = VideoEditor(api_key=final_api_key)
             
-            # SAFE FILE RENAMING STRATEGY (Avoid UnicodeEncodeError in Docker)
-            # Create a safe ASCII filename in the same directory
+            # SAFE FILE RENAMING STRATEGY
             safe_filename = f"temp_input_{req.job_id}.mp4"
             safe_input_path = os.path.join(OUTPUT_DIR, req.job_id, safe_filename)
             
-            # Copy original file to safe path
-            # (Copy is safer than rename if something crashes, we keep original)
             shutil.copy(input_path, safe_input_path)
             
             try:
-                # 1. Upload (using safe path)
                 vid_file = editor.upload_video(safe_input_path)
                 
-                # 2. Get duration
                 import cv2
                 cap = cv2.VideoCapture(safe_input_path)
                 fps = cap.get(cv2.CAP_PROP_FPS)
@@ -527,7 +518,6 @@ async def edit_clip(
                 duration = frame_count / fps if fps else 0
                 cap.release()
                 
-                # Load transcript from metadata
                 transcript = None
                 try:
                     meta_files = glob.glob(os.path.join(OUTPUT_DIR, req.job_id, "*_metadata.json"))
@@ -538,25 +528,16 @@ async def edit_clip(
                 except Exception as e:
                     print(f"⚠️ Could not load transcript for editing context: {e}")
 
-                # 3. Get Plan (Filter String)
                 filter_data = editor.get_ffmpeg_filter(vid_file, duration, fps=fps, width=width, height=height, transcript=transcript)
                 
-                # 4. Apply
-                # Use safe output name first
                 safe_output_path = os.path.join(OUTPUT_DIR, req.job_id, f"temp_output_{req.job_id}.mp4")
                 editor.apply_edits(safe_input_path, safe_output_path, filter_data)
                 
-                # Move result to final destination (rename works even if dest name has unicode if filesystem supports it, 
-                # but python might still struggle if locale is broken? No, os.rename usually handles it better than subprocess args)
-                # Actually, output_path is defined above: f"edited_{filename}"
-                # If filename has unicode, output_path has unicode.
-                # Let's hope shutil.move / os.rename works.
                 if os.path.exists(safe_output_path):
                     shutil.move(safe_output_path, output_path)
                 
                 return filter_data
             finally:
-                # Cleanup temp safe input
                 if os.path.exists(safe_input_path):
                     os.remove(safe_input_path)
 
@@ -564,15 +545,7 @@ async def edit_clip(
         loop = asyncio.get_event_loop()
         plan = await loop.run_in_executor(None, run_edit)
         
-        # Update clip URL in the job result? 
-        # Or return new URL and let frontend handle it?
-        # Updating job result allows persistence if page refreshes.
-        
         new_video_url = f"/videos/{req.job_id}/{edited_filename}"
-        
-        # Start a new "edited" clip entry or just update the current one?
-        # Let's update the current one's video_url but keep backup?
-        # Or return the new URL to the frontend to display.
         
         return {
             "success": True, 
@@ -587,7 +560,7 @@ async def edit_clip(
 class SubtitleRequest(BaseModel):
     job_id: str
     clip_index: int
-    position: str = "bottom" # top, middle, bottom
+    position: str = "bottom" 
     font_size: int = 16
     font_name: str = "Verdana"
     font_color: str = "#FFFFFF"
@@ -602,10 +575,7 @@ async def add_subtitles(req: SubtitleRequest):
     if req.job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    # Reload job data from disk just in case metadata was updated
     job = jobs[req.job_id]
-    
-    # We need to access metadata.json to get the transcript
     output_dir = os.path.join(OUTPUT_DIR, req.job_id)
     json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
     
@@ -617,7 +587,7 @@ async def add_subtitles(req: SubtitleRequest):
         
     transcript = data.get('transcript')
     if not transcript:
-        raise HTTPException(status_code=400, detail="Transcript not found in metadata. Please process a new video.")
+        raise HTTPException(status_code=400, detail="Transcript not found in metadata.")
         
     clips = data.get('shorts', [])
     if req.clip_index >= len(clips):
@@ -625,12 +595,9 @@ async def add_subtitles(req: SubtitleRequest):
         
     clip_data = clips[req.clip_index]
     
-    # Video Path
     if req.input_filename:
-        # Use chained file
         filename = os.path.basename(req.input_filename)
     else:
-        # Fallback to standard naming
         filename = clip_data.get('video_url', '').split('/')[-1]
         if not filename:
              base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
@@ -638,39 +605,20 @@ async def add_subtitles(req: SubtitleRequest):
          
     input_path = os.path.join(output_dir, filename)
     if not os.path.exists(input_path):
-        # Try looking for edited version if url implied it?
-        # Just fail if not found.
         raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
         
-    # Define outputs
     srt_filename = f"subs_{req.clip_index}_{int(time.time())}.srt"
     srt_path = os.path.join(output_dir, srt_filename)
     
-    # Output video
-    # We create a new file "subtitled_..."
     output_filename = f"subtitled_{filename}"
     output_path = os.path.join(output_dir, output_filename)
     
     try:
-        # 1. Generate SRT
-        # Check if this is a dubbed video - if so, transcribe it fresh
-        is_dubbed = filename.startswith("translated_")
-
-        if is_dubbed:
-            print(f"🎙️ Dubbed video detected, transcribing audio for subtitles...")
-            def run_transcribe_srt():
-                return generate_srt_from_video(input_path, srt_path)
-
-            loop = asyncio.get_event_loop()
-            success = await loop.run_in_executor(None, run_transcribe_srt)
-        else:
-            success = generate_srt(transcript, clip_data['start'], clip_data['end'], srt_path)
+        success = generate_srt(transcript, clip_data['start'], clip_data['end'], srt_path)
 
         if not success:
              raise HTTPException(status_code=400, detail="No words found for this clip range.")
 
-        # 2. Burn Subtitles
-        # Run in thread pool
         def run_burn():
              burn_subtitles(input_path, srt_path, output_path,
                            alignment=req.position, fontsize=req.font_size,
@@ -685,106 +633,15 @@ async def add_subtitles(req: SubtitleRequest):
         print(f"❌ Subtitle Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
         
-    # 3. Update Result and Metadata
-    # Update InMemory Jobs
     if req.clip_index < len(job['result']['clips']):
          job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
     
-    # Update Metadata on Disk (Persistence)
-    try:
-        if req.clip_index < len(clips):
-            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-            # Update the main data structure
-            data['shorts'] = clips
-            
-            # Write back
-            with open(json_files[0], 'w') as f:
-                json.dump(data, f, indent=4)
-                print(f"✅ Metadata updated with subtitled video for clip {req.clip_index}")
-    except Exception as e:
-        print(f"⚠️ Failed to update metadata.json: {e}")
-        # Non-critical, but good for persistence
-
-    return {
-        "success": True,
-        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
-    }
-
-class HookRequest(BaseModel):
-    job_id: str
-    clip_index: int
-    text: str
-    input_filename: Optional[str] = None
-    position: Optional[str] = "top" # top, center, bottom
-    size: Optional[str] = "M" # S, M, L
-
-@app.post("/api/hook")
-async def add_hook(req: HookRequest):
-    if req.job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = jobs[req.job_id]
-    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
-    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
-    
-    if not json_files:
-        raise HTTPException(status_code=404, detail="Metadata not found")
-        
-    with open(json_files[0], 'r') as f:
-        data = json.load(f)
-        
-    clips = data.get('shorts', [])
-    if req.clip_index >= len(clips):
-        raise HTTPException(status_code=404, detail="Clip not found")
-        
-    clip_data = clips[req.clip_index]
-    
-    # Video Path
-    if req.input_filename:
-        filename = os.path.basename(req.input_filename)
-    else:
-        filename = clip_data.get('video_url', '').split('/')[-1]
-        if not filename:
-             base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
-             filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
-         
-    input_path = os.path.join(output_dir, filename)
-    if not os.path.exists(input_path):
-        raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
-        
-    # Output video
-    output_filename = f"hook_{filename}"
-    output_path = os.path.join(output_dir, output_filename)
-    
-    # Map Size to Scale
-    size_map = {"S": 0.8, "M": 1.0, "L": 1.3}
-    font_scale = size_map.get(req.size, 1.0)
-    
-    try:
-        # Run in thread pool
-        def run_hook():
-             add_hook_to_video(input_path, req.text, output_path, position=req.position, font_scale=font_scale)
-        
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, run_hook)
-        
-    except Exception as e:
-        print(f"❌ Hook Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-        
-    # Update Persistence (Same logic as subtitles)
-    # Update InMemory Jobs
-    if req.clip_index < len(job['result']['clips']):
-         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-    
-    # Update Metadata on Disk
     try:
         if req.clip_index < len(clips):
             clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
             data['shorts'] = clips
             with open(json_files[0], 'w') as f:
                 json.dump(data, f, indent=4)
-                print(f"✅ Metadata updated with hook video for clip {req.clip_index}")
     except Exception as e:
         print(f"⚠️ Failed to update metadata.json: {e}")
 
@@ -792,253 +649,4 @@ async def add_hook(req: HookRequest):
         "success": True,
         "new_video_url": f"/videos/{req.job_id}/{output_filename}"
     }
-
-class TranslateRequest(BaseModel):
-    job_id: str
-    clip_index: int
-    target_language: str
-    source_language: Optional[str] = None
-    input_filename: Optional[str] = None
-
-@app.get("/api/translate/languages")
-async def get_languages():
-    """Return supported languages for translation."""
-    return {"languages": get_supported_languages()}
-
-@app.post("/api/translate")
-async def translate_clip(
-    req: TranslateRequest,
-    x_elevenlabs_key: Optional[str] = Header(None, alias="X-ElevenLabs-Key")
-):
-    """Translate a video clip to a different language using ElevenLabs dubbing."""
-    if not x_elevenlabs_key:
-        raise HTTPException(status_code=400, detail="Missing X-ElevenLabs-Key header")
-
-    if req.job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs[req.job_id]
-    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
-    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
-
-    if not json_files:
-        raise HTTPException(status_code=404, detail="Metadata not found")
-
-    with open(json_files[0], 'r') as f:
-        data = json.load(f)
-
-    clips = data.get('shorts', [])
-    if req.clip_index >= len(clips):
-        raise HTTPException(status_code=404, detail="Clip not found")
-
-    clip_data = clips[req.clip_index]
-
-    # Video Path
-    if req.input_filename:
-        filename = os.path.basename(req.input_filename)
-    else:
-        filename = clip_data.get('video_url', '').split('/')[-1]
-        if not filename:
-             base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
-             filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
-
-    input_path = os.path.join(output_dir, filename)
-    if not os.path.exists(input_path):
-        raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
-
-    # Output video with language suffix
-    base, ext = os.path.splitext(filename)
-    output_filename = f"translated_{req.target_language}_{base}{ext}"
-    output_path = os.path.join(output_dir, output_filename)
-
-    try:
-        # Run translation in thread pool (blocking API calls)
-        def run_translate():
-            return translate_video(
-                video_path=input_path,
-                output_path=output_path,
-                target_language=req.target_language,
-                api_key=x_elevenlabs_key,
-                source_language=req.source_language,
-            )
-
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, run_translate)
-
-    except Exception as e:
-        print(f"❌ Translation Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-    # Update InMemory Jobs
-    if req.clip_index < len(job['result']['clips']):
-         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-
-    # Update Metadata on Disk
-    try:
-        if req.clip_index < len(clips):
-            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-            data['shorts'] = clips
-            with open(json_files[0], 'w') as f:
-                json.dump(data, f, indent=4)
-                print(f"✅ Metadata updated with translated video for clip {req.clip_index}")
-    except Exception as e:
-        print(f"⚠️ Failed to update metadata.json: {e}")
-
-    return {
-        "success": True,
-        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
-    }
-
-class SocialPostRequest(BaseModel):
-    job_id: str
-    clip_index: int
-    api_key: str
-    user_id: str
-    platforms: List[str] # ["tiktok", "instagram", "youtube"]
-    # Optional overrides if frontend wants to edit them
-    title: Optional[str] = None
-    description: Optional[str] = None
-    scheduled_date: Optional[str] = None # ISO-8601 string
-    timezone: Optional[str] = "UTC"
-
-import httpx
-
-@app.post("/api/social/post")
-async def post_to_socials(req: SocialPostRequest):
-    if req.job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = jobs[req.job_id]
-    if 'result' not in job or 'clips' not in job['result']:
-        raise HTTPException(status_code=400, detail="Job result not available")
-        
-    try:
-        clip = job['result']['clips'][req.clip_index]
-        # Video URL is relative /videos/..., we need absolute file path
-        # clip['video_url'] is like "/videos/{job_id}/{filename}"
-        # We constructed it as: f"/videos/{job_id}/{clip_filename}"
-        # And file is at f"{OUTPUT_DIR}/{job_id}/{clip_filename}"
-        
-        filename = clip['video_url'].split('/')[-1]
-        file_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
-        
-        if not os.path.exists(file_path):
-             raise HTTPException(status_code=404, detail=f"Video file not found: {file_path}")
-
-        # Construct parameters for Upload-Post API
-        # Fallbacks
-        final_title = req.title or clip.get('title', 'Viral Short')
-        final_description = req.description or clip.get('video_description_for_instagram') or clip.get('video_description_for_tiktok') or "Check this out!"
-        
-        # Prepare form data
-        url = "https://api.upload-post.com/api/upload"
-        headers = {
-            "Authorization": f"Apikey {req.api_key}"
-        }
-        
-        # Prepare data as dict (httpx handles lists for multiple values)
-        data_payload = {
-            "user": req.user_id,
-            "title": final_title,
-            "platform[]": req.platforms, # Pass list directly
-            "async_upload": "true"  # Enable async upload
-        }
-
-        # Add scheduling if present
-        if req.scheduled_date:
-            data_payload["scheduled_date"] = req.scheduled_date
-            if req.timezone:
-                data_payload["timezone"] = req.timezone
-        
-        # Add Platform specifics
-        if "tiktok" in req.platforms:
-             data_payload["tiktok_title"] = final_description
-             
-        if "instagram" in req.platforms:
-             data_payload["instagram_title"] = final_description
-             data_payload["media_type"] = "REELS"
-
-        if "youtube" in req.platforms:
-             yt_title = req.title or clip.get('video_title_for_youtube_short', final_title)
-             data_payload["youtube_title"] = yt_title
-             data_payload["youtube_description"] = final_description
-             data_payload["privacyStatus"] = "public"
-
-        # Send File
-        # httpx AsyncClient requires async file reading or bytes. 
-        # Since we have MAX_FILE_SIZE_MB, reading into memory is safe-ish.
-        with open(file_path, "rb") as f:
-            file_content = f.read()
-            
-        files = {
-            "video": (filename, file_content, "video/mp4")
-        }
-
-        # Switch to synchronous Client to avoid "sync request with AsyncClient" error with multipart/files
-        with httpx.Client(timeout=120.0) as client:
-            print(f"📡 Sending to Upload-Post for platforms: {req.platforms}")
-            response = client.post(url, headers=headers, data=data_payload, files=files)
-            
-        if response.status_code not in [200, 201, 202]: # Added 201
-             print(f"❌ Upload-Post Error: {response.text}")
-             raise HTTPException(status_code=response.status_code, detail=f"Vendor API Error: {response.text}")
-
-        return response.json()
-
-    except Exception as e:
-        print(f"❌ Social Post Exception: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/social/user")
-async def get_social_user(api_key: str = Header(..., alias="X-Upload-Post-Key")):
-    """Proxy to fetch user ID from Upload-Post"""
-    if not api_key:
-         raise HTTPException(status_code=400, detail="Missing X-Upload-Post-Key header")
-         
-    url = "https://api.upload-post.com/api/uploadposts/users"
-    print(f"🔍 Fetching User ID from: {url}")
-    headers = {"Authorization": f"Apikey {api_key}"}
-    
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code != 200:
-                print(f"❌ Upload-Post User Fetch Error: {resp.text}")
-                raise HTTPException(status_code=resp.status_code, detail=f"Failed to fetch user: {resp.text}")
-            
-            data = resp.json()
-            print(f"🔍 Upload-Post User Response: {data}")
-            
-            user_id = None
-            # The structure is {'success': True, 'profiles': [{'username': '...'}, ...]}
-            profiles_list = []
-            if isinstance(data, dict):
-                 raw_profiles = data.get('profiles', [])
-                 if isinstance(raw_profiles, list):
-                     for p in raw_profiles:
-                         username = p.get('username')
-                         if username:
-                             # Determine connected platforms
-                             socials = p.get('social_accounts', {})
-                             connected = []
-                             # Check typical platforms
-                             for platform in ['tiktok', 'instagram', 'youtube']:
-                                 account_info = socials.get(platform)
-                                 # If it's a dict and typically has data, or just not empty string
-                                 if isinstance(account_info, dict):
-                                     connected.append(platform)
-                             
-                             profiles_list.append({
-                                 "username": username,
-                                 "connected": connected
-                             })
-            
-            if not profiles_list:
-                # Fallback if no profiles found
-                return {"profiles": [], "error": "No profiles found"}
-                
-            return {"profiles": profiles_list}
-            
-        except Exception as e:
-             raise HTTPException(status_code=500, detail=str(e))
 
