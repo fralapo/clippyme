@@ -90,31 +90,6 @@ concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
 from google import genai
 
-@app.get("/api/config/models")
-async def list_gemini_models(api_key: Optional[str] = Header(None, alias="X-Gemini-Key")):
-    """List available Gemini models using the provided API key."""
-    final_api_key = api_key or os.environ.get("GEMINI_API_KEY")
-    if not final_api_key:
-        return {"models": [], "error": "API Key missing"}
-    
-    try:
-        client = genai.Client(api_key=final_api_key)
-        models = []
-        # list_models returns an iterator of model objects
-        for model in client.models.list():
-            # Filter for models that support content generation
-            if 'generateContent' in model.supported_generation_methods:
-                # model.name is like 'models/gemini-pro'
-                clean_name = model.name.replace('models/', '')
-                models.append({
-                    "name": clean_name,
-                    "display_name": model.display_name,
-                    "description": model.description
-                })
-        return {"models": models}
-    except Exception as e:
-        return {"models": [], "error": str(e)}
-
 def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
     """
     Backward-compat rescue:
