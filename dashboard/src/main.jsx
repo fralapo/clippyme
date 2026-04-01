@@ -1,37 +1,31 @@
-import { StrictMode, useState, useEffect } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import App from './App.jsx'
-import Landing from './Landing.jsx'
+import React, { useState } from 'react';
 
-function Root() {
-  const [showApp, setShowApp] = useState(() => {
-    return window.location.hash === '#app' || localStorage.getItem('openshorts_skip_landing') === '1';
-  });
-
-  useEffect(() => {
-    const handleHashChange = () => {
-      setShowApp(window.location.hash === '#app');
-    };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
-
-  const handleLaunchApp = () => {
-    localStorage.setItem('openshorts_skip_landing', '1');
-    window.location.hash = '#app';
-    setShowApp(true);
-  };
-
-  if (showApp) {
-    return <App />;
-  }
-
-  return <Landing onLaunchApp={handleLaunchApp} />;
+function isAppRoute() {
+    return window.location.hash === '#app' || localStorage.getItem('clippyme_skip_landing') === '1';
 }
 
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <Root />
-  </StrictMode>,
-)
+function Main() {
+    const [showApp, setShowApp] = useState(isAppRoute());
+
+    const handleLaunch = () => {
+        localStorage.setItem('clippyme_skip_landing', '1');
+        window.location.hash = '#app';
+        setShowApp(true);
+    };
+
+    // If app route, show App, otherwise show Landing
+    const App = React.lazy(() => import('./App'));
+    const Landing = React.lazy(() => import('./Landing'));
+
+    return (
+        <React.Suspense fallback={
+            <div className="h-screen w-screen bg-[#09090b] flex items-center justify-center">
+                <div className="w-12 h-12 rounded-full border-2 border-zinc-800 border-t-primary animate-spin" />
+            </div>
+        }>
+            {showApp ? <App /> : <Landing onLaunchApp={handleLaunch} />}
+        </React.Suspense>
+    );
+}
+
+export default Main;

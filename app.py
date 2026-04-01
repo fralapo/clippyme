@@ -14,7 +14,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Hea
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
@@ -31,6 +31,7 @@ def load_persistent_config():
     """Load config from JSON file if exists, falling back to environment variables."""
     config = {
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
+        "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
         "ELEVENLABS_API_KEY": os.environ.get("X_ELEVENLABS_KEY", ""),
         "UPLOAD_POST_API_KEY": os.environ.get("X_UPLOAD_POST_KEY", ""),
         "AWS_ACCESS_KEY_ID": os.environ.get("AWS_ACCESS_KEY_ID", ""),
@@ -86,6 +87,33 @@ job_queue = asyncio.Queue()
 jobs: Dict[str, Dict] = {}
 # Semester to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+
+from google import genai
+
+@app.get("/api/config/models")
+async def list_gemini_models(api_key: Optional[str] = Header(None, alias="X-Gemini-Key")):
+    """List available Gemini models using the provided API key."""
+    final_api_key = api_key or os.environ.get("GEMINI_API_KEY")
+    if not final_api_key:
+        return {"models": [], "error": "API Key missing"}
+    
+    try:
+        client = genai.Client(api_key=final_api_key)
+        models = []
+        # list_models returns an iterator of model objects
+        for model in client.models.list():
+            # Filter for models that support content generation
+            if 'generateContent' in model.supported_generation_methods:
+                # model.name is like 'models/gemini-pro'
+                clean_name = model.name.replace('models/', '')
+                models.append({
+                    "name": clean_name,
+                    "display_name": model.display_name,
+                    "description": model.description
+                })
+        return {"models": models}
+    except Exception as e:
+        return {"models": [], "error": str(e)}
 
 def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
     """
@@ -456,7 +484,7 @@ from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video
 
 class EditRequest(BaseModel):
-    job_id: str
+    job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
     clip_index: int
     api_key: Optional[str] = None
     input_filename: Optional[str] = None
@@ -561,7 +589,7 @@ async def edit_clip(
         raise HTTPException(status_code=500, detail=str(e))
 
 class SubtitleRequest(BaseModel):
-    job_id: str
+    job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
     clip_index: int
     position: str = "bottom" 
     font_size: int = 16
