@@ -31,6 +31,14 @@ videos/
 
 # Model files (downloaded at build time)
 *.pt
+.cache/
+.config/
+
+# Build Context Optimization
+dashboard/
+output/
+uploads/
+data/
 
 # Docker
 Dockerfile
