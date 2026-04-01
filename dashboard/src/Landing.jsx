@@ -29,10 +29,10 @@ const StepCard = ({ number, title, description }) => (
   </div>
 );
 
-const ComparisonRow = ({ feature, openshorts, opusclip, kapwing }) => (
+const ComparisonRow = ({ feature, clippyme, opusclip, kapwing }) => (
   <tr className="border-b border-white/5">
     <td className="py-3 px-4 text-sm text-zinc-300">{feature}</td>
-    <td className="py-3 px-4 text-center">{openshorts}</td>
+    <td className="py-3 px-4 text-center">{clippyme}</td>
     <td className="py-3 px-4 text-center">{opusclip}</td>
     <td className="py-3 px-4 text-center">{kapwing}</td>
   </tr>
@@ -62,7 +62,7 @@ export default function Landing({ onLaunchApp }) {
     {
       icon: Sparkles,
       title: "AI Viral Moment Detection",
-      description: "Google Gemini 1.5 Flash analyzes your video transcript and scene boundaries to detect the 3-15 most engaging moments. Each clip is scored for viral potential based on emotional impact, hook strength, and shareability."
+      description: "Google Gemini 2.5 Flash analyzes your video transcript and scene boundaries to detect the 3-15 most engaging moments. Each clip is scored for viral potential based on emotional impact, hook strength, and shareability."
     },
     {
       icon: Scissors,
@@ -106,7 +106,7 @@ export default function Landing({ onLaunchApp }) {
     },
     {
       question: "Is ClippyMe really free? What's the catch?",
-      answer: "ClippyMe is 100% free and open source. You self-host it using Docker on your own machine. It uses the Google Gemini API (required) which offers a generous free tier of 1,500 requests per day. There are no watermarks, no usage limits, and no monthly subscriptions."
+      answer: "ClippyMe is 100% free and open source. You self-host it using Docker on your own machine. It uses the Google Gemini API (required) which offers a generous free tier. There are no watermarks, no usage limits, and no monthly subscriptions."
     },
     {
       question: "How does it compare to Opus Clip?",
@@ -127,7 +127,7 @@ export default function Landing({ onLaunchApp }) {
       <nav className="fixed top-0 w-full z-50 bg-background/80 backdrop-blur-xl border-b border-white/5">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src="/logo-openshorts.png" alt="ClippyMe logo" className="w-8 h-8" />
+            <img src="/logo-clippyme.png" alt="ClippyMe logo" className="w-8 h-8" />
             <span className="text-lg font-bold">ClippyMe</span>
           </div>
           <div className="hidden md:flex items-center gap-8 text-sm text-zinc-400">
@@ -274,7 +274,7 @@ export default function Landing({ onLaunchApp }) {
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {[
-              { name: "Google Gemini 1.5", desc: "AI Analysis" },
+              { name: "Google Gemini 2.5", desc: "AI Analysis" },
               { name: "faster-whisper", desc: "Transcription" },
               { name: "YOLOv8", desc: "Object Detection" },
               { name: "MediaPipe", desc: "Face Tracking" },
@@ -311,15 +311,15 @@ export default function Landing({ onLaunchApp }) {
                 </tr>
               </thead>
               <tbody>
-                <ComparisonRow feature="Price" openshorts={<span className="text-green-400 font-semibold">$0 Free</span>} opusclip={xIcon} kapwing={xIcon} />
-                <ComparisonRow feature="AI Viral Moment Detection" openshorts={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature="Smart Vertical Cropping" openshorts={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature="Auto Subtitles" openshorts={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature="Hook Text Overlays" openshorts={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
-                <ComparisonRow feature="Self-Hosted / Privacy" openshorts={checkIcon} opusclip={<span className="text-zinc-500 text-sm">Cloud only</span>} kapwing={<span className="text-zinc-500 text-sm">Cloud only</span>} />
-                <ComparisonRow feature="No Watermark" openshorts={checkIcon} opusclip={<span className="text-zinc-500 text-sm">Free tier only</span>} kapwing={<span className="text-zinc-500 text-sm">Paid</span>} />
-                <ComparisonRow feature="Open Source" openshorts={checkIcon} opusclip={<span className="text-zinc-500 text-sm">No</span>} kapwing={<span className="text-zinc-500 text-sm">No</span>} />
-                <ComparisonRow feature="Usage Limits" openshorts={<span className="text-green-400 text-sm">Unlimited</span>} opusclip={<span className="text-zinc-500 text-sm">Per plan</span>} kapwing={<span className="text-zinc-500 text-sm">Per plan</span>} />
+                <ComparisonRow feature="Price" clippyme={<span className="text-green-400 font-semibold">$0 Free</span>} opusclip={xIcon} kapwing={xIcon} />
+                <ComparisonRow feature="AI Viral Moment Detection" clippyme={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
+                <ComparisonRow feature="Smart Vertical Cropping" clippyme={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
+                <ComparisonRow feature="Auto Subtitles" clippyme={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
+                <ComparisonRow feature="Hook Text Overlays" clippyme={checkIcon} opusclip={checkIcon} kapwing={checkIcon} />
+                <ComparisonRow feature="Self-Hosted / Privacy" clippyme={checkIcon} opusclip={<span className="text-zinc-500 text-sm">Cloud only</span>} kapwing={<span className="text-zinc-500 text-sm">Cloud only</span>} />
+                <ComparisonRow feature="No Watermark" clippyme={checkIcon} opusclip={<span className="text-zinc-500 text-sm">Free tier only</span>} kapwing={<span className="text-zinc-500 text-sm">Paid</span>} />
+                <ComparisonRow feature="Open Source" clippyme={checkIcon} opusclip={<span className="text-zinc-500 text-sm">No</span>} kapwing={<span className="text-zinc-500 text-sm">No</span>} />
+                <ComparisonRow feature="Usage Limits" clippyme={<span className="text-green-400 text-sm">Unlimited</span>} opusclip={<span className="text-zinc-500 text-sm">Per plan</span>} kapwing={<span className="text-zinc-500 text-sm">Per plan</span>} />
               </tbody>
             </table>
           </div>
@@ -377,7 +377,7 @@ export default function Landing({ onLaunchApp }) {
       <footer className="border-t border-white/5 py-10 px-6">
         <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <img src="/logo-openshorts.png" alt="ClippyMe" className="w-6 h-6" />
+            <img src="/logo-clippyme.png" alt="ClippyMe" className="w-6 h-6" />
             <span className="text-sm text-zinc-400">ClippyMe — Free Open Source AI Clip Generator</span>
           </div>
           <div className="flex items-center gap-6 text-sm text-zinc-500">

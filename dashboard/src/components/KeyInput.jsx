@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Key, Eye, EyeOff, Check, Save, ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
+import { Key, Eye, EyeOff, Check, Save, ShieldCheck, Loader2, AlertCircle, Cpu } from 'lucide-react';
 import { config } from '../config';
 
 const KEY_TYPES = [
@@ -13,6 +13,10 @@ export default function KeyInput({ onKeySet, savedKey }) {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
+    
+    const [models, setModels] = useState([]);
+    const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
+    const [isLoadingModels, setIsLoadingModels] = useState(false);
 
     // Fetch current config from server on mount
     useEffect(() => {
@@ -25,11 +29,39 @@ export default function KeyInput({ onKeySet, savedKey }) {
             if (response.ok) {
                 const data = await response.json();
                 setServerConfig(data);
+                if (data.GEMINI_MODEL) {
+                    setSelectedModel(data.GEMINI_MODEL);
+                }
+                
+                const geminiKey = data.GEMINI_API_KEY || localStorage.getItem('gemini_key');
+                if (geminiKey) {
+                    fetchModels(geminiKey);
+                }
             }
         } catch (error) {
             console.error("Failed to fetch config:", error);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const fetchModels = async (key) => {
+        if (!key) return;
+        setIsLoadingModels(true);
+        try {
+            const response = await fetch(`${config.API_BASE_URL}/api/config/models`, {
+                headers: { 'X-Gemini-Key': key }
+            });
+            if (response.ok) {
+                const data = await response.json();
+                if (data.models && data.models.length > 0) {
+                    setModels(data.models);
+                }
+            }
+        } catch (error) {
+            console.error("Failed to fetch models:", error);
+        } finally {
+            setIsLoadingModels(false);
         }
     };
 
@@ -52,9 +84,10 @@ export default function KeyInput({ onKeySet, savedKey }) {
                 await fetchConfig(); // Refresh masked keys
                 setKeys({ ...keys, [keyId]: '' }); // Clear input
                 
-                // If it's the Gemini key, notify parent for immediate use
                 if (keyId === 'GEMINI_API_KEY') {
                     onKeySet(value);
+                    localStorage.setItem('gemini_key', value);
+                    fetchModels(value); // Refresh models with new key
                 }
             } else {
                 setMessage({ type: 'error', text: 'Failed to save key to server.' });
@@ -64,6 +97,21 @@ export default function KeyInput({ onKeySet, savedKey }) {
         } finally {
             setIsSaving(false);
             setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+        }
+    };
+
+    const handleModelChange = async (e) => {
+        const newModel = e.target.value;
+        setSelectedModel(newModel);
+        
+        try {
+            await fetch(`${config.API_BASE_URL}/api/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keys: { 'GEMINI_MODEL': newModel } })
+            });
+        } catch (error) {
+            console.error("Failed to update model on server:", error);
         }
     };
 
@@ -99,7 +147,8 @@ export default function KeyInput({ onKeySet, savedKey }) {
                 )}
             </div>
 
-            <div className="space-y-6">
+            <div className="space-y-8">
+                {/* API Keys */}
                 {KEY_TYPES.map((type) => {
                     const isConfigured = !!serverConfig[type.id];
                     return (
@@ -156,14 +205,77 @@ export default function KeyInput({ onKeySet, savedKey }) {
                         </div>
                     );
                 })}
+
+                {/* Model Selection */}
+                <div className="pt-6 border-t border-white/5">
+                    <div className="flex items-center gap-3 mb-4">
+                        <div className="p-2 bg-blue-500/20 rounded-lg text-blue-400">
+                            <Cpu size={20} />
+                        </div>
+                        <div>
+                            <h2 className="text-lg font-semibold">Gemini Model</h2>
+                            <p className="text-xs text-zinc-500">Choose which AI model to use for analysis</p>
+                        </div>
+                    </div>
+
+                    <div className="relative">
+                        <select
+                            value={selectedModel}
+                            onChange={handleModelChange}
+                            disabled={isLoadingModels}
+                            className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-primary/50 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                        >
+                            {models.length > 0 ? (
+                                models.map(m => (
+                                    <option key={m.name} value={m.name}>
+                                        {m.display_name} ({m.name})
+                                    </option>
+                                ))
+                            ) : (
+                                <>
+                                    <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
+                                    <option value="gemini-2.5-pro">Gemini 2.5 Pro (Advanced)</option>
+                                    <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Fastest)</option>
+                                    <option value="gemini-1.5-flash">Gemini 1.5 Flash (Legacy)</option>
+                                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (Legacy)</option>
+                                </>
+                            )}
+                        </select>
+                        {isLoadingModels ? (
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2">
+                                <Loader2 size={16} className="animate-spin text-zinc-500" />
+                            </div>
+                        ) : (
+                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
+                                <ChevronDown size={16} />
+                            </div>
+                        )}
+                    </div>
+                    {models.length === 0 && !isLoadingModels && (
+                        <p className="mt-2 text-[10px] text-zinc-500 flex items-center gap-1">
+                            <AlertCircle size={10} /> 
+                            Save a valid API key to fetch the full list of available models.
+                        </p>
+                    )}
+                </div>
             </div>
             
-            <div className="mt-6 pt-6 border-t border-white/5">
+            <div className="mt-8 pt-6 border-t border-white/5">
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    Keys are stored securely in <code>data/config.json</code> on the server. 
+                    Settings are stored securely in <code>data/config.json</code> on the server. 
                     Changes take effect immediately for all new processing jobs.
                 </p>
             </div>
         </div>
     );
 }
+
+const ChevronDown = ({ size, className }) => (
+    <svg 
+        width={size} height={size} viewBox="0 0 24 24" fill="none" 
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" 
+        strokeLinejoin="round" className={className}
+    >
+        <path d="m6 9 6 6 6-6"/>
+    </svg>
+);

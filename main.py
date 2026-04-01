@@ -801,11 +801,10 @@ def get_viral_clips(transcript_result, video_duration):
         print("❌ Error: GEMINI_API_KEY not found in environment variables.")
         return None
 
-
     client = genai.Client(api_key=api_key)
     
-    # We use gemini-2.5-flash as requested.
-    model_name = 'gemini-2.5-flash' 
+    # Use selected model from env, or default to gemini-2.5-flash
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash") 
     
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
