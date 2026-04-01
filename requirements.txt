@@ -16,3 +16,4 @@ python-multipart
 httpx
 Pillow
 beautifulsoup4
+curl-cffi

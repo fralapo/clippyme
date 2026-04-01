@@ -2,11 +2,16 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+# Change ownership of /app to node user
+RUN chown -R node:node /app
+
+USER node
+
+COPY --chown=node:node package.json package-lock.json* ./
 
 RUN npm install
 
-COPY . .
+COPY --chown=node:node . .
 
 EXPOSE 5173
 
