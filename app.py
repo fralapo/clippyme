@@ -375,6 +375,29 @@ async def get_status(job_id: str):
         "result": job.get('result')
     }
 
+@app.get("/api/config")
+async def get_config():
+    """Return current active configuration (keys are partially masked for safety)."""
+    config = load_persistent_config()
+    masked = {}
+    for k, v in config.items():
+        if v and len(v) > 8:
+            masked[k] = f"{v[:4]}...{v[-4:]}"
+        else:
+            masked[k] = v
+    return masked
+
+class ConfigUpdateRequest(BaseModel):
+    keys: dict
+
+@app.post("/api/config")
+async def update_config(req: ConfigUpdateRequest):
+    """Update and persist API keys."""
+    if save_persistent_config(req.keys):
+        return {"success": True, "message": "Configuration updated and persisted."}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to save configuration.")
+
 from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video
 from hooks import add_hook_to_video
@@ -946,6 +969,30 @@ async def get_social_user(api_key: str = Header(..., alias="X-Upload-Post-Key"))
                          if username:
                              # Determine connected platforms
                              socials = p.get('social_accounts', {})
+                             connected = []
+                             # Check typical platforms
+                             for platform in ['tiktok', 'instagram', 'youtube']:
+                                 account_info = socials.get(platform)
+                                 # If it's a dict and typically has data, or just not empty string
+                                 if isinstance(account_info, dict):
+                                     connected.append(platform)
+                             
+                             profiles_list.append({
+                                 "username": username,
+                                 "connected": connected
+                             })
+            
+            if not profiles_list:
+                # Fallback if no profiles found
+                return {"profiles": [], "error": "No profiles found"}
+                
+            return {"profiles": profiles_list}
+            
+            
+        except Exception as e:
+             raise HTTPException(status_code=500, detail=str(e))
+
+        socials = p.get('social_accounts', {})
                              connected = []
                              # Check typical platforms
                              for platform in ['tiktok', 'instagram', 'youtube']:

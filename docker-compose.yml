@@ -1,5 +1,9 @@
 name: clippyme
 
+networks:
+  clippyme-net:
+    driver: bridge
+
 services:
   backend:
     build: .
@@ -10,6 +14,9 @@ services:
     volumes:
       - .:/app
       - /app/__pycache__
+      - ./config.json:/app/config.json
+    networks:
+      - clippyme-net
     restart: unless-stopped
 
   frontend:
@@ -21,6 +28,8 @@ services:
     volumes:
       - ./dashboard:/app
       - /app/node_modules
+    networks:
+      - clippyme-net
     restart: unless-stopped
     depends_on:
       - backend

@@ -482,8 +482,7 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
             print("⚠️ YOUTUBE_COOKIES env var not found.")
     
     # Common yt-dlp options to work around YouTube bot detection.
-    # extractor_args tries multiple player clients in order; tv_embed / android
-    # avoid the OAuth/PO-token checks that block server IPs.
+    # Avoid the OAuth/PO-token checks that block server IPs.
     _COMMON_YDL_OPTS = {
         'quiet': False,
         'verbose': True,
@@ -494,12 +493,7 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
         'fragment_retries': 10,
         'nocheckcertificate': True,
         'cachedir': False,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv_embed', 'android', 'mweb', 'web'],
-                'player_skip': ['webpage', 'configs'],
-            }
-        },
+        'remote_components': ['ejs:github'],
         'http_headers': {
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
