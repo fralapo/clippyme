@@ -1,0 +1,10 @@
+{
+    "GEMINI_API_KEY": "",
+    "ELEVENLABS_API_KEY": "",
+    "UPLOAD_POST_API_KEY": "",
+    "AWS_ACCESS_KEY_ID": "",
+    "AWS_SECRET_ACCESS_KEY": "",
+    "AWS_S3_BUCKET": "",
+    "AWS_S3_PUBLIC_BUCKET": "",
+    "YOUTUBE_COOKIES": ""
+}
