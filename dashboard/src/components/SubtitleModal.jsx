@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Type, Loader2, AlignCenter, AlignVerticalJustifyStart, AlignVerticalJustifyEnd, Palette, Type as TypeIcon, Layers } from 'lucide-react';
 
 const FONT_OPTIONS = [
@@ -59,9 +60,9 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
         ),
     };
 
-    return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in">
-            <div className="glass-panel p-1 w-full max-w-5xl shadow-2xl relative flex flex-col md:flex-row gap-0 overflow-hidden max-h-[90vh]">
+    return createPortal(
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-fade-in" onClick={onClose}>
+            <div className="glass-panel p-1 w-full max-w-5xl shadow-2xl relative flex flex-col md:flex-row gap-0 overflow-hidden max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
                 {/* Left: Preview Area */}
                 <div className="flex-1 bg-black relative flex items-center justify-center min-h-[400px]">
                      <video src={videoUrl} className="w-full h-full object-contain opacity-40 grayscale" muted playsInline />
@@ -226,6 +227,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                     </div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

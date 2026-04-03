@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Youtube, Upload, FileVideo, X, Check, Globe, Link2, FileUp } from 'lucide-react';
+import { Youtube, Upload, FileVideo, X, Check, Globe, Link2, FileUp, Loader2 } from 'lucide-react';
 
 export default function MediaInput({ onProcess, isProcessing }) {
     const [mode, setMode] = useState('url'); // 'url' | 'file'
@@ -153,13 +153,3 @@ export default function MediaInput({ onProcess, isProcessing }) {
         </div>
     );
 }
-
-const Loader2 = ({ size, className }) => (
-    <svg 
-        width={size} height={size} viewBox="0 0 24 24" fill="none" 
-        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" 
-        strokeLinejoin="round" className={`${className} animate-spin`}
-    >
-        <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-    </svg>
-);

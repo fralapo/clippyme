@@ -131,7 +131,7 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
       
       {!isSyncedPlaying && !isComplete && (
           <div className="absolute top-4 right-4 z-30 flex items-center gap-2 px-3 py-1.5 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 text-white/50 text-[10px] font-mono">
-            AI_MODEL: GEMINI-1.5-FLASH
+            AI_MODEL: {(localStorage.getItem('clippyme_model') || 'gemini-2.5-flash').toUpperCase()}
           </div>
       )}
       

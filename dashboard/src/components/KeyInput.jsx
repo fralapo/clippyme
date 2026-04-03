@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Key, Eye, EyeOff, Check, Save, ShieldCheck, Loader2, AlertCircle, Cpu } from 'lucide-react';
+import { Key, Eye, EyeOff, Check, Save, ShieldCheck, Loader2, AlertCircle, Cpu, ChevronDown } from 'lucide-react';
 import { config } from '../config';
 
 const KEY_TYPES = [
@@ -46,6 +46,7 @@ export default function KeyInput({ onKeySet }) {
                 setServerConfig(data);
                 if (data.GEMINI_MODEL) {
                     setSelectedModel(data.GEMINI_MODEL);
+                    localStorage.setItem('clippyme_model', data.GEMINI_MODEL);
                 }
                 
                 const geminiKey = data.GEMINI_API_KEY || localStorage.getItem('gemini_key');
@@ -103,7 +104,8 @@ export default function KeyInput({ onKeySet }) {
     const handleModelChange = async (e) => {
         const newModel = e.target.value;
         setSelectedModel(newModel);
-        
+        localStorage.setItem('clippyme_model', newModel);
+
         try {
             await fetch(`${config.API_BASE_URL}/api/config`, {
                 method: 'POST',
@@ -236,8 +238,6 @@ export default function KeyInput({ onKeySet }) {
                                     <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended)</option>
                                     <option value="gemini-2.5-pro">Gemini 2.5 Pro (Advanced)</option>
                                     <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Fastest)</option>
-                                    <option value="gemini-1.5-flash">Gemini 1.5 Flash (Legacy)</option>
-                                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (Legacy)</option>
                                 </>
                             )}
                         </select>
@@ -269,13 +269,3 @@ export default function KeyInput({ onKeySet }) {
         </div>
     );
 }
-
-const ChevronDown = ({ size, className }) => (
-    <svg 
-        width={size} height={size} viewBox="0 0 24 24" fill="none" 
-        stroke="currentColor" strokeWidth="2" strokeLinecap="round" 
-        strokeLinejoin="round" className={className}
-    >
-        <path d="m6 9 6 6 6-6"/>
-    </svg>
-);

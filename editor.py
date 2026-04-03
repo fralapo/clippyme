@@ -135,13 +135,28 @@ class VideoEditor:
         """
 
         print("Asking Gemini for FFmpeg filter...")
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=[video_file_obj, prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
-        )
+        response = None
+        for attempt in range(3):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=[video_file_obj, prompt],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json"
+                    )
+                )
+                break
+            except Exception as e:
+                wait = 2 ** attempt * 2
+                if attempt < 2:
+                    print(f"⚠️  Gemini API error (attempt {attempt + 1}/3): {e}. Retrying in {wait}s...")
+                    time.sleep(wait)
+                else:
+                    print(f"❌ Gemini API failed after 3 attempts: {e}")
+                    return None
+
+        if response is None:
+            return None
 
         print(f"DEBUG: Gemini Raw Response:\n{response.text}")
 
@@ -262,13 +277,30 @@ class VideoEditor:
             if "setsar=" not in filter_string:
                 filter_string = f"{filter_string},setsar=1"
 
-        print(f"Executing AI Filter: {filter_string}")
+        # Strip stream labels if present — Gemini sometimes generates
+        # filter_complex syntax ([0:v]...[v_out]) but we need simple -vf.
+        clean_filter = filter_string
+        if clean_filter.startswith("[0:v]"):
+            clean_filter = clean_filter[5:]
+        # Remove output labels like [v_out] or [v_zp] at the end
+        import re as _re
+        clean_filter = _re.sub(r'\[v_\w+\]$', '', clean_filter)
+        # Replace internal labels: [v_zp];[v_zp] → , (chain filters)
+        clean_filter = _re.sub(r'\[v_\w+\]\s*;\s*\[v_\w+\]', ',', clean_filter)
+
+        # Remove spaces inside single-quoted FFmpeg expressions — FFmpeg's
+        # expression parser rejects them (e.g. "1.0 + 0.05" must be "1.0+0.05").
+        def _strip_expr_spaces(m):
+            return "'" + m.group(1).replace(' ', '') + "'"
+        clean_filter = _re.sub(r"'([^']*)'", _strip_expr_spaces, clean_filter)
+
+        print(f"Executing AI Filter: {clean_filter}")
 
         cmd = [
             'ffmpeg', '-y',
             '-i', input_path,
-            '-vf', filter_string,
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
+            '-vf', clean_filter,
+            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '22',
             '-c:a', 'copy',
             output_path
         ]

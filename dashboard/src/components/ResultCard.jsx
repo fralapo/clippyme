@@ -1,15 +1,18 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Video, AlertCircle, X, Loader2, Wand2, Type, Instagram, Share2, Copy, Check } from 'lucide-react';
+import { Download, Youtube, Video, AlertCircle, X, Loader2, Wand2, Type, Instagram, Share2, Copy, Check, Sparkles } from 'lucide-react';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
+import HookModal from './HookModal';
 
 export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, onPause }) {
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
+    const [showHookModal, setShowHookModal] = useState(false);
     const videoRef = React.useRef(null);
     const [currentVideoUrl, setCurrentVideoUrl] = useState(getApiUrl(clip.video_url));
 
     const [isEditing, setIsEditing] = useState(false);
     const [isSubtitling, setIsSubtitling] = useState(false);
+    const [isHooking, setIsHooking] = useState(false);
     const [editError, setEditError] = useState(null);
     const [copiedField, setCopiedField] = useState(null);
 
@@ -112,6 +115,41 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
         }
     };
 
+    const handleHook = async (options) => {
+        setIsHooking(true);
+        setEditError(null);
+        try {
+            const res = await fetch(getApiUrl('/api/hook'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    job_id: jobId,
+                    clip_index: index,
+                    text: options.text,
+                    position: options.position,
+                    size: options.size,
+                    input_filename: currentVideoUrl.split('/').pop()
+                })
+            });
+            if (!res.ok) {
+                const errText = await res.text();
+                try { throw new Error(JSON.parse(errText).detail || errText); }
+                catch { throw new Error(res.status === 404 ? 'Session expired — process a new video first.' : errText); }
+            }
+            const data = await res.json();
+            if (data.new_video_url) {
+                setCurrentVideoUrl(getApiUrl(data.new_video_url));
+                if (videoRef.current) videoRef.current.load();
+                setShowHookModal(false);
+            }
+        } catch (e) {
+            setEditError(e.message);
+            setTimeout(() => setEditError(null), 8000);
+        } finally {
+            setIsHooking(false);
+        }
+    };
+
     return (
         <div className="glass-panel overflow-hidden flex flex-col md:flex-row group/card border-white/5 hover:border-primary/20 transition-all duration-500 animate-fade-in" style={{ animationDelay: `${index * 0.1}s` }}>
             <div className="w-full md:w-[220px] bg-black relative shrink-0 aspect-[9/16] md:aspect-auto group/video overflow-hidden">
@@ -204,23 +242,32 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                     </div>
                 )}
 
-                <div className="grid grid-cols-3 gap-4 mt-auto">
+                <div className="grid grid-cols-2 gap-2 mt-auto">
                     <button
                         onClick={handleAutoEdit}
                         disabled={isEditing}
-                        className="col-span-1 btn-primary-glow !py-3 text-[10px] font-black uppercase tracking-widest"
+                        className="btn-primary-glow !py-2.5 text-[10px] font-black uppercase tracking-widest"
                     >
                         {isEditing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                        {isEditing ? '...' : 'Auto Edit'}
+                        Auto Edit
                     </button>
 
                     <button
                         onClick={() => setShowSubtitleModal(true)}
                         disabled={isSubtitling}
-                        className="col-span-1 py-3 bg-warning hover:bg-warning/90 text-black rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-warning/10 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                        className="py-2.5 bg-warning hover:bg-warning/90 text-black rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-warning/10 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                     >
                         {isSubtitling ? <Loader2 size={14} className="animate-spin" /> : <Type size={14} />}
-                        {isSubtitling ? '...' : 'Captions'}
+                        Captions
+                    </button>
+
+                    <button
+                        onClick={() => setShowHookModal(true)}
+                        disabled={isHooking}
+                        className="py-2.5 bg-accent hover:bg-accent/90 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-accent/10 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                    >
+                        {isHooking ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                        Hook
                     </button>
 
                     <button
@@ -237,16 +284,16 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                                 a.download = `clippyme-segment-${index + 1}.mp4`;
                                 document.body.appendChild(a);
                                 a.click();
-                                window.URL.revokeObjectURL(url);
+                                setTimeout(() => window.URL.revokeObjectURL(url), 60000);
                                 document.body.removeChild(a);
                             } catch (err) {
                                 console.error('Download error:', err);
                                 window.open(currentVideoUrl, '_blank');
                             }
                         }}
-                        className="col-span-1 btn-secondary !py-3 text-[10px] font-black uppercase tracking-widest"
+                        className="btn-secondary !py-2.5 text-[10px] font-black uppercase tracking-widest"
                     >
-                        <Download size={14} className="shrink-0" /> Save
+                        <Download size={14} className="shrink-0" /> Download
                     </button>
                 </div>
             </div>
@@ -257,6 +304,15 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                 onGenerate={handleSubtitle}
                 isProcessing={isSubtitling}
                 videoUrl={currentVideoUrl}
+            />
+
+            <HookModal
+                isOpen={showHookModal}
+                onClose={() => setShowHookModal(false)}
+                onGenerate={handleHook}
+                isProcessing={isHooking}
+                videoUrl={currentVideoUrl}
+                initialText={clip.viral_hook_text || ''}
             />
         </div>
     );

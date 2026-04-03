@@ -1,3 +1,14 @@
+# ClippyMe Docker Compose
+#
+# NVIDIA GPU (default):
+#   docker compose up --build
+#
+# CPU only / Apple Silicon / ARM:
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
+#
+# Or set in .env:
+#   GPU_RUNTIME=cpu
+
 name: clippyme
 
 networks:
@@ -6,7 +17,10 @@ networks:
 
 services:
   backend:
-    build: .
+    build:
+      context: .
+      args:
+        GPU_RUNTIME: ${GPU_RUNTIME:-nvidia}
     container_name: clippyme-backend
     image: clippyme-backend
     ports:
@@ -37,13 +51,6 @@ services:
       - /app/node_modules
     networks:
       - clippyme-net
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
     restart: unless-stopped
     depends_on:
       - backend

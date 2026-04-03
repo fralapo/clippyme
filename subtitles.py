@@ -2,23 +2,40 @@ import os
 import subprocess
 
 
+_cuda_works = None  # cached after first check
+
+def _check_cuda():
+    global _cuda_works
+    if _cuda_works is not None:
+        return _cuda_works
+    import torch
+    if not torch.cuda.is_available():
+        _cuda_works = False
+        return False
+    try:
+        import numpy as _np
+        from faster_whisper import WhisperModel
+        _m = WhisperModel("tiny", device="cuda", compute_type="float16")
+        _m.transcribe(_np.zeros(16000, dtype=_np.float32))
+        del _m
+        _cuda_works = True
+    except Exception:
+        _cuda_works = False
+    return _cuda_works
+
 def transcribe_audio(video_path):
     """
     Transcribe audio from a video file using faster-whisper.
     Returns transcript in the same format as main.py for compatibility.
     """
-    import torch
     from faster_whisper import WhisperModel
 
-    # Auto-detect hardware
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if _check_cuda() else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
-
     print(f"🎙️  Transcribing audio from: {video_path} ({device.upper()} mode)")
-
     model = WhisperModel("base", device=device, compute_type=compute_type)
-
     segments, info = model.transcribe(video_path, word_timestamps=True)
+    segments = list(segments)
 
     transcript = {
         "segments": [],
@@ -213,7 +230,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         '-i', video_path,
         '-vf', f"subtitles='{safe_srt_path}':force_style='{style_string}'",
         '-c:a', 'copy',
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23',
         output_path
     ]
 

@@ -29,6 +29,34 @@ load_dotenv()
 ASPECT_RATIO = 9 / 16
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+# Test if CUDA actually works for faster-whisper (needs libcublas via ctranslate2).
+# Creating the model is not enough — libcublas only loads during actual encoding.
+CUDA_AVAILABLE = False
+if DEVICE == "cuda":
+    try:
+        from faster_whisper import WhisperModel as _WM
+        import numpy as _np
+        _m = _WM("tiny", device="cuda", compute_type="float16")
+        # Force a real encode to trigger libcublas loading
+        _dummy = _np.zeros(16000, dtype=_np.float32)  # 1s of silence
+        _m.transcribe(_dummy)
+        del _m, _dummy
+        CUDA_AVAILABLE = True
+        print("✅ CUDA runtime verified — GPU acceleration enabled for Whisper")
+    except Exception as e:
+        CUDA_AVAILABLE = False
+        print(f"⚠️  CUDA not usable for Whisper: {type(e).__name__} — using CPU")
+else:
+    print("ℹ️  No CUDA detected — using CPU")
+
+# Per-model pricing ($ per 1M tokens) — update when Google changes rates
+MODEL_PRICING = {
+    "gemini-2.5-flash": {"input": 0.10, "output": 0.40},
+    "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
+    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+}
+
 GEMINI_PROMPT_TEMPLATE = """
 You are a senior short-form video editor. Read the ENTIRE transcript and word-level timestamps to choose the 3–15 MOST VIRAL moments for TikTok/IG Reels/YouTube Shorts. Each clip must be between 15 and 60 seconds long.
 
@@ -719,10 +747,13 @@ def process_video_to_vertical(input_video, final_output_video):
         'ffmpeg', '-y', '-i', input_video, '-vn', '-acodec', 'copy', temp_audio_output
     ]
     try:
-        subprocess.run(audio_extract_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    except subprocess.CalledProcessError:
-        print("\n   ❌ Audio extraction failed (maybe no audio?). Proceeding without audio.")
-        pass
+        result = subprocess.run(audio_extract_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    except subprocess.CalledProcessError as e:
+        stderr_msg = e.stderr.decode(errors='replace').strip() if e.stderr else 'unknown'
+        print(f"\n   ⚠️ Audio extraction failed: {stderr_msg}")
+        print("   Continuing without audio — output video will be silent.")
+        if os.path.exists(temp_audio_output):
+            os.remove(temp_audio_output)
 
     print("\n   ✨ Step 6: Merging...")
     if os.path.exists(temp_audio_output):
@@ -751,20 +782,21 @@ def process_video_to_vertical(input_video, final_output_video):
     return True
 
 def transcribe_video(video_path):
-    print("🎙️  Transcribing video with Faster-Whisper (CPU Optimized)...")
     from faster_whisper import WhisperModel
-    
-    # Run on CPU with INT8 quantization for speed
-    model = WhisperModel("base", device="cpu", compute_type="int8")
-    
+
+    device = "cuda" if CUDA_AVAILABLE else "cpu"
+    compute_type = "float16" if device == "cuda" else "int8"
+    print(f"🎙️  Transcribing video with Faster-Whisper ({device.upper()} mode)...")
+    model = WhisperModel("base", device=device, compute_type=compute_type)
     segments, info = model.transcribe(video_path, word_timestamps=True)
-    
+    segments = list(segments)
+
     print(f"   Detected language '{info.language}' with probability {info.language_probability:.2f}")
-    
+
     # Convert to openai-whisper compatible format
     transcript_segments = []
     full_text = ""
-    
+
     for segment in segments:
         # Print progress to keep user informed (and prevent timeouts feeling)
         print(f"   [{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
@@ -809,6 +841,9 @@ def get_viral_clips(transcript_result, video_duration):
     
     print(f"🤖  Initializing Gemini with model: {model_name}")
 
+    if any(old in model_name for old in ("1.0", "1.5", "2.0")):
+        print(f"⚠️  WARNING: {model_name} is deprecated. Please switch to gemini-2.5-flash or later via the dashboard.")
+
     # Extract words
     words = []
     for segment in transcript_result['segments']:
@@ -825,64 +860,104 @@ def get_viral_clips(transcript_result, video_duration):
         words_json=json.dumps(words)
     )
 
-    try:
-        response = client.models.generate_content(
-            model=model_name,
-            contents=prompt
-        )
-        
-        # --- Cost Calculation ---
+    # Retry with exponential backoff for rate limits / transient errors
+    response = None
+    for attempt in range(3):
         try:
-            usage = response.usage_metadata
-            if usage:
-                # Gemini 2.5 Flash Pricing (Dec 2025)
-                # Input: $0.10 per 1M tokens
-                # Output: $0.40 per 1M tokens
-                
-                input_price_per_million = 0.10
-                output_price_per_million = 0.40
-                
-                prompt_tokens = usage.prompt_token_count
-                output_tokens = usage.candidates_token_count
-                
-                input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
-                output_cost = (output_tokens / 1_000_000) * output_price_per_million
-                total_cost = input_cost + output_cost
-                
-                cost_analysis = {
-                    "input_tokens": prompt_tokens,
-                    "output_tokens": output_tokens,
-                    "input_cost": input_cost,
-                    "output_cost": output_cost,
-                    "total_cost": total_cost,
-                    "model": model_name
-                }
-
-                print(f"💰 Token Usage ({model_name}):")
-                print(f"   - Input Tokens: {prompt_tokens} (${input_cost:.6f})")
-                print(f"   - Output Tokens: {output_tokens} (${output_cost:.6f})")
-                print(f"   - Total Estimated Cost: ${total_cost:.6f}")
-                
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            break
         except Exception as e:
-            print(f"⚠️ Could not calculate cost: {e}")
-            cost_analysis = None
-        # ------------------------
+            wait = 2 ** attempt * 2  # 2s, 4s, 8s
+            if attempt < 2:
+                print(f"⚠️  Gemini API error (attempt {attempt + 1}/3): {e}. Retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                print(f"❌ Gemini API failed after 3 attempts: {e}")
+                return None
 
-        # Clean response if it contains markdown code blocks
+    if response is None:
+        return None
+
+    # --- Cost Calculation ---
+    cost_analysis = None
+    try:
+        usage = response.usage_metadata
+        if usage:
+            pricing = MODEL_PRICING.get(model_name, None)
+            input_price_per_million = pricing["input"] if pricing else 0.0
+            output_price_per_million = pricing["output"] if pricing else 0.0
+
+            prompt_tokens = usage.prompt_token_count
+            output_tokens = usage.candidates_token_count
+
+            input_cost = (prompt_tokens / 1_000_000) * input_price_per_million
+            output_cost = (output_tokens / 1_000_000) * output_price_per_million
+            total_cost = input_cost + output_cost
+
+            cost_analysis = {
+                "input_tokens": prompt_tokens,
+                "output_tokens": output_tokens,
+                "input_cost": input_cost,
+                "output_cost": output_cost,
+                "total_cost": total_cost,
+                "model": model_name
+            }
+            if not pricing:
+                cost_analysis["note"] = "Pricing not available for this model"
+
+            print(f"💰 Token Usage ({model_name}):")
+            print(f"   - Input Tokens: {prompt_tokens} (${input_cost:.6f})")
+            print(f"   - Output Tokens: {output_tokens} (${output_cost:.6f})")
+            print(f"   - Total Estimated Cost: ${total_cost:.6f}")
+    except Exception as e:
+        print(f"⚠️ Could not calculate cost: {e}")
+
+    # Parse response JSON
+    try:
         text = response.text
         if text.startswith("```json"):
             text = text[7:]
         if text.endswith("```"):
             text = text[:-3]
         text = text.strip()
-        
+
         result_json = json.loads(text)
+
+        # Validate clips schema
+        if 'shorts' in result_json and isinstance(result_json['shorts'], list):
+            valid_clips = []
+            for i, clip in enumerate(result_json['shorts']):
+                if not isinstance(clip, dict):
+                    print(f"⚠️  Skipping clip {i+1}: not a dict")
+                    continue
+                if 'start' not in clip or 'end' not in clip:
+                    print(f"⚠️  Skipping clip {i+1}: missing start/end")
+                    continue
+                try:
+                    clip['start'] = float(clip['start'])
+                    clip['end'] = float(clip['end'])
+                except (ValueError, TypeError):
+                    print(f"⚠️  Skipping clip {i+1}: start/end not numeric")
+                    continue
+                if clip['end'] <= clip['start'] or clip['end'] - clip['start'] < 5:
+                    print(f"⚠️  Skipping clip {i+1}: invalid duration ({clip['start']}-{clip['end']})")
+                    continue
+                valid_clips.append(clip)
+            result_json['shorts'] = valid_clips
+            if not valid_clips:
+                print("❌ No valid clips found after validation")
+                return None
+            if len(valid_clips) < len(result_json.get('shorts', [])):
+                print(f"⚠️  {len(result_json['shorts'])} clips passed validation out of {len(result_json['shorts']) + (len(result_json['shorts']) - len(valid_clips))}")
+
         if cost_analysis:
             result_json['cost_analysis'] = cost_analysis
-            
         return result_json
-    except Exception as e:
-        print(f"❌ Gemini Error: {e}")
+    except (json.JSONDecodeError, AttributeError) as e:
+        print(f"❌ Failed to parse Gemini response: {e}")
         return None
 
 if __name__ == '__main__':

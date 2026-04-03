@@ -49,6 +49,23 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertTrue(app.is_trusted_origin("http://127.0.0.1:5173"))
         self.assertFalse(app.is_trusted_origin("https://evil.example"))
 
+    def test_require_trusted_config_request_allows_private_proxy_clients_without_origin(self):
+        request = SimpleNamespace(
+            headers={},
+            client=SimpleNamespace(host="172.19.0.3"),
+        )
+
+        app.require_trusted_config_request(request)
+
+    def test_require_trusted_config_request_rejects_untrusted_public_clients_without_origin(self):
+        request = SimpleNamespace(
+            headers={},
+            client=SimpleNamespace(host="8.8.8.8"),
+        )
+
+        with self.assertRaises(app.HTTPException):
+            app.require_trusted_config_request(request)
+
 
 class EditPathTests(unittest.TestCase):
     def test_build_edit_temp_paths_are_unique(self):

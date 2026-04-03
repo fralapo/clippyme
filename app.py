@@ -7,8 +7,17 @@ import shutil
 import glob
 import time
 import asyncio
+import ipaddress
+import logging
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("clippyme")
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +37,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
 VALID_CONFIG_KEYS = ("GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES")
+ALLOWED_MODEL_PREFIXES = ("gemini-2.5-", "gemini-3")
 DEFAULT_ALLOWED_ORIGINS = (
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -54,6 +64,22 @@ def is_trusted_origin(origin: Optional[str]) -> bool:
     return origin.rstrip("/") in ALLOWED_ORIGINS
 
 
+def is_trusted_client_host(client_host: Optional[str]) -> bool:
+    if not client_host:
+        return False
+
+    normalized_host = client_host.strip().lower()
+    if normalized_host in {"127.0.0.1", "::1", "localhost"}:
+        return True
+
+    try:
+        address = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        return False
+
+    return address.is_loopback or address.is_private
+
+
 def require_trusted_config_request(request: Request) -> None:
     """Protect config endpoints from cross-site browser access."""
     origin = request.headers.get("origin")
@@ -63,7 +89,7 @@ def require_trusted_config_request(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Origin not allowed for config access.")
 
     client_host = request.client.host if request.client else ""
-    if client_host in {"127.0.0.1", "::1", "localhost"}:
+    if is_trusted_client_host(client_host):
         return
 
     raise HTTPException(status_code=403, detail="Config access requires a trusted local origin.")
@@ -93,7 +119,7 @@ def load_persistent_config():
                 filtered = {k: v for k, v in persistent.items() if k in VALID_CONFIG_KEYS}
                 config.update(filtered)
         except Exception as e:
-            print(f"⚠️ Error loading config.json: {e}")
+            logger.warning("Error loading config.json: %s", e)
             
     return config
 
@@ -119,7 +145,7 @@ def save_persistent_config(new_config: dict):
             json.dump(current, f, indent=4)
         return True
     except Exception as e:
-        print(f"❌ Error saving config.json: {e}")
+        logger.error("Error saving config.json: %s", e)
         return False
 
 # Initial load to env
@@ -132,7 +158,7 @@ MAX_FILE_SIZE_MB = 2048  # 2GB limit
 JOB_RETENTION_SECONDS = 3600  # 1 hour retention
 
 # Application State
-job_queue = asyncio.Queue()
+job_queue = asyncio.Queue(maxsize=50)
 jobs: Dict[str, Dict] = {}
 # Semester to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
@@ -183,7 +209,7 @@ def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
 async def cleanup_jobs():
     """Background task to remove old jobs and files."""
     import time
-    print("🧹 Cleanup task started.")
+    logger.info("Cleanup task started")
     while True:
         try:
             await asyncio.sleep(300) # Check every 5 minutes
@@ -195,7 +221,7 @@ async def cleanup_jobs():
                 job_path = os.path.join(OUTPUT_DIR, job_id)
                 if os.path.isdir(job_path):
                     if now - os.path.getmtime(job_path) > JOB_RETENTION_SECONDS:
-                        print(f"🧹 Purging old job: {job_id}")
+                        logger.info("Purging old job: %s", job_id)
                         shutil.rmtree(job_path, ignore_errors=True)
                         if job_id in jobs:
                             del jobs[job_id]
@@ -209,11 +235,11 @@ async def cleanup_jobs():
                 except Exception: pass
 
         except Exception as e:
-            print(f"⚠️ Cleanup error: {e}")
+            logger.warning("Cleanup error: %s", e)
 
 async def process_queue():
     """Background worker to process jobs from the queue with concurrency limit."""
-    print(f"🚀 Job Queue Worker started with {MAX_CONCURRENT_JOBS} concurrent slots.")
+    logger.info("Job queue worker started with %d concurrent slots", MAX_CONCURRENT_JOBS)
     while True:
         try:
             # Wait for a job
@@ -221,13 +247,13 @@ async def process_queue():
             
             # Acquire semaphore slot (waits if max jobs are running)
             await concurrency_semaphore.acquire()
-            print(f"🔄 Acquired slot for job: {job_id}")
+            logger.info("Acquired slot for job: %s", job_id)
 
             # Process in background task to not block the loop (allowing other slots to fill)
             asyncio.create_task(run_job_wrapper(job_id))
             
         except Exception as e:
-            print(f"❌ Queue dispatch error: {e}")
+            logger.error("Queue dispatch error: %s", e)
             await asyncio.sleep(1)
 
 async def run_job_wrapper(job_id):
@@ -237,12 +263,12 @@ async def run_job_wrapper(job_id):
         if job:
             await run_job(job_id, job)
     except Exception as e:
-         print(f"❌ Job wrapper error {job_id}: {e}")
+         logger.error("Job wrapper error %s: %s", job_id, e)
     finally:
         # Always release semaphore and mark queue task done
         concurrency_semaphore.release()
         job_queue.task_done()
-        print(f"✅ Released slot for job: {job_id}")
+        logger.info("Released slot for job: %s", job_id)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -295,6 +321,9 @@ async def list_gemini_models(api_key: Optional[str] = Header(None, alias="X-Gemi
             if 'generateContent' in model.supported_generation_methods:
                 # model.name is like 'models/gemini-pro'
                 clean_name = model.name.replace('models/', '')
+                # Only show current-generation models (skip deprecated 1.x, 2.0)
+                if not any(clean_name.startswith(p) for p in ALLOWED_MODEL_PREFIXES):
+                    continue
                 models.append({
                     "name": clean_name,
                     "display_name": model.display_name,
@@ -317,7 +346,7 @@ def enqueue_output(out, job_id):
                 if job_id in jobs:
                     jobs[job_id]['logs'].append(decoded_line)
     except Exception as e:
-        print(f"Error reading output for job {job_id}: {e}")
+        logger.error("Error reading output for job %s: %s", job_id, e)
     finally:
         out.close()
 
@@ -330,7 +359,7 @@ async def run_job(job_id, job_data):
     
     jobs[job_id]['status'] = 'processing'
     jobs[job_id]['logs'].append("Job started by worker.")
-    print(f"🎬 [run_job] Executing command for {job_id}: {' '.join(cmd)}")
+    logger.info("Executing job %s: %s", job_id, ' '.join(cmd))
     
     try:
         process = subprocess.Popen(
@@ -353,13 +382,13 @@ async def run_job(job_id, job_data):
             
             # Check for partial results every 2 seconds
             # Look for metadata file
+            # main.py writes metadata atomically (complete write + close), so
+            # json.load here is safe in the common case. The outer try/except
+            # handles the rare edge case of reading during a partial write.
             try:
                 json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
                 if json_files:
                     target_json = json_files[0]
-                    # Read metadata (it might be being written to, so simple try/except or just read)
-                    # Use a lock or just robust read? json.load might fail if file is partial.
-                    # Usually main.py writes it once at start (based on my review).
                     if os.path.getsize(target_json) > 0:
                         with open(target_json, 'r') as f:
                             data = json.load(f)
@@ -489,9 +518,14 @@ async def process_endpoint(
         'env': env,
         'output_dir': job_output_dir
     }
-    
-    await job_queue.put(job_id)
-    
+
+    try:
+        job_queue.put_nowait(job_id)
+    except asyncio.QueueFull:
+        del jobs[job_id]
+        shutil.rmtree(job_output_dir, ignore_errors=True)
+        raise HTTPException(status_code=429, detail="Server busy. Please try again later.")
+
     return {"job_id": job_id, "status": "queued"}
 
 @app.get("/api/status/{job_id}")
@@ -533,6 +567,7 @@ async def update_config(req: ConfigUpdateRequest, request: Request):
 
 from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video
+from hooks import add_hook_to_video
 
 class EditRequest(BaseModel):
     job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
@@ -608,7 +643,7 @@ async def edit_clip(
                             data = json.load(f)
                             transcript = data.get('transcript')
                 except Exception as e:
-                    print(f"⚠️ Could not load transcript for editing context: {e}")
+                    logger.warning("Could not load transcript for editing context: %s", e)
 
                 filter_data = editor.get_ffmpeg_filter(vid_file, duration, fps=fps, width=width, height=height, transcript=transcript)
                 
@@ -637,7 +672,7 @@ async def edit_clip(
         }
 
     except Exception as e:
-        print(f"❌ Edit Error: {e}")
+        logger.error("Edit error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 class SubtitleRequest(BaseModel):
@@ -713,7 +748,7 @@ async def add_subtitles(req: SubtitleRequest):
         await loop.run_in_executor(None, run_burn)
         
     except Exception as e:
-        print(f"❌ Subtitle Error: {e}")
+        logger.error("Subtitle error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
         
     if req.clip_index < len(job['result']['clips']):
@@ -726,10 +761,181 @@ async def add_subtitles(req: SubtitleRequest):
             with open(json_files[0], 'w') as f:
                 json.dump(data, f, indent=4)
     except Exception as e:
-        print(f"⚠️ Failed to update metadata.json: {e}")
+        logger.warning("Failed to update metadata.json: %s", e)
 
     return {
         "success": True,
         "new_video_url": f"/videos/{req.job_id}/{output_filename}"
     }
 
+class HookRequest(BaseModel):
+    job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
+    clip_index: int
+    text: str
+    input_filename: Optional[str] = None
+    position: str = "top"
+    size: str = "M"
+
+@app.post("/api/hook")
+async def add_hook(req: HookRequest):
+    if req.job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[req.job_id]
+    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
+    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+
+    with open(json_files[0], 'r') as f:
+        data = json.load(f)
+
+    clips = data.get('shorts', [])
+    if req.clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    clip_data = clips[req.clip_index]
+
+    if req.input_filename:
+        filename = os.path.basename(req.input_filename)
+    else:
+        filename = clip_data.get('video_url', '').split('/')[-1]
+        if not filename:
+            base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+            filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
+
+    input_path = os.path.join(output_dir, filename)
+    if not os.path.exists(input_path):
+        raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
+
+    output_filename = f"hook_{filename}"
+    output_path = os.path.join(output_dir, output_filename)
+
+    size_map = {"S": 0.8, "M": 1.0, "L": 1.3}
+    font_scale = size_map.get(req.size, 1.0)
+
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, lambda: add_hook_to_video(input_path, req.text, output_path, position=req.position, font_scale=font_scale)
+        )
+    except Exception as e:
+        logger.error("Hook error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if 'result' in job and 'clips' in job['result'] and req.clip_index < len(job['result']['clips']):
+        job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+
+    try:
+        if req.clip_index < len(clips):
+            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
+            data['shorts'] = clips
+            with open(json_files[0], 'w') as f:
+                json.dump(data, f, indent=4)
+    except Exception as e:
+        logger.warning("Failed to update metadata.json: %s", e)
+
+    return {
+        "success": True,
+        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
+    }
+
+
+import re as _re
+
+@app.get("/api/history")
+async def list_history():
+    """Scan output/ for past jobs with metadata files."""
+    results = []
+    try:
+        for entry in os.listdir(OUTPUT_DIR):
+            job_dir = os.path.join(OUTPUT_DIR, entry)
+            if not os.path.isdir(job_dir) or not _re.match(r'^[0-9a-fA-F-]{36}$', entry):
+                continue
+            meta_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
+            if not meta_files:
+                continue
+            try:
+                with open(meta_files[0], 'r') as f:
+                    data = json.load(f)
+                clips = data.get('shorts', [])
+                clip_files = []
+                for i, clip in enumerate(clips):
+                    clip_filename = clip.get('video_url', '').split('/')[-1]
+                    if not clip_filename:
+                        base_name = os.path.basename(meta_files[0]).replace('_metadata.json', '')
+                        clip_filename = f"{base_name}_clip_{i+1}.mp4"
+                    clip_path = os.path.join(job_dir, clip_filename)
+                    if os.path.exists(clip_path):
+                        clip_files.append({
+                            "video_url": f"/videos/{entry}/{clip_filename}",
+                            "title": clip.get('video_title_for_youtube_short', ''),
+                            "start": clip.get('start', 0),
+                            "end": clip.get('end', 0),
+                        })
+                dir_mtime = os.path.getmtime(job_dir)
+                results.append({
+                    "jobId": entry,
+                    "timestamp": int(dir_mtime * 1000),
+                    "clipCount": len(clip_files),
+                    "clips": clip_files,
+                    "cost": data.get('cost_analysis', {}).get('total_cost') if data.get('cost_analysis') else None,
+                    "source": os.path.basename(meta_files[0]).replace('_metadata.json', '').replace('_', ' '),
+                })
+            except Exception:
+                continue
+    except Exception as e:
+        logger.warning("Error scanning history: %s", e)
+    results.sort(key=lambda x: x['timestamp'], reverse=True)
+    return {"jobs": results}
+
+@app.delete("/api/history/{job_id}")
+async def delete_history(job_id: str):
+    """Delete a job's output directory and all its files."""
+    if not _re.match(r'^[0-9a-fA-F-]{36}$', job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    job_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(job_dir):
+        raise HTTPException(status_code=404, detail="Job not found on disk")
+    shutil.rmtree(job_dir, ignore_errors=True)
+    if job_id in jobs:
+        del jobs[job_id]
+    logger.info("Deleted job %s and all files", job_id)
+    return {"success": True}
+
+@app.post("/api/history/{job_id}/restore")
+async def restore_job(job_id: str):
+    """Restore a past job into the in-memory jobs dict so edit/hook/subtitle endpoints work."""
+    if not _re.match(r'^[0-9a-fA-F-]{36}$', job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    job_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(job_dir):
+        raise HTTPException(status_code=404, detail="Job not found on disk")
+    meta_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
+    if not meta_files:
+        raise HTTPException(status_code=404, detail="No metadata found for this job")
+    with open(meta_files[0], 'r') as f:
+        data = json.load(f)
+    clips = data.get('shorts', [])
+    base_name = os.path.basename(meta_files[0]).replace('_metadata.json', '')
+    for i, clip in enumerate(clips):
+        clip_filename = clip.get('video_url', '').split('/')[-1]
+        if not clip_filename:
+            clip_filename = f"{base_name}_clip_{i+1}.mp4"
+        clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
+    cost_analysis = data.get('cost_analysis')
+    jobs[job_id] = {
+        'status': 'completed',
+        'logs': ['Restored from disk.'],
+        'cmd': [],
+        'env': {},
+        'output_dir': job_dir,
+        'result': {'clips': clips, 'cost_analysis': cost_analysis}
+    }
+    logger.info("Restored job %s into memory (%d clips)", job_id, len(clips))
+    return {
+        "success": True,
+        "status": "completed",
+        "result": {'clips': clips, 'cost_analysis': cost_analysis}
+    }
