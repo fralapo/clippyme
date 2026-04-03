@@ -13,11 +13,12 @@ ClippyMe is a self-hosted AI video platform that transforms long-form videos (Yo
 - **Editor** (`editor.py`): FFmpeg filter generation with 3-level retry (full Gemini filter → simplified → passthrough). Gemini File API integration for context-aware editing.
 - **Subtitles** (`subtitles.py`): ASS karaoke generation (`generate_ass_karaoke()`) with 6 viral presets + legacy SRT support. Burns via `ass` filter with bundled fonts.
 - **Smart Cut** (`smartcut.py`): Optional post-processing that removes silences (>0.8s) and filler words using FFmpeg concat demuxer. Triggered on-demand, never automatic.
-- **Frontend** (`dashboard/`): React 18 + Vite 4 + Tailwind CSS. Premium glass-morphism design inspired by Linear/Raycast. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
+- **Frontend** (`dashboard/`): React 18 + Vite 5 + Tailwind CSS v4 + shadcn/ui. Premium glass-morphism design inspired by Linear/Raycast. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
   - **Logo**: Custom SVG with multi-color gradient design (`public/logo.svg`)
   - **Color palette**: Dark foundation (#050507, #0f0f13, #16161d, #1e1e28) + brand colors (blue #0a81d9 primary, pink-purple-indigo gradient accent, teal #02c5bf, cyan #00d9ff)
   - **Design tokens**: Glassmorphism with backdrop-blur, gradient borders, glow shadows, ambient noise texture, responsive single-column layout
   - **Components**: TopNav (logo + tabs), MediaInput (URL/Upload/Batch tabs, advanced options), ResultCard (9:16 video + actions), SubtitleModal/HookModal (two-column settings/preview), ProcessingAnimation, Landing page
+  - **shadcn/ui components** (`dashboard/src/components/ui/`): Button, Badge, Tooltip, Skeleton, Sonner (toasts), Progress, Dialog, Tabs — all using Radix UI primitives via `radix-ui` monorepo
   - **Fonts** (`fonts/`): Bundled TTF fonts for subtitle rendering (Anton, Bangers, Montserrat-Black/ExtraBold, Poppins-Black/Medium) + ASS karaoke support
 - **Fonts** (`fonts/`): Bundled TTF fonts for ASS subtitle rendering (Anton, Bangers, Montserrat-Black/ExtraBold, Poppins-Black/Medium, NotoSerif-Bold).
 
@@ -35,28 +36,36 @@ Config is persisted in `data/config.json` (git-ignored). API keys and Gemini mod
 - **ProcessingAnimation**: Source video container with pulsing gradient border, status badge with animated dots, model/hardware info badges, synced playback indicator.
 - **Landing**: Hero with gradient logo, "ClippyMe" text (pink→purple→blue), feature grid (6 items), "How it works" (3 steps), premium CTAs. Triggered on first load or via "Create" tab from idle state.
 
-**Tailwind Config Customizations**:
-- Extended color palette with dark surfaces and brand gradients
-- Custom animations: `gradient-shift` (8s background cycle for animations)
-- Custom shadows: `glow-pink`, `elevated` for layered effects
-- Border utilities using `rgba(255,255,255,0.04)` to `0.12)` for subtle dividers
+**Tailwind v4 Setup**:
+- Uses `@tailwindcss/vite` Vite plugin (NOT PostCSS — `postcss.config.js` only has autoprefixer)
+- All brand tokens defined in `@theme {}` block in `index.css` (no separate config needed for most things)
+- `tailwind.config.js` retained only for shadcn CSS variable color mappings (`foreground`, `card`, `popover`, etc.)
+- Custom colors: dark surfaces, brand gradients, full shadcn token set (`primary-foreground`, `secondary`, `input`, etc.)
+- Custom animations: `gradient-shift` (8s cycle), `float`, `shimmer`, `pulseRing`, `scanLine`
+- Custom shadows: `glow-primary`, `glow-accent`, `glow-pink`, `elevated`, `glass`
+- `@` path alias configured in `vite.config.js` and `jsconfig.json` → resolves to `dashboard/src/`
 
 **CSS Features** (`dashboard/src/index.css`):
-- `.glass-panel`: backdrop-blur-2xl with subtle gradient, used on modals and cards
+- Tailwind v4 syntax: `@import "tailwindcss"` + `@import "tw-animate-css"`
+- `.glass-panel`: backdrop-blur with subtle gradient, used on modals and cards
 - `.gradient-border`: pink-to-blue gradient pseudo-element border
-- `.btn-primary`, `.btn-ghost`: gradient and transparent button styles with hover glow
-- Refined scrollbar (6px, transparent track, rounded thumb)
+- `.btn-primary`, `.btn-ghost`, `.btn-secondary`, `.btn-modern`: button variant classes
+- `.input-field`: base input styling with focus ring
+- Refined scrollbar (6px, transparent track, rounded thumb) — applied globally, no class needed
 - Body texture: subtle noise/grain via `::after` pseudo-element
-- `.bg-ambient`: layered radial gradients in brand colors replacing grid pattern
+- `.bg-ambient`: layered radial gradients in brand colors
+- `prefers-reduced-motion` media query disables all animations for accessibility
+- `:focus-visible` ring for keyboard navigation accessibility
 
 **App State & Flow** (`dashboard/src/App.jsx`):
+- Default export is `AppWithProviders` which wraps `App` in `TooltipProvider` (Radix requirement)
+- `<Toaster position="bottom-right" richColors closeButton />` rendered inside App for sonner toasts
 - Step-based workflow: idle (input) → processing (logs) → complete (results/history)
-- Session persistence: `localStorage` for credentials, history, job results
+- Session persistence: `localStorage` for credentials (`gemini_key`), model (`clippyme_model`), history (`clippyme_history`), session (`clippyme_session`)
 - Job polling: 2-second interval via `setInterval`, cleared on unmount
 - Batch processing: `batchId` and `batchJobs` state for multi-URL submissions
-- Error handling: red-bordered error panel with retry CTA
+- Error toasts via sonner replace inline error banners
 - Confetti animation (40 particles) triggered on job completion
-- All original API calls, event handlers, and state transitions preserved
 
 ## Commands
 
@@ -65,6 +74,8 @@ Config is persisted in `data/config.json` (git-ignored). API keys and Gemini mod
 docker compose up --build
 ```
 Backend: http://localhost:8000 | Frontend: http://localhost:5175
+
+> **First run or after package changes**: use `docker compose down -v && docker compose up --build` to clear the stale `/app/node_modules` anonymous volume.
 
 ### Local development
 ```
@@ -86,6 +97,12 @@ Tests use `unittest` with mocks. Run from project root (test file adds root to `
 ```
 cd dashboard && npm run build
 ```
+
+### Adding shadcn/ui components
+```
+cd dashboard && npx shadcn add <component>
+```
+Components land in `src/components/ui/`. They use Tailwind v4 class syntax — verify compatibility before adding.
 
 ## Key Patterns
 
