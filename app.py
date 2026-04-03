@@ -36,7 +36,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
 
-VALID_CONFIG_KEYS = ("GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES")
+VALID_CONFIG_KEYS = ("GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES", "HF_TOKEN")
 ALLOWED_MODEL_PREFIXES = ("gemini-2.5-", "gemini-3")
 DEFAULT_ALLOWED_ORIGINS = (
     "http://localhost:5173",
@@ -108,7 +108,8 @@ def load_persistent_config():
     config = {
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
-        "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", "")
+        "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", ""),
+        "HF_TOKEN": os.environ.get("HF_TOKEN", "")
     }
     
     if os.path.exists(CONFIG_FILE):
@@ -359,16 +360,18 @@ async def run_job(job_id, job_data):
     
     jobs[job_id]['status'] = 'processing'
     jobs[job_id]['logs'].append("Job started by worker.")
+    jobs[job_id]['process'] = None  # Will hold Popen reference for cancel
     logger.info("Executing job %s: %s", job_id, ' '.join(cmd))
-    
+
     try:
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, # Merge stderr to stdout
+            stderr=subprocess.STDOUT,
             env=env,
             cwd=os.getcwd()
         )
+        jobs[job_id]['process'] = process
         
         # We need to capture logs in a thread because Popen isn't async
         t_log = threading.Thread(target=enqueue_output, args=(process.stdout, job_id))
@@ -415,8 +418,11 @@ async def run_job(job_id, job_data):
                 pass
 
         returncode = process.returncode
-        
-        if returncode == 0:
+
+        # Check if job was cancelled while running
+        if jobs[job_id]['status'] == 'cancelled':
+            jobs[job_id]['logs'].append("Process terminated (cancelled).")
+        elif returncode == 0:
             jobs[job_id]['status'] = 'completed'
             jobs[job_id]['logs'].append("Process finished successfully.")
             
@@ -539,6 +545,36 @@ async def get_status(job_id: str):
         "logs": job['logs'],
         "result": job.get('result')
     }
+
+@app.post("/api/cancel/{job_id}")
+async def cancel_job(job_id: str):
+    """Cancel a running job by killing its subprocess."""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[job_id]
+    if job['status'] not in ('processing', 'queued'):
+        raise HTTPException(status_code=400, detail="Job is not running")
+
+    proc = job.get('process')
+    if proc and proc.poll() is None:
+        import signal
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+
+    job['status'] = 'cancelled'
+    job['logs'].append("Job cancelled by user.")
+    logger.info("Job %s cancelled by user", job_id)
+
+    # Cleanup output dir
+    output_dir = job.get('output_dir', '')
+    if output_dir and os.path.isdir(output_dir):
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    return {"success": True, "status": "cancelled"}
 
 @app.get("/api/config")
 async def get_config(request: Request):

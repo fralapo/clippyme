@@ -40,6 +40,7 @@ function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sessionRecovered, setSessionRecovered] = useState(false);
   const [history, setHistory] = useState([]);
+  const [hfTokenSet, setHfTokenSet] = useState(true); // assume set until checked
 
   const [currentStep, setCurrentStep] = useState(null);
 
@@ -86,6 +87,14 @@ function App() {
   useEffect(() => {
     if (apiKey) localStorage.setItem('gemini_key', apiKey);
   }, [apiKey]);
+
+  // Check HF_TOKEN on mount
+  useEffect(() => {
+    fetch(getApiUrl('/api/config'))
+      .then(r => r.ok ? r.json() : {})
+      .then(data => setHfTokenSet(!!data.HF_TOKEN))
+      .catch(() => {});
+  }, []);
 
   // Load history on mount
   useEffect(() => {
@@ -134,6 +143,13 @@ function App() {
               clipCount: data.result?.clips?.length || 0,
               cost: data.result?.cost_analysis?.total_cost || null,
             });
+            clearInterval(interval);
+          } else if (data.status === 'cancelled') {
+            setStatus('idle');
+            setJobId(null);
+            setResults(null);
+            setLogs([]);
+            setCurrentStep(null);
             clearInterval(interval);
           } else if (data.status === 'failed') {
             setStatus('error');
@@ -446,6 +462,26 @@ function App() {
                 System Status: {status === 'processing' ? 'Busy' : 'Operational'}
             </div>
             
+            {status === 'processing' && jobId && (
+              <button
+                onClick={async () => {
+                  if (!window.confirm('Stop the current processing job?')) return;
+                  try {
+                    await fetch(getApiUrl(`/api/cancel/${jobId}`), { method: 'POST' });
+                    setStatus('idle');
+                    setJobId(null);
+                    setResults(null);
+                    setLogs([]);
+                    setProcessingMedia(null);
+                    setCurrentStep(null);
+                  } catch { /* ignore */ }
+                }}
+                className="flex items-center gap-2 text-xs font-black text-error hover:text-white transition-colors bg-error/10 px-4 py-2 rounded-xl border border-error/20 uppercase tracking-widest"
+              >
+                <X size={14} />
+                Stop
+              </button>
+            )}
             {status !== 'idle' && (
               <button
                 onClick={handleReset}
@@ -490,7 +526,7 @@ function App() {
                                 <Shield size={14} className="text-success" />
                                 Security Node
                             </div>
-                            <KeyInput onKeySet={setApiKey} />
+                            <KeyInput onKeySet={setApiKey} onHfTokenSet={() => setHfTokenSet(true)} />
                         </div>
                     </div>
                 </div>
@@ -529,6 +565,23 @@ function App() {
                       <div>
                         <p className="text-sm font-black text-warning uppercase tracking-wider">API Key Required</p>
                         <p className="text-xs text-zinc-400 mt-0.5">Set your Gemini API key in Settings to start processing videos.</p>
+                      </div>
+                    </button>
+                  </div>
+                )}
+
+                {!hfTokenSet && (
+                  <div className="max-w-xl mx-auto w-full px-2">
+                    <button
+                      onClick={() => setActiveTab('settings')}
+                      className="w-full p-3 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center gap-3 text-left hover:bg-blue-500/15 transition-all group"
+                    >
+                      <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
+                        <AlertCircle size={18} className="text-blue-400" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-blue-400 uppercase tracking-wider">Hugging Face Token Not Set</p>
+                        <p className="text-[11px] text-zinc-400 mt-0.5">Add a HF token in Settings for faster Whisper model downloads and no rate limits.</p>
                       </div>
                     </button>
                   </div>

@@ -25,6 +25,8 @@ services:
     image: clippyme-backend
     ports:
       - "8000:8000"
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
     volumes:
       - .:/app
       - /app/__pycache__

@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Key, Eye, EyeOff, Check, Save, ShieldCheck, Loader2, AlertCircle, Cpu, ChevronDown } from 'lucide-react';
+import { Key, Eye, EyeOff, Check, Save, ShieldCheck, Loader2, AlertCircle, Cpu, ChevronDown, Download } from 'lucide-react';
 import { config } from '../config';
 
 const KEY_TYPES = [
-    { id: 'GEMINI_API_KEY', label: 'Gemini API Key', icon: <Key size={18} />, link: 'https://aistudio.google.com/app/apikey', placeholder: 'AIzaSy...' }
+    { id: 'GEMINI_API_KEY', label: 'Gemini API Key', icon: <Key size={18} />, link: 'https://aistudio.google.com/app/apikey', placeholder: 'AIzaSy...', required: true },
+    { id: 'HF_TOKEN', label: 'Hugging Face Token', icon: <Download size={18} />, link: 'https://huggingface.co/settings/tokens', placeholder: 'hf_...', required: false, hint: 'Optional — enables faster Whisper model downloads and avoids rate limits.' }
 ];
 
-export default function KeyInput({ onKeySet }) {
+export default function KeyInput({ onKeySet, onHfTokenSet }) {
     const [keys, setKeys] = useState({});
     const [serverConfig, setServerConfig] = useState({});
     const [visibleKeys, setVisibleKeys] = useState({});
@@ -90,6 +91,9 @@ export default function KeyInput({ onKeySet }) {
                     localStorage.setItem('gemini_key', value);
                     fetchModels(value); // Refresh models with new key
                 }
+                if (keyId === 'HF_TOKEN' && onHfTokenSet) {
+                    onHfTokenSet();
+                }
             } else {
                 setMessage({ type: 'error', text: 'Failed to save key to server.' });
             }
@@ -159,6 +163,11 @@ export default function KeyInput({ onKeySet }) {
                                 <label className="text-sm font-medium text-zinc-400 flex items-center gap-2">
                                     {type.icon}
                                     {type.label}
+                                    {!type.required && (
+                                        <span className="text-[10px] bg-zinc-800 text-zinc-500 px-2 py-0.5 rounded-full border border-zinc-700">
+                                            Optional
+                                        </span>
+                                    )}
                                     {isConfigured && (
                                         <span className="flex items-center gap-1 text-[10px] bg-green-500/10 text-green-500 px-2 py-0.5 rounded-full border border-green-500/20">
                                             <Check size={10} /> Active: {serverConfig[type.id]}
@@ -171,9 +180,12 @@ export default function KeyInput({ onKeySet }) {
                                     rel="noopener noreferrer"
                                     className="text-[10px] text-primary hover:underline"
                                 >
-                                    Get key →
+                                    Get token →
                                 </a>
                             </div>
+                            {type.hint && (
+                                <p className="text-[11px] text-zinc-500 mb-2">{type.hint}</p>
+                            )}
 
                             <div className="flex gap-3">
                                 <div className="relative flex-1">

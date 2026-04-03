@@ -23,6 +23,25 @@ def _check_cuda():
         _cuda_works = False
     return _cuda_works
 
+def _select_whisper_model():
+    """Auto-select Whisper model based on hardware."""
+    import os
+    override = os.getenv("WHISPER_MODEL")
+    if override:
+        return override
+    if _check_cuda():
+        import torch
+        vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        if vram >= 6: return "large-v3"
+        if vram >= 3: return "medium"
+        return "small"
+    else:
+        import psutil
+        ram = psutil.virtual_memory().total / (1024**3)
+        if ram >= 16: return "medium"
+        if ram >= 8: return "small"
+        return "base"
+
 def transcribe_audio(video_path):
     """
     Transcribe audio from a video file using faster-whisper.
@@ -32,8 +51,9 @@ def transcribe_audio(video_path):
 
     device = "cuda" if _check_cuda() else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
-    print(f"🎙️  Transcribing audio from: {video_path} ({device.upper()} mode)")
-    model = WhisperModel("base", device=device, compute_type=compute_type)
+    whisper_model = _select_whisper_model()
+    print(f"🎙️  Transcribing audio [{whisper_model}] from: {video_path} ({device.upper()} mode)")
+    model = WhisperModel(whisper_model, device=device, compute_type=compute_type)
     segments, info = model.transcribe(video_path, word_timestamps=True)
     segments = list(segments)
 
