@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Video, AlertCircle, X, Loader2, Wand2, Type, Instagram, Share2, Copy, Check, Sparkles } from 'lucide-react';
+import { Download, Youtube, Video, AlertCircle, X, Loader2, Wand2, Type, Instagram, Share2, Copy, Check, Sparkles, Scissors } from 'lucide-react';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
@@ -13,6 +13,8 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
     const [isEditing, setIsEditing] = useState(false);
     const [isSubtitling, setIsSubtitling] = useState(false);
     const [isHooking, setIsHooking] = useState(false);
+    const [isSmartCutting, setIsSmartCutting] = useState(false);
+    const [smartCutResult, setSmartCutResult] = useState(null);
     const [editError, setEditError] = useState(null);
     const [copiedField, setCopiedField] = useState(null);
 
@@ -89,7 +91,13 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                     border_width: options.borderWidth,
                     bg_color: options.bgColor,
                     bg_opacity: options.bgOpacity,
-                    input_filename: currentVideoUrl.split('/').pop()
+                    input_filename: currentVideoUrl.split('/').pop(),
+                    // Karaoke / viral subtitle options
+                    ...(options.preset && { preset: options.preset }),
+                    ...(options.karaoke_mode && { karaoke_mode: options.karaoke_mode }),
+                    ...(options.words_per_group && { words_per_group: options.words_per_group }),
+                    ...(options.uppercase !== undefined && { uppercase: options.uppercase }),
+                    ...(options.highlight_color && { highlight_color: options.highlight_color }),
                 })
             });
 
@@ -112,6 +120,33 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
             setTimeout(() => setEditError(null), 5000);
         } finally {
             setIsSubtitling(false);
+        }
+    };
+
+    const handleSmartCut = async () => {
+        setIsSmartCutting(true);
+        setEditError(null);
+        setSmartCutResult(null);
+        try {
+            const res = await fetch(getApiUrl(`/api/smartcut/${jobId}/${index}`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await res.json();
+            if (data.success && data.new_video_url) {
+                setSmartCutResult(data.stats);
+                setCurrentVideoUrl(getApiUrl(data.new_video_url));
+                if (videoRef.current) videoRef.current.load();
+            } else {
+                setSmartCutResult(data.stats);
+                setEditError(data.message || "No silences found to remove.");
+                setTimeout(() => setEditError(null), 4000);
+            }
+        } catch (e) {
+            setEditError(e.message);
+            setTimeout(() => setEditError(null), 5000);
+        } finally {
+            setIsSmartCutting(false);
         }
     };
 
@@ -194,7 +229,21 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                         </h3>
                         <div className="flex flex-wrap gap-2">
                             <span className="bg-white/5 px-2 py-1 rounded-md border border-white/5 text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{Math.floor(clip.end - clip.start)}s Duration</span>
-                            <span className="bg-primary/10 px-2 py-1 rounded-md border border-primary/10 text-[10px] font-black text-primary uppercase tracking-widest">AI Ranked</span>
+                            {clip.viral_score != null && (
+                                <span
+                                    className={`px-2 py-1 rounded-md border text-[10px] font-black uppercase tracking-widest cursor-help ${
+                                        clip.viral_score >= 80 ? 'bg-green-500/10 border-green-500/20 text-green-400' :
+                                        clip.viral_score >= 50 ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400' :
+                                        'bg-orange-500/10 border-orange-500/20 text-orange-400'
+                                    }`}
+                                    title={clip.viral_reason || 'AI viral score'}
+                                >
+                                    {clip.viral_score}/100
+                                </span>
+                            )}
+                            {!clip.viral_score && (
+                                <span className="bg-primary/10 px-2 py-1 rounded-md border border-primary/10 text-[10px] font-black text-primary uppercase tracking-widest">AI Ranked</span>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -242,14 +291,21 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                     </div>
                 )}
 
-                <div className="grid grid-cols-2 gap-2 mt-auto">
+                {smartCutResult && !editError && (
+                    <div className="mb-4 p-3 bg-green-500/10 border border-green-500/20 text-green-400 text-[10px] font-bold rounded-xl flex items-center gap-3 animate-fade-in uppercase tracking-widest">
+                        <Scissors size={14} className="shrink-0" />
+                        Smart Cut: {smartCutResult.original_duration}s → {smartCutResult.new_duration}s (-{smartCutResult.time_saved}s)
+                    </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-2 mt-auto">
                     <button
                         onClick={handleAutoEdit}
                         disabled={isEditing}
                         className="btn-primary-glow !py-2.5 text-[10px] font-black uppercase tracking-widest"
                     >
                         {isEditing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
-                        Auto Edit
+                        Edit
                     </button>
 
                     <button
@@ -258,7 +314,7 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                         className="py-2.5 bg-warning hover:bg-warning/90 text-black rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-warning/10 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                     >
                         {isSubtitling ? <Loader2 size={14} className="animate-spin" /> : <Type size={14} />}
-                        Captions
+                        Subs
                     </button>
 
                     <button
@@ -268,6 +324,15 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                     >
                         {isHooking ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                         Hook
+                    </button>
+
+                    <button
+                        onClick={handleSmartCut}
+                        disabled={isSmartCutting}
+                        className="py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-emerald-600/10 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                    >
+                        {isSmartCutting ? <Loader2 size={14} className="animate-spin" /> : <Scissors size={14} />}
+                        Smart Cut
                     </button>
 
                     <button
@@ -291,7 +356,7 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                                 window.open(currentVideoUrl, '_blank');
                             }
                         }}
-                        className="btn-secondary !py-2.5 text-[10px] font-black uppercase tracking-widest"
+                        className="btn-secondary !py-2.5 text-[10px] font-black uppercase tracking-widest col-span-2"
                     >
                         <Download size={14} className="shrink-0" /> Download
                     </button>

@@ -1,18 +1,27 @@
 import React, { useState } from 'react';
-import { Youtube, Upload, FileVideo, X, Check, Globe, Link2, FileUp, Loader2 } from 'lucide-react';
+import { Youtube, Upload, FileVideo, X, Check, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers } from 'lucide-react';
 
-export default function MediaInput({ onProcess, isProcessing }) {
-    const [mode, setMode] = useState('url'); // 'url' | 'file'
+export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) {
+    const [mode, setMode] = useState('url'); // 'url' | 'file' | 'batch'
     const [url, setUrl] = useState('');
     const [file, setFile] = useState(null);
     const [cookiesFile, setCookiesFile] = useState(null);
+    const [instructions, setInstructions] = useState('');
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [batchUrls, setBatchUrls] = useState('');
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, cookiesFile });
+        const opts = { instructions: instructions.trim() || undefined };
+        if (mode === 'batch' && batchUrls.trim()) {
+            const urls = batchUrls.split('\n').map(u => u.trim()).filter(u => u);
+            if (urls.length > 0 && onBatchProcess) {
+                onBatchProcess({ urls, ...opts });
+            }
+        } else if (mode === 'url' && url) {
+            onProcess({ type: 'url', payload: url, cookiesFile, ...opts });
         } else if (mode === 'file' && file) {
-            onProcess({ type: 'file', payload: file });
+            onProcess({ type: 'file', payload: file, ...opts });
         }
     };
 
@@ -29,29 +38,57 @@ export default function MediaInput({ onProcess, isProcessing }) {
             <div className="flex bg-black/20 p-1 shrink-0">
                 <button
                     onClick={() => setMode('url')}
-                    className={`flex-1 flex items-center justify-center gap-3 py-3 rounded-xl transition-all duration-500 font-black text-[10px] uppercase tracking-[0.2em] ${mode === 'url'
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all duration-500 font-black text-[10px] uppercase tracking-[0.15em] ${mode === 'url'
                         ? 'bg-primary text-white shadow-glow-primary'
                         : 'text-zinc-500 hover:text-white'
                         }`}
                 >
-                    <Globe size={16} />
-                    Remote URL
+                    <Globe size={14} />
+                    URL
                 </button>
                 <button
                     onClick={() => setMode('file')}
-                    className={`flex-1 flex items-center justify-center gap-3 py-3 rounded-xl transition-all duration-500 font-black text-[10px] uppercase tracking-[0.2em] ${mode === 'file'
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all duration-500 font-black text-[10px] uppercase tracking-[0.15em] ${mode === 'file'
                         ? 'bg-primary text-white shadow-glow-primary'
                         : 'text-zinc-500 hover:text-white'
                         }`}
                 >
-                    <FileUp size={16} />
-                    Local Upload
+                    <FileUp size={14} />
+                    Upload
+                </button>
+                <button
+                    onClick={() => setMode('batch')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all duration-500 font-black text-[10px] uppercase tracking-[0.15em] ${mode === 'batch'
+                        ? 'bg-primary text-white shadow-glow-primary'
+                        : 'text-zinc-500 hover:text-white'
+                        }`}
+                >
+                    <Layers size={14} />
+                    Batch
                 </button>
             </div>
 
             <div className="p-8">
                 <form onSubmit={handleSubmit} className="space-y-8">
-                    {mode === 'url' ? (
+                    {mode === 'batch' ? (
+                        <div className="space-y-4">
+                            <div className="space-y-3">
+                                <label className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] flex items-center gap-2">
+                                    <Layers size={12} /> Batch URLs (one per line)
+                                </label>
+                                <textarea
+                                    value={batchUrls}
+                                    onChange={(e) => setBatchUrls(e.target.value)}
+                                    placeholder={"https://www.youtube.com/watch?v=abc\nhttps://www.youtube.com/watch?v=def\nhttps://www.youtube.com/watch?v=ghi"}
+                                    className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-700 focus:outline-none focus:border-primary/30 resize-none h-32 font-mono"
+                                    maxLength={5000}
+                                />
+                                <p className="text-[10px] text-zinc-600">
+                                    {batchUrls.split('\n').filter(u => u.trim()).length} URLs — Max 20 per batch
+                                </p>
+                            </div>
+                        </div>
+                    ) : mode === 'url' ? (
                         <div className="space-y-6">
                             <div className="space-y-3">
                                 <label className="text-[10px] font-black text-zinc-600 uppercase tracking-[0.2em] flex items-center gap-2">
@@ -132,9 +169,33 @@ export default function MediaInput({ onProcess, isProcessing }) {
                         </div>
                     )}
 
+                    {/* AI Instructions (Advanced) */}
+                    <div className="border border-white/5 rounded-2xl overflow-hidden">
+                        <button
+                            type="button"
+                            onClick={() => setShowAdvanced(!showAdvanced)}
+                            className="w-full flex items-center justify-between px-5 py-3 text-[10px] font-black text-zinc-500 uppercase tracking-[0.2em] hover:text-zinc-300 transition-colors"
+                        >
+                            <span className="flex items-center gap-2"><Sparkles size={12} /> AI Instructions</span>
+                            <ChevronDown size={14} className={`transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+                        </button>
+                        {showAdvanced && (
+                            <div className="px-5 pb-5 space-y-2 animate-fade-in">
+                                <textarea
+                                    value={instructions}
+                                    onChange={(e) => setInstructions(e.target.value)}
+                                    placeholder="Tell the AI what to look for... e.g. 'Find the funniest moments' or 'Focus on the gaming parts, skip the intro'"
+                                    className="w-full bg-black/40 border border-white/5 rounded-xl px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-primary/30 resize-none h-20"
+                                    maxLength={500}
+                                />
+                                <p className="text-[10px] text-zinc-600">Optional. Guide the AI to find specific types of clips.</p>
+                            </div>
+                        )}
+                    </div>
+
                     <button
                         type="submit"
-                        disabled={isProcessing || (mode === 'url' && !url) || (mode === 'file' && !file)}
+                        disabled={isProcessing || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'batch' && !batchUrls.trim())}
                         className="w-full btn-primary-glow !py-5 font-black uppercase tracking-[0.2em] italic text-lg"
                     >
                         {isProcessing ? (
@@ -144,7 +205,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                             </>
                         ) : (
                             <>
-                                <span>Engage Engine</span>
+                                <span>{mode === 'batch' ? 'Launch Batch' : 'Engage Engine'}</span>
                             </>
                         )}
                     </button>

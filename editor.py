@@ -294,35 +294,53 @@ class VideoEditor:
             return "'" + m.group(1).replace(' ', '') + "'"
         clean_filter = _re.sub(r"'([^']*)'", _strip_expr_spaces, clean_filter)
 
-        print(f"Executing AI Filter: {clean_filter}")
-
-        cmd = [
-            'ffmpeg', '-y',
-            '-i', input_path,
-            '-vf', clean_filter,
-            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '22',
-            '-c:a', 'copy',
-            output_path
-        ]
-
         # Use explicit environment with UTF-8 to avoid ascii errors in subprocess
         env = os.environ.copy()
         env["LANG"] = "C.UTF-8"
         env["LC_ALL"] = "C.UTF-8"
 
-        try:
-            # Preserve UTF-8 handling even on minimal containers.
-            cmd_bytes = []
-            for arg in cmd:
-                if isinstance(arg, str):
-                    cmd_bytes.append(arg.encode('utf-8'))
-                else:
-                    cmd_bytes.append(arg)
+        # 3-level retry: full filter → simplified → no filter
+        attempts = [
+            ("full AI filter", clean_filter),
+        ]
 
-            subprocess.run(cmd_bytes, check=True, env=env)
-        except subprocess.CalledProcessError as e:
-            print(f"FFmpeg failed: {e}")
-            raise
+        # Build simplified filter (keep only safe filters, strip zoompan/geq/complex)
+        simple_parts = []
+        for part in self._split_filter_chain(clean_filter):
+            part_stripped = part.strip()
+            if any(part_stripped.startswith(f) for f in ('eq=', 'colorbalance=', 'setsar=', 'hue=', 'brightness=')):
+                simple_parts.append(part_stripped)
+        if simple_parts:
+            attempts.append(("simplified filter", ','.join(simple_parts)))
+
+        attempts.append(("passthrough (no filter)", None))
+
+        for attempt_name, vf in attempts:
+            print(f"🎨 Attempting: {attempt_name}" + (f" → {vf}" if vf else ""))
+            if vf:
+                cmd = [
+                    'ffmpeg', '-y', '-i', input_path,
+                    '-vf', vf,
+                    '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '22',
+                    '-c:a', 'copy', output_path
+                ]
+            else:
+                cmd = ['ffmpeg', '-y', '-i', input_path, '-c:v', 'copy', '-c:a', 'copy', output_path]
+
+            try:
+                subprocess.run(cmd, check=True, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                if attempt_name != "full AI filter":
+                    print(f"⚠️  Used fallback: {attempt_name}")
+                return
+            except subprocess.CalledProcessError as e:
+                stderr_msg = e.stderr.decode(errors='replace').strip() if e.stderr else ''
+                print(f"❌ {attempt_name} failed: {e}")
+                if stderr_msg:
+                    # Show last 5 lines of FFmpeg stderr for debugging
+                    tail = '\n'.join(stderr_msg.splitlines()[-5:])
+                    print(f"   FFmpeg stderr (tail):\n{tail}")
+                if vf is None:
+                    raise  # Last resort failed, nothing we can do
 
 
 if __name__ == "__main__":

@@ -27,6 +27,45 @@ load_dotenv()
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
+CACHE_DIR = os.path.join("data", "cache")
+CACHE_TTL_DAYS = 7
+
+
+def _get_cache_path(url):
+    """Return cache file path for a URL, based on SHA256 hash."""
+    import hashlib
+    url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
+    return os.path.join(CACHE_DIR, f"{url_hash}_transcript.json")
+
+
+def _load_cached_transcript(url):
+    """Load a cached transcript if it exists and is not expired."""
+    cache_path = _get_cache_path(url)
+    if not os.path.exists(cache_path):
+        return None
+    try:
+        mtime = os.path.getmtime(cache_path)
+        if time.time() - mtime > CACHE_TTL_DAYS * 86400:
+            os.remove(cache_path)
+            return None
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        print(f"📦 Loaded cached transcript ({os.path.basename(cache_path)})")
+        return data
+    except Exception:
+        return None
+
+
+def _save_transcript_cache(url, transcript):
+    """Save transcript to cache."""
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    cache_path = _get_cache_path(url)
+    try:
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(transcript, f)
+        print(f"💾 Transcript cached ({os.path.basename(cache_path)})")
+    except Exception as e:
+        print(f"⚠️  Failed to cache transcript: {e}")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Test if CUDA actually works for faster-whisper (needs libcublas via ctranslate2).
@@ -106,12 +145,16 @@ STRICT EXCLUSIONS:
 - No generic intros/outros or purely sponsorship segments unless they contain the hook.
 - No clips < 15 s or > 60 s.
 
+{user_instructions_block}
+
 OUTPUT — RETURN ONLY VALID JSON (no markdown, no comments). Order clips by predicted performance (best to worst). In the descriptions, ALWAYS include a CTA like "Follow me and comment X and I'll send you the workflow" (especially if discussing an n8n workflow):
 {{
   "shorts": [
     {{
       "start": <number in seconds, e.g., 12.340>,
       "end": <number in seconds, e.g., 37.900>,
+      "viral_score": <integer 0-100, predicted viral performance>,
+      "viral_reason": "<1 sentence explaining WHY this clip is viral, in the SAME LANGUAGE as the transcript>",
       "video_description_for_tiktok": "<description for TikTok oriented to get views>",
       "video_description_for_instagram": "<description for Instagram oriented to get views>",
       "video_title_for_youtube_short": "<title for YouTube Short oriented to get views 100 chars max>",
@@ -130,32 +173,81 @@ model.to(DEVICE)
 mp_face_detection = mp.solutions.face_detection
 face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
 
+class DetectionSmoother:
+    """
+    Applies temporal smoothing (rolling average) to face detection bounding boxes.
+    Reduces micro-jitter from frame-to-frame detection noise.
+    """
+    def __init__(self, window_size=5):
+        from collections import deque
+        self.window_size = window_size
+        self.histories = {}  # face_id -> deque of (x, y, w, h)
+
+    def smooth(self, candidates, frame_number):
+        """
+        Takes raw face candidates and returns smoothed versions.
+        candidates: list of {'box': [x,y,w,h], 'score': float, ...}
+        """
+        smoothed = []
+        for cand in candidates:
+            x, y, w, h = cand['box']
+            cx = x + w / 2
+            # Simple spatial matching to existing tracks
+            best_id = None
+            min_dist = float('inf')
+            for fid, hist in self.histories.items():
+                if hist:
+                    last = hist[-1]
+                    dist = abs(cx - (last[0] + last[2] / 2))
+                    if dist < min_dist and dist < w * 2:
+                        min_dist = dist
+                        best_id = fid
+            if best_id is None:
+                best_id = frame_number * 1000 + len(smoothed)
+            # Update history
+            if best_id not in self.histories:
+                from collections import deque
+                self.histories[best_id] = deque(maxlen=self.window_size)
+            self.histories[best_id].append((x, y, w, h))
+            # Average
+            hist = self.histories[best_id]
+            avg_x = int(sum(b[0] for b in hist) / len(hist))
+            avg_y = int(sum(b[1] for b in hist) / len(hist))
+            avg_w = int(sum(b[2] for b in hist) / len(hist))
+            avg_h = int(sum(b[3] for b in hist) / len(hist))
+            smoothed.append({**cand, 'box': [avg_x, avg_y, avg_w, avg_h]})
+        # Prune old tracks (not seen in a while)
+        active_ids = {id(c) for c in smoothed}  # not perfect but tracks get re-matched
+        return smoothed
+
+
 class SmoothedCameraman:
     """
-    Handles smooth camera movement.
-    Simplified Logic: "Heavy Tripod"
-    Only moves if the subject leaves the center safe zone.
-    Moves slowly and linearly.
+    Handles smooth camera movement with exponential easing.
+    The camera accelerates toward the target and decelerates as it approaches,
+    mimicking a professional human operator.
     """
+    SMOOTHING = 0.08  # Exponential decay factor (0.05=slow, 0.08=balanced, 0.12=snappy)
+
     def __init__(self, output_width, output_height, video_width, video_height):
         self.output_width = output_width
         self.output_height = output_height
         self.video_width = video_width
         self.video_height = video_height
-        
+
         # Initial State
         self.current_center_x = video_width / 2
         self.target_center_x = video_width / 2
-        
+
         # Calculate crop dimensions once
         self.crop_height = video_height
         self.crop_width = int(self.crop_height * ASPECT_RATIO)
         if self.crop_width > video_width:
              self.crop_width = video_width
              self.crop_height = int(self.crop_width / ASPECT_RATIO)
-             
-        # Safe Zone: 20% of the video width
-        # As long as the target is within this zone relative to current center, DO NOT MOVE.
+
+        # Safe Zone: 25% of crop width
+        # If target is within this radius of current center, camera stays still.
         self.safe_zone_radius = self.crop_width * 0.25
 
     def update_target(self, face_box):
@@ -165,38 +257,26 @@ class SmoothedCameraman:
         if face_box:
             x, y, w, h = face_box
             self.target_center_x = x + w / 2
-    
+
     def get_crop_box(self, force_snap=False):
         """
         Returns the (x1, y1, x2, y2) for the current frame.
+        Uses exponential easing: camera covers ~8% of remaining distance each frame,
+        creating natural acceleration/deceleration.
         """
         if force_snap:
             self.current_center_x = self.target_center_x
         else:
             diff = self.target_center_x - self.current_center_x
-            
-            # SIMPLIFIED LOGIC:
-            # 1. Is the target outside the safe zone?
+
+            # Only move if target is outside the safe zone
             if abs(diff) > self.safe_zone_radius:
-                # 2. If yes, move towards it slowly (Linear Speed)
-                # Determine direction
-                direction = 1 if diff > 0 else -1
-                
-                # Speed: 2 pixels per frame (Slow pan)
-                # If the distance is HUGE (scene change or fast movement), speed up slightly
-                if abs(diff) > self.crop_width * 0.5:
-                    speed = 15.0 # Fast re-frame
-                else:
-                    speed = 3.0  # Slow, steady pan
-                
-                self.current_center_x += direction * speed
-                
-                # Check if we overshot (prevent oscillation)
-                new_diff = self.target_center_x - self.current_center_x
-                if (direction == 1 and new_diff < 0) or (direction == -1 and new_diff > 0):
-                    self.current_center_x = self.target_center_x
-            
-            # If inside safe zone, DO NOTHING (Stationary Camera)
+                # Exponential easing: move a fraction of the remaining distance
+                # This naturally accelerates (large diff → large step) and
+                # decelerates (small diff → small step) like a real camera operator
+                self.current_center_x += diff * self.SMOOTHING
+
+            # If inside safe zone, camera stays still (no micro-jitter)
                 
         # Clamp center
         half_crop = self.crop_width / 2
@@ -429,49 +509,62 @@ def create_general_frame(frame, output_width, output_height):
 
 def analyze_scenes_strategy(video_path, scenes):
     """
-    Analyzes each scene to determine if it should be TRACK (Single person) or GENERAL (Group/Wide).
-    Returns list of strategies corresponding to scenes.
+    Analyzes each scene to determine framing strategy.
+    Strategies:
+      TRACK       — single subject, follow with smart crop
+      TRACK_GROUP — 2+ faces close together, center on group baricentro
+      WIDE        — 2+ faces spread wide, use letterbox (blur bg + centered full frame)
+      GENERAL     — no faces detected, use letterbox
     """
     cap = cv2.VideoCapture(video_path)
     strategies = []
-    
+
     if not cap.isOpened():
         return ['TRACK'] * len(scenes)
-        
+
+    video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+
     for start, end in tqdm(scenes, desc="   Analyzing Scenes"):
-        # Sample 3 frames (start, middle, end)
         frames_to_check = [
             start.get_frames() + 5,
             int((start.get_frames() + end.get_frames()) / 2),
             end.get_frames() - 5
         ]
-        
+
         face_counts = []
+        spread_ratios = []  # how spread out faces are (0-1 of frame width)
         for f_idx in frames_to_check:
             cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
             ret, frame = cap.read()
-            if not ret: continue
-            
-            # Detect faces
+            if not ret:
+                continue
+
             candidates = detect_face_candidates(frame)
             face_counts.append(len(candidates))
-            
-        # Decision Logic
+
+            if len(candidates) >= 2:
+                # Measure horizontal spread of faces
+                centers_x = [c['box'][0] + c['box'][2] / 2 for c in candidates]
+                spread = (max(centers_x) - min(centers_x)) / video_width if video_width else 0
+                spread_ratios.append(spread)
+
         if not face_counts:
             avg_faces = 0
         else:
             avg_faces = sum(face_counts) / len(face_counts)
-            
-        # Strategy:
-        # 0 faces -> GENERAL (Landscape/B-roll)
-        # 1 face -> TRACK
-        # > 1.2 faces -> GENERAL (Group)
-        
-        if avg_faces > 1.2 or avg_faces < 0.5:
-            strategies.append('GENERAL')
+
+        avg_spread = sum(spread_ratios) / len(spread_ratios) if spread_ratios else 0
+
+        # Decision logic
+        if avg_faces < 0.5:
+            strategies.append('GENERAL')      # No faces → letterbox
+        elif avg_faces <= 1.2:
+            strategies.append('TRACK')         # Single person → follow
+        elif avg_spread > 0.50:
+            strategies.append('WIDE')          # Group spread wide → letterbox
         else:
-            strategies.append('TRACK')
-            
+            strategies.append('TRACK_GROUP')   # Group close together → center on group
+
     cap.release()
     return strategies
 
@@ -631,6 +724,177 @@ Technical Details: {str(e)}
     
     return downloaded_file, sanitized_title
 
+def normalize_audio(video_path):
+    """
+    Two-pass EBU R128 loudness normalization to -14 LUFS (social media standard).
+    Normalizes in-place by creating a temp file and replacing.
+    """
+    import tempfile
+    temp_out = video_path + ".norm.mp4"
+    try:
+        # Pass 1: Analyze
+        analyze_cmd = [
+            'ffmpeg', '-y', '-i', video_path,
+            '-af', 'loudnorm=I=-14:TP=-1.5:LRA=7:print_format=json',
+            '-f', 'null', '/dev/null'
+        ]
+        result = subprocess.run(analyze_cmd, capture_output=True, text=True)
+        # Parse measured values from stderr (loudnorm outputs JSON at the end)
+        stderr = result.stderr
+        json_start = stderr.rfind('{')
+        json_end = stderr.rfind('}') + 1
+        if json_start < 0 or json_end <= json_start:
+            print("⚠️  Audio normalization: could not parse loudnorm analysis, skipping")
+            return
+        measured = json.loads(stderr[json_start:json_end])
+
+        # Pass 2: Apply
+        apply_cmd = [
+            'ffmpeg', '-y', '-i', video_path,
+            '-af', (
+                f"loudnorm=I=-14:TP=-1.5:LRA=7"
+                f":measured_I={measured['input_i']}"
+                f":measured_TP={measured['input_tp']}"
+                f":measured_LRA={measured['input_lra']}"
+                f":measured_thresh={measured['input_thresh']}"
+                f":offset={measured['target_offset']}"
+                f":linear=true"
+            ),
+            '-c:v', 'copy',
+            '-c:a', 'aac', '-b:a', '192k',
+            temp_out
+        ]
+        norm_result = subprocess.run(apply_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if norm_result.returncode == 0 and os.path.exists(temp_out):
+            os.replace(temp_out, video_path)
+            print(f"🔊 Audio normalized to -14 LUFS: {os.path.basename(video_path)}")
+        else:
+            print(f"⚠️  Audio normalization failed, keeping original audio")
+            if os.path.exists(temp_out):
+                os.remove(temp_out)
+    except Exception as e:
+        print(f"⚠️  Audio normalization error: {e}")
+        if os.path.exists(temp_out):
+            os.remove(temp_out)
+
+
+def apply_subtle_zoom(video_path, zoom_end=1.05):
+    """
+    Apply a subtle Ken Burns zoom (1.0x → zoom_end over the clip duration).
+    Creates visual motion even on static shots, improving viewer retention.
+    Operates in-place.
+    """
+    temp_out = video_path + ".zoom.mp4"
+    try:
+        # Get video info
+        probe = subprocess.run(
+            ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+             '-show_entries', 'stream=width,height,r_frame_rate,nb_frames',
+             '-of', 'csv=s=x:p=0', video_path],
+            capture_output=True, text=True
+        )
+        parts = probe.stdout.strip().split('x')
+        if len(parts) < 3:
+            return
+        w, h = int(parts[0]), int(parts[1])
+        # r_frame_rate is like "30/1" or "30000/1001"
+        fps_parts = parts[2].split('/')
+        fps = int(fps_parts[0]) / int(fps_parts[1]) if len(fps_parts) == 2 else float(fps_parts[0])
+        total_frames = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+
+        if total_frames <= 0 or fps <= 0:
+            return
+
+        # Zoom increment per frame: from 1.0 to zoom_end over total_frames
+        zoom_per_frame = (zoom_end - 1.0) / total_frames
+
+        zoom_filter = (
+            f"zoompan=z='1+{zoom_per_frame:.8f}*on'"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d=1:s={w}x{h}:fps={fps}"
+        )
+
+        cmd = [
+            'ffmpeg', '-y', '-i', video_path,
+            '-vf', zoom_filter,
+            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23',
+            '-c:a', 'copy', temp_out
+        ]
+        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if result.returncode == 0 and os.path.exists(temp_out):
+            os.replace(temp_out, video_path)
+            print(f"🔍 Subtle zoom applied (1.0→{zoom_end}x): {os.path.basename(video_path)}")
+        else:
+            if os.path.exists(temp_out):
+                os.remove(temp_out)
+    except Exception as e:
+        print(f"⚠️  Subtle zoom failed (non-critical): {e}")
+        if os.path.exists(temp_out):
+            os.remove(temp_out)
+
+
+def select_cover_frame(video_path):
+    """
+    Auto-select the best frame for a thumbnail/cover image.
+    Scores frames by: face presence, sharpness, good exposure.
+    Saves as {video_name}_cover.jpg alongside the video.
+    """
+    cover_path = os.path.splitext(video_path)[0] + "_cover.jpg"
+    try:
+        cap = cv2.VideoCapture(video_path)
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if total_frames <= 0 or fps <= 0:
+            cap.release()
+            return None
+
+        # Sample 1 frame per second
+        sample_interval = max(1, int(fps))
+        best_score = -1
+        best_frame = None
+
+        for frame_idx in range(0, total_frames, sample_interval):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+            ret, frame = cap.read()
+            if not ret:
+                continue
+
+            score = 0.0
+
+            # Face detection (reuse existing MediaPipe)
+            candidates = detect_face_candidates(frame)
+            if candidates:
+                score += 50  # Face present = big bonus
+
+            # Sharpness (Laplacian variance — higher = sharper)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            score += min(30, laplacian_var / 100 * 30)  # Cap at 30 points
+
+            # Exposure (prefer well-lit, not too dark or blown out)
+            mean_brightness = gray.mean()
+            if 80 < mean_brightness < 200:
+                score += 20  # Good exposure range
+            elif 50 < mean_brightness < 230:
+                score += 10
+
+            if score > best_score:
+                best_score = score
+                best_frame = frame.copy()
+
+        cap.release()
+
+        if best_frame is not None:
+            cv2.imwrite(cover_path, best_frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            print(f"🖼️  Cover frame saved: {os.path.basename(cover_path)} (score: {best_score:.0f})")
+            return cover_path
+
+    except Exception as e:
+        print(f"⚠️  Cover frame selection failed: {e}")
+
+    return None
+
+
 def process_video_to_vertical(input_video, final_output_video):
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
@@ -702,6 +966,7 @@ def process_video_to_vertical(input_video, final_output_video):
 
     # Global tracker for single-person shots
     speaker_tracker = SpeakerTracker(cooldown_frames=30)
+    detection_smoother = DetectionSmoother(window_size=5)
 
     with tqdm(total=total_frames, desc="   Processing", file=sys.stdout) as pbar:
         while cap.isOpened():
@@ -719,20 +984,41 @@ def process_video_to_vertical(input_video, final_output_video):
             current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
             
             # Apply Strategy
-            if current_strategy == 'GENERAL':
-                # "Plano General" -> Blur Background + Fit Width
+            if current_strategy in ('GENERAL', 'WIDE'):
+                # Letterbox: blur background + centered full frame
                 output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
-                
-                # Reset cameraman/tracker so they don't drift while inactive
+
+                # Reset cameraman so it doesn't drift while inactive
                 cameraman.current_center_x = original_width / 2
                 cameraman.target_center_x = original_width / 2
-                
-            else:
-                # "Single Speaker" -> Track & Crop
-                
-                # Detect every 2nd frame for performance
+
+            elif current_strategy == 'TRACK_GROUP':
+                # Group tracking: center crop on the baricentro of all detected faces
                 if frame_number % 2 == 0:
                     candidates = detect_face_candidates(frame)
+                    candidates = detection_smoother.smooth(candidates, frame_number)
+                    if len(candidates) >= 2:
+                        centers_x = [c['box'][0] + c['box'][2] / 2 for c in candidates]
+                        group_center_x = sum(centers_x) / len(centers_x)
+                        avg_w = sum(c['box'][2] for c in candidates) / len(candidates)
+                        cameraman.update_target((group_center_x - avg_w / 2, 0, avg_w, 0))
+                    elif candidates:
+                        cameraman.update_target(candidates[0]['box'])
+
+                is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
+                x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
+
+                if y2 > y1 and x2 > x1:
+                    cropped = frame[y1:y2, x1:x2]
+                    output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                else:
+                    output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+
+            else:
+                # TRACK: single speaker tracking
+                if frame_number % 2 == 0:
+                    candidates = detect_face_candidates(frame)
+                    candidates = detection_smoother.smooth(candidates, frame_number)
                     target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
                     if target_box:
                         cameraman.update_target(target_box)
@@ -743,9 +1029,9 @@ def process_video_to_vertical(input_video, final_output_video):
 
                 # Snap camera on scene change to avoid panning from previous scene position
                 is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
-                
+
                 x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
-                
+
                 # Crop
                 if y2 > y1 and x2 > x1:
                     cropped = frame[y1:y2, x1:x2]
@@ -851,7 +1137,7 @@ def transcribe_video(video_path):
         'language': info.language
     }
 
-def get_viral_clips(transcript_result, video_duration):
+def get_viral_clips(transcript_result, video_duration, instructions=None):
     print("🤖  Analyzing with Gemini...")
     
     api_key = os.getenv("GEMINI_API_KEY")
@@ -879,10 +1165,15 @@ def get_viral_clips(transcript_result, video_duration):
                 'e': word['end']
             })
 
+    user_instructions_block = ""
+    if instructions:
+        user_instructions_block = f"USER INSTRUCTIONS (follow these priorities when selecting clips):\n{instructions}"
+
     prompt = GEMINI_PROMPT_TEMPLATE.format(
         video_duration=video_duration,
         transcript_text=json.dumps(transcript_result['text']),
-        words_json=json.dumps(words)
+        words_json=json.dumps(words),
+        user_instructions_block=user_instructions_block
     )
 
     # Retry with exponential backoff for rate limits / transient errors
@@ -967,8 +1258,8 @@ def get_viral_clips(transcript_result, video_duration):
                 except (ValueError, TypeError):
                     print(f"⚠️  Skipping clip {i+1}: start/end not numeric")
                     continue
-                if clip['end'] <= clip['start'] or clip['end'] - clip['start'] < 5:
-                    print(f"⚠️  Skipping clip {i+1}: invalid duration ({clip['start']}-{clip['end']})")
+                if clip['end'] <= clip['start'] or clip['end'] - clip['start'] < 15:
+                    print(f"⚠️  Skipping clip {i+1}: invalid duration {clip['end'] - clip['start']:.1f}s ({clip['start']}-{clip['end']})")
                     continue
                 valid_clips.append(clip)
             result_json['shorts'] = valid_clips
@@ -996,7 +1287,9 @@ if __name__ == '__main__':
     parser.add_argument('--keep-original', action='store_true', help="Keep the downloaded YouTube video.")
     parser.add_argument('--skip-analysis', action='store_true', help="Skip AI analysis and convert the whole video.")
     parser.add_argument('-c', '--cookies', type=str, help="Path to cookies.txt file for yt-dlp")
-    
+    parser.add_argument('--instructions', type=str, help="Custom instructions for AI clip selection (e.g., 'find the funniest parts')")
+    parser.add_argument('--no-zoom', action='store_true', help="Disable subtle auto-zoom effect on clips")
+
     args = parser.parse_args()
 
     script_start_time = time.time()
@@ -1049,9 +1342,15 @@ if __name__ == '__main__':
         output_file = args.output if args.output else os.path.join(output_dir, f"{video_title}_vertical.mp4")
         process_video_to_vertical(input_video, output_file)
     else:
-        # 3. Transcribe
-        transcript = transcribe_video(input_video)
-        
+        # 3. Transcribe (with cache for URL-based jobs)
+        cached = _load_cached_transcript(args.url) if args.url else None
+        if cached:
+            transcript = cached
+        else:
+            transcript = transcribe_video(input_video)
+            if args.url:
+                _save_transcript_cache(args.url, transcript)
+
         # Get duration
         cap = cv2.VideoCapture(input_video)
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -1060,7 +1359,7 @@ if __name__ == '__main__':
         cap.release()
 
         # 4. Gemini Analysis
-        clips_data = get_viral_clips(transcript, duration)
+        clips_data = get_viral_clips(transcript, duration, instructions=args.instructions)
         
         if not clips_data or 'shorts' not in clips_data:
             print("❌ Failed to identify clips. Converting whole video as fallback.")
@@ -1105,8 +1404,12 @@ if __name__ == '__main__':
                 success = process_video_to_vertical(clip_temp_path, clip_final_path)
                 
                 if success:
+                    if not args.no_zoom:
+                        apply_subtle_zoom(clip_final_path)
+                    normalize_audio(clip_final_path)
+                    select_cover_frame(clip_final_path)
                     print(f"   ✅ Clip {i+1} ready: {clip_final_path}")
-                
+
                 # Clean up temp cut
                 if os.path.exists(clip_temp_path):
                     os.remove(clip_temp_path)

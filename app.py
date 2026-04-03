@@ -161,7 +161,8 @@ JOB_RETENTION_SECONDS = 3600  # 1 hour retention
 # Application State
 job_queue = asyncio.Queue(maxsize=50)
 jobs: Dict[str, Dict] = {}
-# Semester to limit concurrency to MAX_CONCURRENT_JOBS
+batches: Dict[str, Dict] = {}  # batch_id -> {job_ids: [...], created: timestamp}
+# Semaphore to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
 from google import genai
@@ -234,6 +235,21 @@ async def cleanup_jobs():
                     if now - os.path.getmtime(file_path) > JOB_RETENTION_SECONDS:
                          os.remove(file_path)
                 except Exception: pass
+
+            # Cleanup transcript cache (older than 7 days)
+            cache_dir = os.path.join(DATA_DIR, "cache")
+            if os.path.isdir(cache_dir):
+                for filename in os.listdir(cache_dir):
+                    cache_path = os.path.join(cache_dir, filename)
+                    try:
+                        if now - os.path.getmtime(cache_path) > 7 * 86400:
+                            os.remove(cache_path)
+                    except Exception: pass
+
+            # Cleanup old batches (older than retention period)
+            for bid in list(batches.keys()):
+                if now - batches[bid].get("created", 0) > JOB_RETENTION_SECONDS:
+                    del batches[bid]
 
         except Exception as e:
             logger.warning("Cleanup error: %s", e)
@@ -470,11 +486,13 @@ async def process_endpoint(
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
     
     # Handle JSON body manually for URL payload
+    instructions = None
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         body = await request.json()
         url = body.get("url")
-    
+        instructions = body.get("instructions")
+
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
 
@@ -516,6 +534,9 @@ async def process_endpoint(
 
     cmd.extend(["-o", job_output_dir])
 
+    if instructions:
+        cmd.extend(["--instructions", instructions])
+
     # Enqueue Job
     jobs[job_id] = {
         'status': 'queued',
@@ -533,6 +554,96 @@ async def process_endpoint(
         raise HTTPException(status_code=429, detail="Server busy. Please try again later.")
 
     return {"job_id": job_id, "status": "queued"}
+
+
+class BatchRequest(BaseModel):
+    urls: List[str] = Field(..., min_length=1, max_length=20)
+    instructions: Optional[str] = None
+
+
+@app.post("/api/batch")
+async def batch_process(req: BatchRequest, request: Request):
+    """Submit multiple URLs for batch processing. Each URL becomes a separate job."""
+    api_key = request.headers.get("X-Gemini-Key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+
+    batch_id = str(uuid.uuid4())
+    batch_jobs = []
+
+    for url in req.urls:
+        url = url.strip()
+        if not url:
+            continue
+
+        job_id = str(uuid.uuid4())
+        job_output_dir = os.path.join(OUTPUT_DIR, job_id)
+        os.makedirs(job_output_dir, exist_ok=True)
+
+        cmd = ["python", "-u", "main.py", "-u", url, "-o", job_output_dir]
+        if req.instructions:
+            cmd.extend(["--instructions", req.instructions])
+
+        env = os.environ.copy()
+        env["GEMINI_API_KEY"] = api_key
+
+        jobs[job_id] = {
+            'status': 'queued',
+            'logs': [f"Job {job_id} queued (batch {batch_id})."],
+            'cmd': cmd,
+            'env': env,
+            'output_dir': job_output_dir
+        }
+
+        try:
+            job_queue.put_nowait(job_id)
+            batch_jobs.append({"url": url, "job_id": job_id})
+        except asyncio.QueueFull:
+            del jobs[job_id]
+            shutil.rmtree(job_output_dir, ignore_errors=True)
+            # Stop adding more — queue is full
+            break
+
+    if not batch_jobs:
+        raise HTTPException(status_code=400, detail="No valid URLs provided or queue is full.")
+
+    batches[batch_id] = {
+        "job_ids": [j["job_id"] for j in batch_jobs],
+        "created": time.time()
+    }
+
+    return {"batch_id": batch_id, "jobs": batch_jobs, "total": len(batch_jobs)}
+
+
+@app.get("/api/batch/{batch_id}")
+async def get_batch_status(batch_id: str):
+    """Return aggregated status of all jobs in a batch."""
+    if batch_id not in batches:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    batch = batches[batch_id]
+    job_statuses = []
+    for jid in batch["job_ids"]:
+        job = jobs.get(jid, {})
+        status_entry = {
+            "job_id": jid,
+            "status": job.get("status", "unknown"),
+        }
+        if job.get("result"):
+            status_entry["clip_count"] = len(job["result"].get("clips", []))
+        job_statuses.append(status_entry)
+
+    completed = sum(1 for j in job_statuses if j["status"] == "completed")
+    failed = sum(1 for j in job_statuses if j["status"] == "failed")
+
+    return {
+        "batch_id": batch_id,
+        "total": len(job_statuses),
+        "completed": completed,
+        "failed": failed,
+        "jobs": job_statuses
+    }
+
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
@@ -602,7 +713,8 @@ async def update_config(req: ConfigUpdateRequest, request: Request):
         raise HTTPException(status_code=500, detail="Failed to save configuration.")
 
 from editor import VideoEditor
-from subtitles import generate_srt, burn_subtitles, generate_srt_from_video
+from subtitles import generate_srt, burn_subtitles, generate_srt_from_video, generate_ass_karaoke, SUBTITLE_PRESETS
+from smartcut import smart_cut
 from hooks import add_hook_to_video
 
 class EditRequest(BaseModel):
@@ -714,7 +826,7 @@ async def edit_clip(
 class SubtitleRequest(BaseModel):
     job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
     clip_index: int
-    position: str = "bottom" 
+    position: str = "bottom"
     font_size: int = 16
     font_name: str = "Verdana"
     font_color: str = "#FFFFFF"
@@ -723,6 +835,12 @@ class SubtitleRequest(BaseModel):
     bg_color: str = "#000000"
     bg_opacity: float = 0.0
     input_filename: Optional[str] = None
+    # Karaoke / viral subtitle options
+    preset: Optional[str] = None  # e.g. "classic_white", "hormozi_bold", etc.
+    karaoke_mode: Optional[str] = None  # "word_group" or "full_line"
+    words_per_group: int = 3
+    uppercase: bool = True
+    highlight_color: Optional[str] = None
 
 @app.post("/api/subtitle")
 async def add_subtitles(req: SubtitleRequest):
@@ -761,20 +879,41 @@ async def add_subtitles(req: SubtitleRequest):
     if not os.path.exists(input_path):
         raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
         
-    srt_filename = f"subs_{req.clip_index}_{int(time.time())}.srt"
-    srt_path = os.path.join(output_dir, srt_filename)
-    
+    use_karaoke = req.preset is not None and req.preset in SUBTITLE_PRESETS
+    ts = int(time.time())
+
+    if use_karaoke:
+        sub_filename = f"subs_{req.clip_index}_{ts}.ass"
+    else:
+        sub_filename = f"subs_{req.clip_index}_{ts}.srt"
+    sub_path = os.path.join(output_dir, sub_filename)
+
     output_filename = f"subtitled_{filename}"
     output_path = os.path.join(output_dir, output_filename)
-    
+
     try:
-        success = generate_srt(transcript, clip_data['start'], clip_data['end'], srt_path)
+        if use_karaoke:
+            success = generate_ass_karaoke(
+                transcript, clip_data['start'], clip_data['end'], sub_path,
+                preset=req.preset,
+                mode=req.karaoke_mode or "word_group",
+                words_per_group=req.words_per_group,
+                uppercase=req.uppercase,
+                font_name=req.font_name if req.font_name != "Verdana" else None,
+                font_color=req.font_color if req.font_color != "#FFFFFF" else None,
+                highlight_color=req.highlight_color,
+                font_size=req.font_size if req.font_size != 16 else None,
+                outline_width=req.border_width if req.border_width != 2 else None,
+                position=req.position
+            )
+        else:
+            success = generate_srt(transcript, clip_data['start'], clip_data['end'], sub_path)
 
         if not success:
              raise HTTPException(status_code=400, detail="No words found for this clip range.")
 
         def run_burn():
-             burn_subtitles(input_path, srt_path, output_path,
+             burn_subtitles(input_path, sub_path, output_path,
                            alignment=req.position, fontsize=req.font_size,
                            font_name=req.font_name, font_color=req.font_color,
                            border_color=req.border_color, border_width=req.border_width,
@@ -803,6 +942,77 @@ async def add_subtitles(req: SubtitleRequest):
         "success": True,
         "new_video_url": f"/videos/{req.job_id}/{output_filename}"
     }
+
+@app.get("/api/subtitle/presets")
+async def get_subtitle_presets():
+    """Return available subtitle style presets."""
+    return {name: {k: v for k, v in preset.items() if k != "margin_v"}
+            for name, preset in SUBTITLE_PRESETS.items()}
+
+@app.post("/api/smartcut/{job_id}/{clip_index}")
+async def smart_cut_clip(job_id: str, clip_index: int):
+    """Generate a smart-cut version of a clip (silences + filler words removed)."""
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    output_dir = os.path.join(OUTPUT_DIR, job_id)
+    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
+    if not json_files:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+
+    with open(json_files[0], 'r') as f:
+        data = json.load(f)
+
+    transcript = data.get('transcript')
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Transcript not found in metadata.")
+
+    clips = data.get('shorts', [])
+    if clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+
+    clip_data = clips[clip_index]
+    language = transcript.get('language', 'en')
+
+    # Find the clip file
+    clip_url = clip_data.get('video_url', '')
+    filename = clip_url.split('/')[-1] if clip_url else None
+    if not filename:
+        base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+        filename = f"{base_name}_clip_{clip_index + 1}.mp4"
+
+    clip_path = os.path.join(output_dir, filename)
+    if not os.path.exists(clip_path):
+        raise HTTPException(status_code=404, detail=f"Clip file not found: {filename}")
+
+    try:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        result_path, stats = await loop.run_in_executor(
+            None, smart_cut, clip_path, transcript,
+            clip_data['start'], clip_data['end'], language
+        )
+
+        if result_path is None:
+            return {
+                "success": False,
+                "message": "No significant silences or fillers found to remove.",
+                "stats": stats
+            }
+
+        smartcut_filename = os.path.basename(result_path)
+        new_url = f"/videos/{job_id}/{smartcut_filename}"
+
+        return {
+            "success": True,
+            "new_video_url": new_url,
+            "stats": stats
+        }
+
+    except Exception as e:
+        logger.error("Smart cut error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 class HookRequest(BaseModel):
     job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")

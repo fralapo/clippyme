@@ -207,7 +207,9 @@ function App() {
           body = formData;
         } else {
           headers['Content-Type'] = 'application/json';
-          body = JSON.stringify({ url: data.payload });
+          const jsonBody = { url: data.payload };
+          if (data.instructions) jsonBody.instructions = data.instructions;
+          body = JSON.stringify(jsonBody);
         }
       } else {
         const formData = new FormData();
@@ -228,6 +230,48 @@ function App() {
     } catch (e) {
       setStatus('error');
       setLogs(l => [...l, `Error: ${e.message}`]);
+    }
+  };
+
+  const handleBatchProcess = async (data) => {
+    if (!apiKey) {
+      setShowKeyModal(true);
+      return;
+    }
+    setStatus('processing');
+    setLogs(["Launching batch processing..."]);
+    setResults(null);
+
+    try {
+      const res = await fetch(getApiUrl('/api/batch'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
+        body: JSON.stringify({ urls: data.urls, instructions: data.instructions })
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const resData = await res.json();
+      setLogs(l => [...l, `Batch ${resData.batch_id}: ${resData.total} jobs queued`]);
+
+      // Poll batch status
+      const batchId = resData.batch_id;
+      const pollBatch = setInterval(async () => {
+        try {
+          const statusRes = await fetch(getApiUrl(`/api/batch/${batchId}`));
+          if (!statusRes.ok) return;
+          const statusData = await statusRes.json();
+          setLogs([`Batch progress: ${statusData.completed}/${statusData.total} completed, ${statusData.failed} failed`]);
+          if (statusData.completed + statusData.failed >= statusData.total) {
+            clearInterval(pollBatch);
+            setStatus('completed');
+            setLogs(l => [...l, `Batch complete! ${statusData.completed} succeeded, ${statusData.failed} failed.`]);
+          }
+        } catch { /* ignore poll errors */ }
+      }, 3000);
+
+    } catch (e) {
+      setStatus('error');
+      setLogs(l => [...l, `Batch error: ${e.message}`]);
     }
   };
 
@@ -588,7 +632,7 @@ function App() {
                 )}
 
                 <div className="max-w-xl mx-auto w-full px-2">
-                    <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
+                    <MediaInput onProcess={handleProcess} onBatchProcess={handleBatchProcess} isProcessing={status === 'processing'} />
                 </div>
 
                 <div className="flex items-center justify-center gap-6 md:gap-10">
