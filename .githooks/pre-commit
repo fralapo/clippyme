@@ -1,32 +1,28 @@
-#!/bin/bash
+#!/usr/bin/env sh
 # Pre-commit hook: block commits containing sensitive data
-
-RED='\033[0;31m'
-NC='\033[0m'
+# Compatible with Windows (GitHub Desktop), macOS, and Linux
 
 # Block sensitive files
-BLOCKED_FILES="data/config.json data/cookies.txt cookies.txt .env"
-for f in $BLOCKED_FILES; do
+for f in data/config.json data/cookies.txt cookies.txt .env; do
     if git diff --cached --name-only | grep -qx "$f"; then
-        echo -e "${RED}BLOCKED:${NC} Attempted to commit sensitive file: $f"
+        echo "BLOCKED: Attempted to commit sensitive file: $f"
         echo "Remove it from staging: git reset HEAD $f"
         exit 1
     fi
 done
 
-# Scan staged files for API key patterns (exclude hook definitions themselves)
-PATTERNS=(
-    'AIza[0-9A-Za-z_-]{35}'
-    'sk-[0-9a-zA-Z]{32,}'
-    'hf_[0-9a-zA-Z]{30,}'
-    'Secure-1PSIDTS[^'"'"']'
-    'Secure-3PSIDTS[^'"'"']'
-    '\.youtube\.com.*TRUE'
-)
+# Scan staged content for API key / secret patterns (exclude hook scripts)
+DIFF=$(git diff --cached -U0 -- ':!.githooks')
 
-for pattern in "${PATTERNS[@]}"; do
-    if git diff --cached -U0 -- ':!.githooks' | grep -qP "$pattern"; then
-        echo -e "${RED}BLOCKED:${NC} Staged changes contain sensitive data matching a secret pattern"
+for pattern in \
+    'AIza[0-9A-Za-z_-]\{35\}' \
+    'sk-[0-9a-zA-Z]\{32,\}' \
+    'hf_[0-9a-zA-Z]\{30,\}' \
+    'Secure-1PSIDTS' \
+    'Secure-3PSIDTS' \
+    '\.youtube\.com.*TRUE'; do
+    if echo "$DIFF" | grep -q "$pattern"; then
+        echo "BLOCKED: Staged changes contain sensitive data matching: $pattern"
         echo "Review your changes and remove sensitive data before committing."
         exit 1
     fi

@@ -25,6 +25,9 @@ services:
     image: clippyme-backend
     ports:
       - "8000:8000"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     environment:
       - HF_TOKEN=${HF_TOKEN:-}
     volumes:
