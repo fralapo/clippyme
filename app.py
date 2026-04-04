@@ -95,14 +95,6 @@ def require_trusted_config_request(request: Request) -> None:
     raise HTTPException(status_code=403, detail="Config access requires a trusted local origin.")
 
 
-def build_edit_temp_paths(job_id: str, job_output_dir: str) -> Dict[str, str]:
-    """Generate unique temp file paths per edit request to avoid collisions."""
-    suffix = uuid.uuid4().hex[:12]
-    return {
-        "input_path": os.path.join(job_output_dir, f"temp_input_{job_id}_{suffix}.mp4"),
-        "output_path": os.path.join(job_output_dir, f"temp_output_{job_id}_{suffix}.mp4"),
-    }
-
 def load_persistent_config():
     """Load config from JSON file if exists, falling back to environment variables."""
     config = {
@@ -712,116 +704,9 @@ async def update_config(req: ConfigUpdateRequest, request: Request):
     else:
         raise HTTPException(status_code=500, detail="Failed to save configuration.")
 
-from editor import VideoEditor
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video, generate_ass_karaoke, SUBTITLE_PRESETS
 from smartcut import smart_cut
 from hooks import add_hook_to_video
-
-class EditRequest(BaseModel):
-    job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
-    clip_index: int
-    api_key: Optional[str] = None
-    input_filename: Optional[str] = None
-
-@app.post("/api/edit")
-async def edit_clip(
-    req: EditRequest,
-    x_gemini_key: Optional[str] = Header(None, alias="X-Gemini-Key")
-):
-    # Determine API Key
-    final_api_key = req.api_key or x_gemini_key or os.environ.get("GEMINI_API_KEY")
-    
-    if not final_api_key:
-        raise HTTPException(status_code=400, detail="Missing Gemini API Key (Header or Body)")
-
-    if req.job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    job = jobs[req.job_id]
-    if 'result' not in job or 'clips' not in job['result']:
-        raise HTTPException(status_code=400, detail="Job result not available")
-        
-    try:
-        # Resolve Input Path: Prefer explict input_filename from frontend (chaining edits)
-        if req.input_filename:
-            # Security: Ensure just a filename, no paths
-            safe_name = os.path.basename(req.input_filename)
-            input_path = os.path.join(OUTPUT_DIR, req.job_id, safe_name)
-            filename = safe_name
-        else:
-            # Fallback to original clip
-            clip = job['result']['clips'][req.clip_index]
-            filename = clip['video_url'].split('/')[-1]
-            input_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
-        
-        if not os.path.exists(input_path):
-             raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
-
-        # Define output path for edited video
-        edited_filename = f"edited_{uuid.uuid4().hex[:8]}_{filename}"
-        output_path = os.path.join(OUTPUT_DIR, req.job_id, edited_filename)
-        temp_paths = build_edit_temp_paths(req.job_id, os.path.join(OUTPUT_DIR, req.job_id))
-        
-        # Run editing in a thread to avoid blocking main loop
-        def run_edit():
-            editor = VideoEditor(api_key=final_api_key)
-            
-            safe_input_path = temp_paths["input_path"]
-            safe_output_path = temp_paths["output_path"]
-            
-            shutil.copy(input_path, safe_input_path)
-            
-            try:
-                vid_file = editor.upload_video(safe_input_path)
-                
-                import cv2
-                cap = cv2.VideoCapture(safe_input_path)
-                fps = cap.get(cv2.CAP_PROP_FPS)
-                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                duration = frame_count / fps if fps else 0
-                cap.release()
-                
-                transcript = None
-                try:
-                    meta_files = glob.glob(os.path.join(OUTPUT_DIR, req.job_id, "*_metadata.json"))
-                    if meta_files:
-                        with open(meta_files[0], 'r') as f:
-                            data = json.load(f)
-                            transcript = data.get('transcript')
-                except Exception as e:
-                    logger.warning("Could not load transcript for editing context: %s", e)
-
-                filter_data = editor.get_ffmpeg_filter(vid_file, duration, fps=fps, width=width, height=height, transcript=transcript)
-                
-                editor.apply_edits(safe_input_path, safe_output_path, filter_data)
-                
-                if os.path.exists(safe_output_path):
-                    shutil.move(safe_output_path, output_path)
-                
-                return filter_data
-            finally:
-                if os.path.exists(safe_input_path):
-                    os.remove(safe_input_path)
-                if os.path.exists(safe_output_path):
-                    os.remove(safe_output_path)
-
-        # Run in thread pool
-        loop = asyncio.get_event_loop()
-        plan = await loop.run_in_executor(None, run_edit)
-        
-        new_video_url = f"/videos/{req.job_id}/{edited_filename}"
-        
-        return {
-            "success": True, 
-            "new_video_url": new_video_url,
-            "edit_plan": plan
-        }
-
-    except Exception as e:
-        logger.error("Edit error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
 
 class SubtitleRequest(BaseModel):
     job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
