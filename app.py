@@ -470,8 +470,7 @@ async def run_job(job_id, job_data):
 async def process_endpoint(
     request: Request,
     file: Optional[UploadFile] = File(None),
-    url: Optional[str] = Form(None),
-    cookies_file: Optional[UploadFile] = File(None)
+    url: Optional[str] = Form(None)
 ):
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
@@ -501,11 +500,9 @@ async def process_endpoint(
     
     if url:
         cmd.extend(["-u", url])
-        if cookies_file:
-            cookies_path = os.path.join(UPLOAD_DIR, f"cookies_{job_id}.txt")
-            content_bytes = await cookies_file.read()
-            with open(cookies_path, "wb") as buffer:
-                buffer.write(content_bytes)
+        # Use persistent cookies if available
+        cookies_path = os.path.join("data", "cookies.txt")
+        if os.path.exists(cookies_path):
             cmd.extend(["-c", cookies_path])
     else:
         # Save uploaded file with size limit check
@@ -708,6 +705,30 @@ async def update_config(req: ConfigUpdateRequest, request: Request):
         return {"success": True, "message": "Configuration updated and persisted."}
     else:
         raise HTTPException(status_code=500, detail="Failed to save configuration.")
+
+@app.post("/api/config/cookies")
+async def upload_cookies(cookies_file: UploadFile = File(...)):
+    """Upload and persist a Netscape-format cookies.txt file."""
+    os.makedirs("data", exist_ok=True)
+    cookies_path = os.path.join("data", "cookies.txt")
+    content = await cookies_file.read()
+    with open(cookies_path, "wb") as f:
+        f.write(content)
+    return {"status": "ok", "message": "Cookies saved"}
+
+@app.get("/api/config/cookies/status")
+async def cookies_status():
+    """Check if a cookies file is configured."""
+    cookies_path = os.path.join("data", "cookies.txt")
+    return {"configured": os.path.exists(cookies_path)}
+
+@app.delete("/api/config/cookies")
+async def delete_cookies():
+    """Remove the persisted cookies file."""
+    cookies_path = os.path.join("data", "cookies.txt")
+    if os.path.exists(cookies_path):
+        os.remove(cookies_path)
+    return {"status": "ok", "message": "Cookies removed"}
 
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video, generate_ass_karaoke, SUBTITLE_PRESETS
 from smartcut import smart_cut

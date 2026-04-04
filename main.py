@@ -591,24 +591,18 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
         cookies_path = cookies_file_path
         print(f"🍪 Using provided cookies file: {cookies_path}")
     else:
-        cookies_path = '/app/cookies.txt'
-        cookies_env = os.environ.get("YOUTUBE_COOKIES")
-        if cookies_env:
-            print("🍪 Found YOUTUBE_COOKIES env var, creating cookies file inside container...")
-            try:
-                with open(cookies_path, 'w') as f:
-                    f.write(cookies_env)
-                if os.path.exists(cookies_path):
-                     print(f"   Debug: Cookies file created. Size: {os.path.getsize(cookies_path)} bytes")
-                     with open(cookies_path, 'r') as f:
-                         content = f.read(100)
-                         print(f"   Debug: First 100 chars of cookie file: {content}")
-            except Exception as e:
-                print(f"⚠️ Failed to write cookies file: {e}")
-                cookies_path = None
+        persistent_cookies = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cookies.txt")
+        if os.path.exists(persistent_cookies):
+            cookies_path = persistent_cookies
+            print(f"🍪 Using persistent cookies file: {cookies_path}")
+        elif os.environ.get("YOUTUBE_COOKIES"):
+            cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cookies_env.txt")
+            os.makedirs(os.path.dirname(cookies_path), exist_ok=True)
+            with open(cookies_path, "w") as f:
+                f.write(os.environ["YOUTUBE_COOKIES"])
         else:
             cookies_path = None
-            print("⚠️ YOUTUBE_COOKIES env var not found.")
+            print("⚠️ No cookies file found.")
     
     # Common yt-dlp options to work around YouTube bot detection.
     # Avoid the OAuth/PO-token checks that block server IPs.
