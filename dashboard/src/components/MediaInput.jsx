@@ -1,16 +1,14 @@
 import React, { useState, useRef } from 'react';
 import { Youtube, Upload, FileVideo, X, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard } from 'lucide-react';
 
-export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) {
+export default function MediaInput({ onProcess, onBatchProcess, isProcessing, cookiesConfigured }) {
     const [mode, setMode] = useState('url'); // 'url' | 'file' | 'batch'
     const [url, setUrl] = useState('');
     const [file, setFile] = useState(null);
-    const [cookiesFile, setCookiesFile] = useState(null);
     const [instructions, setInstructions] = useState('');
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [batchUrls, setBatchUrls] = useState('');
     const [isDragging, setIsDragging] = useState(false);
-    const [showCookies, setShowCookies] = useState(false);
     const urlInputRef = useRef(null);
 
     const handleSubmit = (e) => {
@@ -22,7 +20,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                 onBatchProcess({ urls, ...opts });
             }
         } else if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, cookiesFile, ...opts });
+            onProcess({ type: 'url', payload: url, ...opts });
         } else if (mode === 'file' && file) {
             onProcess({ type: 'file', payload: file, ...opts });
         }
@@ -112,41 +110,13 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                                 </button>
                             </div>
 
-                            {/* Collapsible Advanced / Cookies */}
-                            <div>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowCookies(!showCookies)}
-                                    className="flex items-center gap-1.5 text-[11px] text-zinc-500 hover:text-zinc-300 font-medium transition-colors"
-                                >
-                                    <ChevronDown size={12} className={`transition-transform duration-200 ${showCookies ? 'rotate-180' : ''}`} />
-                                    Advanced
-                                </button>
-                                {showCookies && (
-                                    <div className="mt-3 p-4 rounded-xl bg-white/[0.02] border border-white/5 space-y-3 animate-fade-in">
-                                        <div className="flex items-center justify-between">
-                                            <span className="text-[11px] font-medium text-zinc-500">Cookie file (Netscape .txt)</span>
-                                            {cookiesFile && (
-                                                <span className="text-[11px] font-medium text-emerald-400 flex items-center gap-1">
-                                                    Loaded
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="relative group/cookie">
-                                            <input
-                                                type="file"
-                                                accept=".txt"
-                                                onChange={(e) => setCookiesFile(e.target.files?.[0] || null)}
-                                                className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                                            />
-                                            <div className="w-full bg-white/[0.02] border border-dashed border-white/10 rounded-lg py-2.5 px-4 text-xs text-zinc-500 group-hover/cookie:border-blue-500/30 transition-all flex items-center justify-between">
-                                                <span>{cookiesFile ? cookiesFile.name : 'Drop cookies file to bypass bot detection'}</span>
-                                                <Upload size={13} className="text-zinc-600 group-hover/cookie:text-zinc-400 transition-colors" />
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
+                            {/* Cookie warning banner */}
+                            {!cookiesConfigured && (
+                                <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+                                    <span className="mt-0.5">⚠</span>
+                                    <span>Cookie non configurati. Senza cookie, il download potrebbe fallire o essere più lento. Configura i cookie nelle <strong>Impostazioni</strong>.</span>
+                                </div>
+                            )}
                         </div>
                     )}
 

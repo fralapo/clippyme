@@ -43,6 +43,7 @@ function App() {
   const [sessionRecovered, setSessionRecovered] = useState(false);
   const [history, setHistory] = useState([]);
   const [hfTokenSet, setHfTokenSet] = useState(true); // assume set until checked
+  const [cookiesConfigured, setCookiesConfigured] = useState(false);
 
   const [currentStep, setCurrentStep] = useState(null);
 
@@ -97,6 +98,14 @@ function App() {
     fetch(getApiUrl('/api/config'))
       .then(r => r.ok ? r.json() : {})
       .then(data => setHfTokenSet(!!data.HF_TOKEN))
+      .catch(() => {});
+  }, []);
+
+  // Check cookies configured on mount
+  useEffect(() => {
+    fetch(getApiUrl('/api/config/cookies/status'))
+      .then(r => r.ok ? r.json() : {})
+      .then(data => setCookiesConfigured(!!data.configured))
       .catch(() => {});
   }, []);
 
@@ -206,17 +215,10 @@ function App() {
       const headers = { 'X-Gemini-Key': apiKey };
 
       if (data.type === 'url') {
-        if (data.cookiesFile) {
-          const formData = new FormData();
-          formData.append('url', data.payload);
-          formData.append('cookies_file', data.cookiesFile);
-          body = formData;
-        } else {
-          headers['Content-Type'] = 'application/json';
-          const jsonBody = { url: data.payload };
-          if (data.instructions) jsonBody.instructions = data.instructions;
-          body = JSON.stringify(jsonBody);
-        }
+        headers['Content-Type'] = 'application/json';
+        const jsonBody = { url: data.payload };
+        if (data.instructions) jsonBody.instructions = data.instructions;
+        body = JSON.stringify(jsonBody);
       } else {
         const formData = new FormData();
         formData.append('file', data.payload);
@@ -225,7 +227,7 @@ function App() {
 
       const res = await fetch(getApiUrl('/api/process'), {
         method: 'POST',
-        headers: data.type === 'url' && !data.cookiesFile ? headers : { 'X-Gemini-Key': apiKey },
+        headers,
         body
       });
 
@@ -633,7 +635,7 @@ function App() {
                 )}
 
                 <div className="max-w-xl w-full">
-                  <MediaInput onProcess={handleProcess} onBatchProcess={handleBatchProcess} isProcessing={status === 'processing'} />
+                  <MediaInput onProcess={handleProcess} onBatchProcess={handleBatchProcess} isProcessing={status === 'processing'} cookiesConfigured={cookiesConfigured} />
                 </div>
 
                 <div className="flex items-center justify-center gap-8 pt-2">

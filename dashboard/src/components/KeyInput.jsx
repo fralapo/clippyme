@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Eye, EyeOff, Check, Save, Loader2, AlertCircle, ChevronDown } from 'lucide-react';
+import { Eye, EyeOff, Check, Save, Loader2, AlertCircle, ChevronDown, Upload, Trash2 } from 'lucide-react';
 import { config } from '../config';
 
 const KEY_TYPES = [
@@ -14,6 +14,10 @@ export default function KeyInput({ onKeySet, onHfTokenSet }) {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [message, setMessage] = useState({ type: '', text: '' });
+
+    const [cookiesFile, setCookiesFile] = useState(null);
+    const [cookiesConfigured, setCookiesConfigured] = useState(false);
+    const [isSavingCookies, setIsSavingCookies] = useState(false);
 
     const [models, setModels] = useState([]);
     const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash');
@@ -36,6 +40,18 @@ export default function KeyInput({ onKeySet, onHfTokenSet }) {
             console.error("Failed to fetch models:", error);
         } finally {
             setIsLoadingModels(false);
+        }
+    }, []);
+
+    const checkCookies = useCallback(async () => {
+        try {
+            const response = await fetch(`${config.API_BASE_URL}/api/config/cookies/status`);
+            if (response.ok) {
+                const data = await response.json();
+                setCookiesConfigured(!!data.configured);
+            }
+        } catch (error) {
+            console.error("Failed to check cookie status:", error);
         }
     }, []);
 
@@ -64,7 +80,8 @@ export default function KeyInput({ onKeySet, onHfTokenSet }) {
 
     useEffect(() => {
         fetchConfig();
-    }, [fetchConfig]);
+        checkCookies();
+    }, [fetchConfig, checkCookies]);
 
     const handleSave = async (keyId) => {
         const value = keys[keyId];
@@ -100,6 +117,52 @@ export default function KeyInput({ onKeySet, onHfTokenSet }) {
             setMessage({ type: 'error', text: 'Network error while saving.' });
         } finally {
             setIsSaving(false);
+            setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+        }
+    };
+
+    const handleCookieUpload = async () => {
+        if (!cookiesFile) return;
+        setIsSavingCookies(true);
+        setMessage({ type: '', text: '' });
+        try {
+            const formData = new FormData();
+            formData.append('cookies_file', cookiesFile);
+            const response = await fetch(`${config.API_BASE_URL}/api/config/cookies`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (response.ok) {
+                setMessage({ type: 'success', text: 'Cookies saved successfully!' });
+                setCookiesFile(null);
+                await checkCookies();
+            } else {
+                setMessage({ type: 'error', text: 'Failed to upload cookies.' });
+            }
+        } catch (error) {
+            setMessage({ type: 'error', text: 'Network error while saving cookies.' });
+        } finally {
+            setIsSavingCookies(false);
+            setTimeout(() => setMessage({ type: '', text: '' }), 3000);
+        }
+    };
+
+    const handleCookieDelete = async () => {
+        setIsSavingCookies(true);
+        try {
+            const response = await fetch(`${config.API_BASE_URL}/api/config/cookies`, {
+                method: 'DELETE',
+            });
+            if (response.ok) {
+                setMessage({ type: 'success', text: 'Cookies removed.' });
+                await checkCookies();
+            } else {
+                setMessage({ type: 'error', text: 'Failed to remove cookies.' });
+            }
+        } catch (error) {
+            setMessage({ type: 'error', text: 'Network error while removing cookies.' });
+        } finally {
+            setIsSavingCookies(false);
             setTimeout(() => setMessage({ type: '', text: '' }), 3000);
         }
     };
@@ -251,6 +314,69 @@ export default function KeyInput({ onKeySet, onHfTokenSet }) {
                         Save a valid API key to fetch the full list of available models.
                     </p>
                 )}
+            </div>
+
+            {/* Cookie upload section */}
+            <div className="space-y-2 pt-2">
+                <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                        YouTube / Twitch Cookies
+                        <span className="text-[10px] text-zinc-600 bg-white/[0.03] border border-white/[0.06] px-1.5 py-0.5 rounded">
+                            Optional
+                        </span>
+                        {cookiesConfigured && (
+                            <span className="flex items-center gap-1 text-[10px] text-success bg-success/10 border border-success/20 px-1.5 py-0.5 rounded">
+                                <div className="w-1.5 h-1.5 rounded-full bg-success" /> Configured
+                            </span>
+                        )}
+                    </label>
+                    <a
+                        href="https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] text-accent-pink hover:text-accent-pink/80 transition-colors"
+                    >
+                        Get extension
+                    </a>
+                </div>
+                <p className="text-[11px] text-zinc-600">Upload a Netscape .txt cookies file to bypass bot detection on YouTube or Twitch.</p>
+                <div className="flex gap-2">
+                    <div className="relative flex-1 group/cookie">
+                        <input
+                            type="file"
+                            accept=".txt"
+                            onChange={(e) => setCookiesFile(e.target.files?.[0] || null)}
+                            className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                        />
+                        <div className="w-full bg-[#0f0f13] border border-dashed border-white/10 rounded-lg py-3 px-4 text-xs text-zinc-500 group-hover/cookie:border-accent-pink/30 transition-all flex items-center justify-between">
+                            <span>{cookiesFile ? cookiesFile.name : 'Drop .txt cookies file here'}</span>
+                            <Upload size={13} className="text-zinc-600 group-hover/cookie:text-zinc-400 transition-colors" />
+                        </div>
+                    </div>
+                    <button
+                        onClick={handleCookieUpload}
+                        disabled={!cookiesFile || isSavingCookies}
+                        className={`px-4 rounded-lg font-medium text-sm transition-all flex items-center gap-1.5 ${
+                            !cookiesFile || isSavingCookies
+                                ? 'bg-white/[0.03] text-zinc-600 cursor-not-allowed border border-white/[0.06]'
+                                : 'text-white border border-transparent'
+                        }`}
+                        style={cookiesFile && !isSavingCookies ? { background: 'linear-gradient(135deg, #e6428d, #9850c3)' } : undefined}
+                    >
+                        {isSavingCookies ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        Save
+                    </button>
+                    {cookiesConfigured && (
+                        <button
+                            onClick={handleCookieDelete}
+                            disabled={isSavingCookies}
+                            className="px-3 rounded-lg font-medium text-sm transition-all flex items-center gap-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 disabled:opacity-50"
+                            title="Remove cookies"
+                        >
+                            <Trash2 size={14} />
+                        </button>
+                    )}
+                </div>
             </div>
 
             <p className="text-[11px] text-zinc-600 pt-2">
