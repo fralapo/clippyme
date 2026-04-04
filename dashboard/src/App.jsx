@@ -150,6 +150,13 @@ function App() {
             setStatus('complete');
             setShowConfetti(true);
             setTimeout(() => setShowConfetti(false), 3000);
+            // Auto-apply smartcut pre-selection: fire-and-forget so files are ready at download time
+            if (preselections?.smartcut && data.result?.clips) {
+              data.result.clips.forEach((clip, i) => {
+                fetch(getApiUrl(`/api/smartcut/${jobId}/${i}`), { method: 'POST' })
+                  .catch(err => console.warn('Pre-smartcut failed for clip', i, err));
+              });
+            }
             saveToHistory({
               jobId,
               status: 'complete',
@@ -835,6 +842,7 @@ function App() {
                       clip={clip}
                       index={i}
                       jobId={jobId}
+                      preselections={preselections}
                       onPlay={(time) => handleClipPlay(time)}
                       onPause={handleClipPause}
                     />
@@ -917,6 +925,7 @@ function App() {
                         clip={clip}
                         index={i}
                         jobId={jobId}
+                        preselections={preselections}
                         onPlay={(time) => handleClipPlay(time)}
                         onPause={handleClipPause}
                       />
