@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare } from 'lucide-react';
+import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
@@ -7,16 +7,39 @@ import HookModal from './HookModal';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 
-export default function ResultCard({ clip, index, jobId, onPlay, onPause }) {
+export default function ResultCard({ clip, index, jobId, onPlay, onPause, preselections }) {
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const [showHookModal, setShowHookModal] = useState(false);
     const videoRef = React.useRef(null);
     const [currentVideoUrl, setCurrentVideoUrl] = useState(getApiUrl(clip.video_url));
 
-    const [isSubtitling, setIsSubtitling] = useState(false);
-    const [isHooking, setIsHooking] = useState(false);
-    const [isSmartCutting, setIsSmartCutting] = useState(false);
     const [copiedField, setCopiedField] = useState(null);
+
+    // Toggle state — initialized from preselections prop
+    const [toggles, setToggles] = useState({
+        smartcut: preselections?.smartcut || false,
+        hook: preselections?.hook ? true : false,
+        subtitles: preselections?.subtitles ? true : false,
+    });
+
+    const [hookParams, setHookParams] = useState({
+        text: clip.viral_hook_text || clip.hook_text || '',
+        position: preselections?.hook?.position || 'top',
+        size: preselections?.hook?.size || 'M',
+        offset_y: 0,
+    });
+
+    const [subtitleParams, setSubtitleParams] = useState({
+        preset: preselections?.subtitles?.preset || 'classic_white',
+        mode: preselections?.subtitles?.mode || 'karaoke',
+        display_mode: 'word_group',
+        highlight_color: null,
+        font: 'Montserrat-Black',
+        uppercase: true,
+        offset_y: 0,
+    });
+
+    const [isComposing, setIsComposing] = useState(false);
 
     const copyToClipboard = (text, field) => {
         navigator.clipboard.writeText(text);
@@ -24,109 +47,63 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause }) {
         setTimeout(() => setCopiedField(null), 2000);
     };
 
-    const handleSubtitle = async (options) => {
-        setIsSubtitling(true);
+    const handleDownload = async () => {
+        const hasActiveToggles = Object.values(toggles).some(Boolean);
+
+        if (!hasActiveToggles) {
+            // Download original clip directly
+            try {
+                const response = await fetch(currentVideoUrl);
+                if (!response.ok) throw new Error('Download failed');
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = `clippyme-segment-${index + 1}.mp4`;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+                document.body.removeChild(a);
+            } catch (err) {
+                console.error('Download error:', err);
+                window.open(currentVideoUrl, '_blank');
+            }
+            return;
+        }
+
+        setIsComposing(true);
         try {
-            const res = await fetch(getApiUrl('/api/subtitle'), {
+            const res = await fetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    job_id: jobId,
-                    clip_index: index,
-                    position: options.position,
-                    font_size: options.fontSize,
-                    font_name: options.fontName,
-                    font_color: options.fontColor,
-                    border_color: options.borderColor,
-                    border_width: options.borderWidth,
-                    bg_color: options.bgColor,
-                    bg_opacity: options.bgOpacity,
-                    input_filename: currentVideoUrl.split('/').pop(),
-                    ...(options.preset && { preset: options.preset }),
-                    ...(options.karaoke_mode && { karaoke_mode: options.karaoke_mode }),
-                    ...(options.words_per_group && { words_per_group: options.words_per_group }),
-                    ...(options.uppercase !== undefined && { uppercase: options.uppercase }),
-                    ...(options.highlight_color && { highlight_color: options.highlight_color }),
-                })
+                    toggles,
+                    hook_params: toggles.hook ? hookParams : {},
+                    subtitle_params: toggles.subtitles ? subtitleParams : {},
+                }),
             });
-
-            if (!res.ok) {
-                const errText = await res.text();
-                throw new Error(errText);
-            }
-
             const data = await res.json();
-            if (data.new_video_url) {
-                setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                if (videoRef.current) {
-                    videoRef.current.load();
-                }
-                setShowSubtitleModal(false);
-            }
-
-        } catch (e) {
-            toast.error(e.message);
-        } finally {
-            setIsSubtitling(false);
-        }
-    };
-
-    const handleSmartCut = async () => {
-        setIsSmartCutting(true);
-        try {
-            const res = await fetch(getApiUrl(`/api/smartcut/${jobId}/${index}`), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
-            });
-            if (!res.ok) {
-                const errText = await res.text();
-                throw new Error(errText || `Smart Cut failed (${res.status})`);
-            }
-            const data = await res.json();
-            if (data.success && data.new_video_url) {
-                toast.success(`Smart Cut saved ${data.stats?.time_saved}s`);
-                setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                if (videoRef.current) videoRef.current.load();
+            if (data.composed_url) {
+                const videoRes = await fetch(getApiUrl(data.composed_url));
+                const blob = await videoRes.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = url;
+                a.download = `clippyme-segment-${index + 1}.mp4`;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+                document.body.removeChild(a);
             } else {
-                toast.info(data.message || "No silences found to remove.");
+                toast.error(data.detail || 'Compose returned no video URL');
             }
-        } catch (e) {
-            toast.error(e.message);
+        } catch (err) {
+            console.error('Compose failed:', err);
+            toast.error('Compose failed — check console for details');
         } finally {
-            setIsSmartCutting(false);
-        }
-    };
-
-    const handleHook = async (options) => {
-        setIsHooking(true);
-        try {
-            const res = await fetch(getApiUrl('/api/hook'), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    job_id: jobId,
-                    clip_index: index,
-                    text: options.text,
-                    position: options.position,
-                    size: options.size,
-                    input_filename: currentVideoUrl.split('/').pop()
-                })
-            });
-            if (!res.ok) {
-                const errText = await res.text();
-                try { throw new Error(JSON.parse(errText).detail || errText); }
-                catch { throw new Error(res.status === 404 ? 'Session expired — process a new video first.' : errText); }
-            }
-            const data = await res.json();
-            if (data.new_video_url) {
-                setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                if (videoRef.current) videoRef.current.load();
-                setShowHookModal(false);
-            }
-        } catch (e) {
-            toast.error(e.message);
-        } finally {
-            setIsHooking(false);
+            setIsComposing(false);
         }
     };
 
@@ -138,13 +115,15 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause }) {
         mid: 'linear-gradient(135deg, #f59e0b, #d97706)',
         low: 'linear-gradient(135deg, #f97316, #ea580c)',
     }[scoreLevel];
-    const viralScoreColor = {
-        high: 'bg-green-500/15 text-green-400 border-green-500/20',
-        mid: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20',
-        low: 'bg-orange-500/15 text-orange-400 border-orange-500/20',
-    }[scoreLevel];
 
-    const ghostBtn = 'bg-white/5 hover:bg-white/10 text-zinc-300 rounded-lg px-3 py-2.5 text-xs transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:pointer-events-none min-h-[44px]';
+    const toggleBtn = (active) =>
+        `flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
+            active
+                ? 'bg-accent-pink/20 text-accent-pink border border-accent-pink/30'
+                : 'bg-white/5 text-zinc-500 border border-white/5 hover:text-zinc-300'
+        }`;
+
+    const settingsBtn = 'p-2 rounded-lg bg-white/5 border border-white/5 text-zinc-500 hover:text-white transition-colors';
 
     return (
         <div
@@ -171,8 +150,6 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause }) {
                         }
                     }}
                 />
-
-
             </div>
 
             {/* Content area */}
@@ -211,48 +188,68 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause }) {
                     </div>
                 </div>
 
-                {/* Action buttons grid */}
-                <div className="grid grid-cols-2 gap-2">
-                    <button onClick={() => setShowSubtitleModal(true)} disabled={isSubtitling} className={ghostBtn}>
-                        {isSubtitling ? <Loader2 size={13} className="animate-spin" /> : <Type size={13} />}
-                        Subtitles
-                    </button>
-                    <button onClick={() => setShowHookModal(true)} disabled={isHooking} className={ghostBtn}>
-                        {isHooking ? <Loader2 size={13} className="animate-spin" /> : <MessageSquare size={13} />}
-                        Hook
-                    </button>
-                    <button onClick={handleSmartCut} disabled={isSmartCutting} className={ghostBtn}>
-                        {isSmartCutting ? <Loader2 size={13} className="animate-spin" /> : <Scissors size={13} />}
-                        Smart Cut
-                    </button>
+                {/* Toggle buttons — vertical stack */}
+                <div className="space-y-2">
+                    {/* Smart Cut */}
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setToggles(t => ({ ...t, smartcut: !t.smartcut }))}
+                            className={toggleBtn(toggles.smartcut)}
+                        >
+                            <span className={`w-1.5 h-1.5 rounded-full transition-colors ${toggles.smartcut ? 'bg-accent-pink' : 'bg-zinc-600'}`} />
+                            <Scissors size={13} />
+                            Smart Cut
+                        </button>
+                    </div>
+
+                    {/* Hook */}
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setToggles(t => ({ ...t, hook: !t.hook }))}
+                            className={toggleBtn(toggles.hook)}
+                        >
+                            <span className={`w-1.5 h-1.5 rounded-full transition-colors ${toggles.hook ? 'bg-accent-pink' : 'bg-zinc-600'}`} />
+                            <MessageSquare size={13} />
+                            Hook
+                        </button>
+                        <button onClick={() => setShowHookModal(true)} className={settingsBtn}>
+                            <Settings size={13} />
+                        </button>
+                    </div>
+
+                    {/* Subtitles */}
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => setToggles(t => ({ ...t, subtitles: !t.subtitles }))}
+                            className={toggleBtn(toggles.subtitles)}
+                        >
+                            <span className={`w-1.5 h-1.5 rounded-full transition-colors ${toggles.subtitles ? 'bg-accent-pink' : 'bg-zinc-600'}`} />
+                            <Type size={13} />
+                            Subtitles
+                        </button>
+                        <button onClick={() => setShowSubtitleModal(true)} className={settingsBtn}>
+                            <Settings size={13} />
+                        </button>
+                    </div>
                 </div>
 
-                {/* Download button - full width gradient */}
+                {/* Download button - full width, shows composing state */}
                 <button
-                    onClick={async (e) => {
-                        e.preventDefault();
-                        try {
-                            const response = await fetch(currentVideoUrl);
-                            if (!response.ok) throw new Error('Download failed');
-                            const blob = await response.blob();
-                            const url = window.URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.style.display = 'none';
-                            a.href = url;
-                            a.download = `clippyme-segment-${index + 1}.mp4`;
-                            document.body.appendChild(a);
-                            a.click();
-                            setTimeout(() => window.URL.revokeObjectURL(url), 60000);
-                            document.body.removeChild(a);
-                        } catch (err) {
-                            console.error('Download error:', err);
-                            window.open(currentVideoUrl, '_blank');
-                        }
-                    }}
-                    className="w-full py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98]"
+                    onClick={handleDownload}
+                    disabled={isComposing}
+                    className="w-full py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 disabled:pointer-events-none"
                 >
-                    <Download size={15} />
-                    Download
+                    {isComposing ? (
+                        <>
+                            <Loader2 size={15} className="animate-spin" />
+                            Composing...
+                        </>
+                    ) : (
+                        <>
+                            <Download size={15} />
+                            Download
+                        </>
+                    )}
                 </button>
 
                 {/* Copy-to-clipboard fields */}
@@ -302,16 +299,24 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause }) {
             <SubtitleModal
                 isOpen={showSubtitleModal}
                 onClose={() => setShowSubtitleModal(false)}
-                onGenerate={handleSubtitle}
-                isProcessing={isSubtitling}
+                onGenerate={(params) => {
+                    setSubtitleParams(prev => ({ ...prev, ...params }));
+                    setToggles(t => ({ ...t, subtitles: true }));
+                    setShowSubtitleModal(false);
+                }}
+                isProcessing={false}
                 videoUrl={currentVideoUrl}
             />
 
             <HookModal
                 isOpen={showHookModal}
                 onClose={() => setShowHookModal(false)}
-                onGenerate={handleHook}
-                isProcessing={isHooking}
+                onGenerate={(params) => {
+                    setHookParams(prev => ({ ...prev, ...params }));
+                    setToggles(t => ({ ...t, hook: true }));
+                    setShowHookModal(false);
+                }}
+                isProcessing={false}
                 videoUrl={currentVideoUrl}
                 initialText={clip.viral_hook_text || ''}
             />
