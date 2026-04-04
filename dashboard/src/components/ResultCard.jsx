@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Loader2, Wand2, Type, Instagram, Copy, Check, Scissors, MessageSquare } from 'lucide-react';
+import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
@@ -7,13 +7,12 @@ import HookModal from './HookModal';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 
-export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, onPause }) {
+export default function ResultCard({ clip, index, jobId, onPlay, onPause }) {
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const [showHookModal, setShowHookModal] = useState(false);
     const videoRef = React.useRef(null);
     const [currentVideoUrl, setCurrentVideoUrl] = useState(getApiUrl(clip.video_url));
 
-    const [isEditing, setIsEditing] = useState(false);
     const [isSubtitling, setIsSubtitling] = useState(false);
     const [isHooking, setIsHooking] = useState(false);
     const [isSmartCutting, setIsSmartCutting] = useState(false);
@@ -23,53 +22,6 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
         navigator.clipboard.writeText(text);
         setCopiedField(field);
         setTimeout(() => setCopiedField(null), 2000);
-    };
-
-    const handleAutoEdit = async () => {
-        setIsEditing(true);
-        try {
-            const apiKey = geminiApiKey || localStorage.getItem('gemini_key');
-
-            if (!apiKey) {
-                throw new Error("Gemini API Key is missing. Please set it in Settings.");
-            }
-
-            const res = await fetch(getApiUrl('/api/edit'), {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Gemini-Key': apiKey
-                },
-                body: JSON.stringify({
-                    job_id: jobId,
-                    clip_index: index,
-                    input_filename: currentVideoUrl.split('/').pop()
-                })
-            });
-
-            if (!res.ok) {
-                const errText = await res.text();
-                try {
-                    const jsonErr = JSON.parse(errText);
-                    throw new Error(jsonErr.detail || errText);
-                } catch (e) {
-                    throw new Error(errText);
-                }
-            }
-
-            const data = await res.json();
-            if (data.new_video_url) {
-                setCurrentVideoUrl(getApiUrl(data.new_video_url));
-                if (videoRef.current) {
-                    videoRef.current.load();
-                }
-            }
-
-        } catch (e) {
-            toast.error(e.message);
-        } finally {
-            setIsEditing(false);
-        }
     };
 
     const handleSubtitle = async (options) => {
@@ -220,12 +172,7 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                     }}
                 />
 
-                {isEditing && (
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center z-30">
-                        <Loader2 size={36} className="text-white animate-spin mb-3" />
-                        <span className="text-xs font-medium text-zinc-300 tracking-wide">Applying edits...</span>
-                    </div>
-                )}
+
             </div>
 
             {/* Content area */}
@@ -264,12 +211,8 @@ export default function ResultCard({ clip, index, jobId, geminiApiKey, onPlay, o
                     </div>
                 </div>
 
-                {/* Action buttons 2x2 grid */}
+                {/* Action buttons grid */}
                 <div className="grid grid-cols-2 gap-2">
-                    <button onClick={handleAutoEdit} disabled={isEditing} className={ghostBtn}>
-                        {isEditing ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
-                        Auto Edit
-                    </button>
                     <button onClick={() => setShowSubtitleModal(true)} disabled={isSubtitling} className={ghostBtn}>
                         {isSubtitling ? <Loader2 size={13} className="animate-spin" /> : <Type size={13} />}
                         Subtitles

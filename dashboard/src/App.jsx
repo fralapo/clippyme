@@ -823,7 +823,6 @@ function App() {
                       clip={clip}
                       index={i}
                       jobId={jobId}
-                      geminiApiKey={apiKey}
                       onPlay={(time) => handleClipPlay(time)}
                       onPause={handleClipPause}
                     />
@@ -906,7 +905,6 @@ function App() {
                         clip={clip}
                         index={i}
                         jobId={jobId}
-                        geminiApiKey={apiKey}
                         onPlay={(time) => handleClipPlay(time)}
                         onPause={handleClipPause}
                       />
