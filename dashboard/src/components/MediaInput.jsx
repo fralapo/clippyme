@@ -99,7 +99,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
         const preselections = {
             reframe_mode: reframeMode,
             smartcut: preSmartCut,
-            subtitles: preSubtitles ? { preset: preSubPreset, mode: preSubMode } : null,
+            subtitles: preSubtitles
+                ? (preSubMode === 'karaoke'
+                    ? { preset: preSubPreset, mode: 'karaoke' }
+                    : { mode: 'classic' })
+                : null,
             hook: preHook ? { position: preHookPosition, size: preHookSize } : null,
         };
         const opts = { instructions: instructions.trim() || undefined, preselections };
@@ -490,37 +494,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
 
                                     {preSubtitles && showSubConfig && (
                                         <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-3 animate-fade-in">
-                                            {/* Preset — visual grid */}
-                                            <div className="space-y-1.5">
-                                                <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Preset</p>
-                                                <div className="grid grid-cols-2 gap-1.5">
-                                                    {SUBTITLE_PRESETS.map((p) => {
-                                                        const isActive = preSubPreset === p.id;
-                                                        return (
-                                                            <button
-                                                                key={p.id}
-                                                                type="button"
-                                                                onClick={() => setPreSubPreset(p.id)}
-                                                                className={`relative rounded-lg border overflow-hidden transition-all ${
-                                                                    isActive
-                                                                        ? 'border-accent-pink/50 bg-white/[0.06]'
-                                                                        : 'border-white/5 bg-white/[0.02] hover:border-white/10'
-                                                                }`}
-                                                            >
-                                                                <div className="px-2 py-2.5 flex items-center justify-center min-h-[44px]">
-                                                                    <span style={p.previewStyle} className="text-[11px] font-bold leading-tight text-center">
-                                                                        WORD <span style={{ color: p.highlight }}>UP</span>
-                                                                    </span>
-                                                                </div>
-                                                                <div className="px-1.5 py-1 bg-black/40 border-t border-white/5">
-                                                                    <p className={`text-[9px] uppercase tracking-wider truncate ${isActive ? 'text-accent-pink' : 'text-zinc-500'}`}>{p.label}</p>
-                                                                </div>
-                                                            </button>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                            {/* Mode */}
+                                            {/* Mode (first — drives whether preset picker is shown) */}
                                             <div className="space-y-1.5">
                                                 <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Mode</p>
                                                 <div className="flex gap-2">
@@ -540,6 +514,47 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                                     ))}
                                                 </div>
                                             </div>
+
+                                            {/* Preset — only meaningful in karaoke mode (classic uses font/color params) */}
+                                            {preSubMode === 'karaoke' ? (
+                                                <div className="space-y-1.5">
+                                                    <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Karaoke Preset</p>
+                                                    <div className="grid grid-cols-2 gap-1.5">
+                                                        {SUBTITLE_PRESETS.map((p) => {
+                                                            const isActive = preSubPreset === p.id;
+                                                            return (
+                                                                <button
+                                                                    key={p.id}
+                                                                    type="button"
+                                                                    onClick={() => setPreSubPreset(p.id)}
+                                                                    className={`relative rounded-lg border overflow-hidden transition-all ${
+                                                                        isActive
+                                                                            ? 'border-accent-pink/50 bg-white/[0.06]'
+                                                                            : 'border-white/5 bg-white/[0.02] hover:border-white/10'
+                                                                    }`}
+                                                                >
+                                                                    <div className="px-2 py-2.5 flex items-center justify-center min-h-[44px]">
+                                                                        <span style={p.previewStyle} className="text-[11px] font-bold leading-tight text-center">
+                                                                            WORD <span style={{ color: p.highlight }}>UP</span>
+                                                                        </span>
+                                                                    </div>
+                                                                    <div className="px-1.5 py-1 bg-black/40 border-t border-white/5">
+                                                                        <p className={`text-[9px] uppercase tracking-wider truncate ${isActive ? 'text-accent-pink' : 'text-zinc-500'}`}>{p.label}</p>
+                                                                    </div>
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="rounded-lg bg-white/[0.02] border border-white/5 px-3 py-2.5">
+                                                    <p className="text-[10px] text-zinc-500 leading-relaxed">
+                                                        Classic mode uses standard SRT subtitles with default styling.
+                                                        Font, color and outline are configurable per-clip from the
+                                                        captions modal after generation.
+                                                    </p>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
