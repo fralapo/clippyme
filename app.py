@@ -45,7 +45,11 @@ from config_store import (
     load_persistent_config,
     save_persistent_config,
 )
-from job_artifacts import relocate_root_job_artifacts
+from job_artifacts import (
+    relocate_root_job_artifacts,
+    load_job_metadata,
+    save_job_metadata,
+)
 from job_worker import make_workers, enqueue_output
 from gemini_service import list_available_models
 
@@ -508,17 +512,14 @@ from hooks import add_hook_to_video
 async def add_subtitles(req: SubtitleRequest):
     if req.job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     job = jobs[req.job_id]
     output_dir = os.path.join(OUTPUT_DIR, req.job_id)
-    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
-    
-    if not json_files:
+    try:
+        metadata_path, data = load_job_metadata(req.job_id, OUTPUT_DIR)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Metadata not found")
-        
-    with open(json_files[0], 'r') as f:
-        data = json.load(f)
-        
+
     transcript = data.get('transcript')
     if not transcript:
         raise HTTPException(status_code=400, detail="Transcript not found in metadata.")
@@ -534,13 +535,13 @@ async def add_subtitles(req: SubtitleRequest):
     else:
         filename = clip_data.get('video_url', '').split('/')[-1]
         if not filename:
-             base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+             base_name = os.path.basename(metadata_path).replace('_metadata.json', '')
              filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
-         
+
     input_path = os.path.join(output_dir, filename)
     if not os.path.exists(input_path):
         raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
-        
+
     use_karaoke = req.preset is not None and req.preset in SUBTITLE_PRESETS
     ts = int(time.time())
 
@@ -595,8 +596,7 @@ async def add_subtitles(req: SubtitleRequest):
         if req.clip_index < len(clips):
             clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
             data['shorts'] = clips
-            with open(json_files[0], 'w') as f:
-                json.dump(data, f, indent=4)
+            save_job_metadata(metadata_path, data)
     except Exception as e:
         logger.warning("Failed to update metadata.json: %s", e)
 
@@ -618,12 +618,10 @@ async def smart_cut_clip(job_id: str, clip_index: int):
         raise HTTPException(status_code=404, detail="Job not found")
 
     output_dir = os.path.join(OUTPUT_DIR, job_id)
-    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
-    if not json_files:
+    try:
+        metadata_path, data = load_job_metadata(job_id, OUTPUT_DIR)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Metadata not found")
-
-    with open(json_files[0], 'r') as f:
-        data = json.load(f)
 
     transcript = data.get('transcript')
     if not transcript:
@@ -640,7 +638,7 @@ async def smart_cut_clip(job_id: str, clip_index: int):
     clip_url = clip_data.get('video_url', '')
     filename = clip_url.split('/')[-1] if clip_url else None
     if not filename:
-        base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+        base_name = os.path.basename(metadata_path).replace('_metadata.json', '')
         filename = f"{base_name}_clip_{clip_index + 1}.mp4"
 
     clip_path = os.path.join(output_dir, filename)
@@ -683,13 +681,10 @@ async def add_hook(req: HookRequest):
 
     job = jobs[req.job_id]
     output_dir = os.path.join(OUTPUT_DIR, req.job_id)
-    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
-
-    if not json_files:
+    try:
+        metadata_path, data = load_job_metadata(req.job_id, OUTPUT_DIR)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Metadata not found")
-
-    with open(json_files[0], 'r') as f:
-        data = json.load(f)
 
     clips = data.get('shorts', [])
     if req.clip_index >= len(clips):
@@ -702,7 +697,7 @@ async def add_hook(req: HookRequest):
     else:
         filename = clip_data.get('video_url', '').split('/')[-1]
         if not filename:
-            base_name = os.path.basename(json_files[0]).replace('_metadata.json', '')
+            base_name = os.path.basename(metadata_path).replace('_metadata.json', '')
             filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
 
     input_path = os.path.join(output_dir, filename)
@@ -731,8 +726,7 @@ async def add_hook(req: HookRequest):
         if req.clip_index < len(clips):
             clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
             data['shorts'] = clips
-            with open(json_files[0], 'w') as f:
-                json.dump(data, f, indent=4)
+            save_job_metadata(metadata_path, data)
     except Exception as e:
         logger.warning("Failed to update metadata.json: %s", e)
 

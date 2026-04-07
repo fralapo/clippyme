@@ -1,7 +1,38 @@
-"""Filesystem helpers for relocating job artifacts written by main.py."""
+"""Filesystem helpers for locating and relocating job artifacts written by main.py."""
 import glob
+import json
 import os
 import shutil
+from typing import Tuple
+
+
+def find_job_metadata_path(job_id: str, output_dir: str) -> str:
+    """Return the path to a job's ``*_metadata.json`` file.
+
+    Raises ``FileNotFoundError`` if no metadata file exists.
+    """
+    job_dir = os.path.join(output_dir, job_id)
+    matches = glob.glob(os.path.join(job_dir, "*_metadata.json"))
+    if not matches:
+        raise FileNotFoundError(f"Metadata not found for job {job_id}")
+    return matches[0]
+
+
+def load_job_metadata(job_id: str, output_dir: str) -> Tuple[str, dict]:
+    """Load a job's metadata JSON.
+
+    Returns ``(metadata_path, data)``. Raises ``FileNotFoundError`` if the
+    metadata file does not exist.
+    """
+    metadata_path = find_job_metadata_path(job_id, output_dir)
+    with open(metadata_path, "r") as f:
+        return metadata_path, json.load(f)
+
+
+def save_job_metadata(metadata_path: str, data: dict) -> None:
+    """Persist a job's metadata JSON back to disk."""
+    with open(metadata_path, "w") as f:
+        json.dump(data, f, indent=4)
 
 
 def relocate_root_job_artifacts(job_id: str, job_output_dir: str, output_dir: str) -> bool:
