@@ -1431,7 +1431,31 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             text = text[:-3]
         text = text.strip()
 
-        result_json = json.loads(text)
+        def _repair_gemini_json(raw: str) -> str:
+            # Escape lone backslashes that aren't part of a valid JSON escape
+            # (\" \\ \/ \b \f \n \r \t \uXXXX). Gemini frequently emits \$, \ ,
+            # etc. inside string values which json.loads rejects.
+            raw = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', raw)
+            # Strip ASCII control chars inside the document (except \n\r\t)
+            raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
+            return raw
+
+        try:
+            result_json = json.loads(text)
+        except json.JSONDecodeError as first_err:
+            print(f"⚠️  Initial JSON parse failed ({first_err}); attempting repair…")
+            repaired = _repair_gemini_json(text)
+            try:
+                result_json = json.loads(repaired)
+                print("✅ Recovered Gemini JSON after escape repair")
+            except json.JSONDecodeError:
+                # Last resort: json-repair library if installed
+                try:
+                    from json_repair import repair_json  # type: ignore
+                    result_json = json.loads(repair_json(text))
+                    print("✅ Recovered Gemini JSON via json_repair fallback")
+                except Exception:
+                    raise first_err
 
         # Validate clips schema
         if 'shorts' in result_json and isinstance(result_json['shorts'], list):
