@@ -247,66 +247,123 @@ class SmoothedCameraman:
         self.video_width = video_width
         self.video_height = video_height
 
-        # Initial State
+        # Max crop dimensions (full source height = the widest possible 9:16 frame)
+        self.max_crop_height = video_height
+        self.max_crop_width = int(self.max_crop_height * ASPECT_RATIO)
+        if self.max_crop_width > video_width:
+            self.max_crop_width = video_width
+            self.max_crop_height = int(self.max_crop_width / ASPECT_RATIO)
+
+        # Min crop dimensions (zoom-in cap: never zoom past 1.6x to avoid mush)
+        self.min_crop_height = int(self.max_crop_height / 1.6)
+        self.min_crop_width = int(self.min_crop_height * ASPECT_RATIO)
+
+        # Current crop dims (will animate between min and max)
+        self.crop_width = self.max_crop_width
+        self.crop_height = self.max_crop_height
+
+        # Initial centers (geometric center of source)
         self.current_center_x = video_width / 2
         self.target_center_x = video_width / 2
+        self.current_center_y = video_height / 2
+        self.target_center_y = video_height / 2
 
-        # Calculate crop dimensions once
-        self.crop_height = video_height
-        self.crop_width = int(self.crop_height * ASPECT_RATIO)
-        if self.crop_width > video_width:
-             self.crop_width = video_width
-             self.crop_height = int(self.crop_width / ASPECT_RATIO)
+        # Target zoom factor (1.0 = max crop, 1.6 = max zoom). Animates over time.
+        self.current_zoom = 1.0
+        self.target_zoom = 1.0
 
-        # Safe Zone: 25% of crop width
-        # If target is within this radius of current center, camera stays still.
-        self.safe_zone_radius = self.crop_width * 0.25
+        # Safe zones (dead-band to kill jitter)
+        self.safe_zone_radius_x = self.max_crop_width * 0.20
+        self.safe_zone_radius_y = self.max_crop_height * 0.15
 
-    def update_target(self, face_box):
+    def update_target(self, face_box, is_person_box: bool = False):
         """
-        Updates the target center based on detected face/person.
+        Updates target center + target zoom based on a detected face or person box.
+
+        face_box: (x, y, w, h) in source coordinates.
+        is_person_box: if True, treat the box as a YOLO person bbox (full body)
+                       and aim at the *upper portion* (head zone) instead of
+                       the geometric center. Fixes the "camera shows knees"
+                       bug from the old YOLO fallback.
         """
-        if face_box:
-            x, y, w, h = face_box
-            self.target_center_x = x + w / 2
+        if not face_box:
+            return
+        x, y, w, h = face_box
+        self.target_center_x = x + w / 2
+
+        if is_person_box:
+            # Head is roughly in the top 20% of a standing person bbox
+            self.target_center_y = y + h * 0.15
+            # Person fallback = no clean face → don't zoom in (could be wide group)
+            self.target_zoom = 1.0
+        else:
+            self.target_center_y = y + h / 2
+            # Zoom in proportionally to face size — small faces (talking head in
+            # wide shot) trigger more zoom; large faces stay at 1.0.
+            face_height_ratio = h / self.video_height
+            if face_height_ratio < 0.15:
+                self.target_zoom = 1.5  # tight zoom
+            elif face_height_ratio < 0.25:
+                self.target_zoom = 1.3  # medium zoom
+            elif face_height_ratio < 0.4:
+                self.target_zoom = 1.15  # gentle zoom
+            else:
+                self.target_zoom = 1.0  # no zoom (face already fills frame)
+
+    def _ease_axis(self, current: float, target: float, safe_radius: float, fast_ref: float) -> float:
+        """Adaptive easing for a single axis. Returns the new current value."""
+        diff = target - current
+        abs_diff = abs(diff)
+        if abs_diff <= safe_radius:
+            return current  # dead-band
+        if abs_diff > fast_ref * self.FAST_THRESHOLD_RATIO:
+            return current + diff * self.SMOOTHING_FAST
+        return current + diff * self.SMOOTHING_SLOW
 
     def get_crop_box(self, force_snap=False):
         """
-        Returns the (x1, y1, x2, y2) for the current frame.
-        Uses exponential easing: camera covers ~8% of remaining distance each frame,
-        creating natural acceleration/deceleration.
+        Returns (x1, y1, x2, y2) for the current frame.
+
+        Tracks both X and Y axes with adaptive easing, and animates zoom level
+        based on detected face size. Crop dimensions are recomputed each frame
+        from the current zoom factor.
         """
         if force_snap:
             self.current_center_x = self.target_center_x
+            self.current_center_y = self.target_center_y
+            self.current_zoom = self.target_zoom
         else:
-            diff = self.target_center_x - self.current_center_x
-            abs_diff = abs(diff)
+            self.current_center_x = self._ease_axis(
+                self.current_center_x, self.target_center_x,
+                self.safe_zone_radius_x, self.max_crop_width,
+            )
+            self.current_center_y = self._ease_axis(
+                self.current_center_y, self.target_center_y,
+                self.safe_zone_radius_y, self.max_crop_height,
+            )
+            # Zoom animates more slowly than position to feel cinematic
+            zoom_diff = self.target_zoom - self.current_zoom
+            if abs(zoom_diff) > 0.01:
+                self.current_zoom += zoom_diff * 0.05
 
-            if abs_diff > self.safe_zone_radius:
-                # Adaptive smoothing: large jumps catch up fast, small moves glide
-                if abs_diff > self.crop_width * self.FAST_THRESHOLD_RATIO:
-                    self.current_center_x += diff * self.SMOOTHING_FAST
-                else:
-                    self.current_center_x += diff * self.SMOOTHING_SLOW
-            # Inside safe zone: camera stays still (no micro-jitter)
-                
-        # Clamp center
-        half_crop = self.crop_width / 2
-        
-        if self.current_center_x - half_crop < 0:
-            self.current_center_x = half_crop
-        if self.current_center_x + half_crop > self.video_width:
-            self.current_center_x = self.video_width - half_crop
-            
-        x1 = int(self.current_center_x - half_crop)
-        x2 = int(self.current_center_x + half_crop)
-        
-        x1 = max(0, x1)
-        x2 = min(self.video_width, x2)
-        
-        y1 = 0
-        y2 = self.video_height
-        
+        # Recompute crop dims from current zoom
+        self.crop_width = max(self.min_crop_width, int(self.max_crop_width / self.current_zoom))
+        self.crop_height = max(self.min_crop_height, int(self.max_crop_height / self.current_zoom))
+
+        # Clamp center inside the source frame
+        half_w = self.crop_width / 2
+        half_h = self.crop_height / 2
+
+        cx = max(half_w, min(self.video_width - half_w, self.current_center_x))
+        cy = max(half_h, min(self.video_height - half_h, self.current_center_y))
+        self.current_center_x = cx
+        self.current_center_y = cy
+
+        x1 = max(0, int(cx - half_w))
+        x2 = min(self.video_width, int(cx + half_w))
+        y1 = max(0, int(cy - half_h))
+        y2 = min(self.video_height, int(cy + half_h))
+
         return x1, y1, x2, y2
 
 class SpeakerTracker:
@@ -1018,6 +1075,10 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                 # Reset cameraman so it doesn't drift while inactive
                 cameraman.current_center_x = original_width / 2
                 cameraman.target_center_x = original_width / 2
+                cameraman.current_center_y = original_height / 2
+                cameraman.target_center_y = original_height / 2
+                cameraman.current_zoom = 1.0
+                cameraman.target_zoom = 1.0
 
             else:
                 # TRACK: single speaker tracking
@@ -1030,7 +1091,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                     else:
                         person_box = detect_person_yolo(frame)
                         if person_box:
-                            cameraman.update_target(person_box)
+                            cameraman.update_target(person_box, is_person_box=True)
 
                 # Snap camera on scene change to avoid panning from previous scene position
                 is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
