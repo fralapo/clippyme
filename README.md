@@ -1,319 +1,270 @@
 # ClippyMe
 
-<div align="center">
-  <img src="dashboard/public/logo.svg" alt="ClippyMe Logo" width="80" />
-  <p><strong>Self-hosted AI video platform that turns long-form videos into viral 9:16 shorts — and publishes them.</strong></p>
-</div>
+Self-hosted AI video pipeline that turns long-form videos (YouTube links or local uploads) into viral 9:16 vertical shorts. Fork of OpenShorts, hardened and extended.
 
-## Features
+> Status: personal/self-hosted project. Safe to run on a trusted LAN. **Do not expose port 8000 to the public internet** without adding an authentication layer in front of it.
 
-- **Viral Moment Detection** — Google Gemini analyzes transcripts and scenes to score and rank the best moments
-- **Smart 9:16 Reframing** — Active-speaker tracking using **mouth-movement detection** (MediaPipe FaceMesh + MAR variance), Y-axis tracking with dynamic vertical zoom, adaptive smoothing for snappy speaker switches, and YOLOv8 person fallback that aims at the head zone
-- **Toggle System** — Smart Cut, Hook, and Subtitles as independent toggles per clip; compose only at download time
-- **ASS Karaoke Subtitles** — 6 viral presets with live preview, font selection, and vertical offset slider; classic mode with per-clip font/color/position
-- **Smart Cut (two-stage)** — Filler-word + transcript-gap detection (5 languages, multi-word phrase matching) rendered via **auto-editor v3 timeline JSON** for frame-accurate single-pass cuts, followed by an audio-loudness polish pass that catches silences the transcript misses
-- **Hook Overlay** — Text overlay with emoji support, configurable position and size
-- **Pre-selection** — Choose options before processing (including classic subtitle font/color/position); applied automatically to all generated clips
-- **Mixed Batch Processing** — Submit up to 20 items mixing URLs and file uploads
-- **Clip Lifecycle** — Disable / delete / mark-as-published flags per clip (persisted in localStorage)
-- **Single Vertical Position Slider** — One unified slider for subtitle & hook placement (top→center→bottom) with safe-zone safeguards
-- **Social Publishing (Zernio)** — One-click publish/schedule to **TikTok, Instagram, YouTube** with smart auto-scheduling (Italian prime-time slots, anti-collision)
-- **Batch Publish** — "Publish all" button schedules every eligible clip in sequence with live per-clip status
-- **Self-updating auto-editor** — The Nim binary refreshes itself daily from GitHub Releases via a background updater
+---
+
+## What it does
+
+Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
+
+1. **Download** with `yt-dlp` (Deno-based JS runtime to bypass YouTube bot detection, optional cookies for age-gated content).
+2. **Transcribe** with **Deepgram Nova-3** by default (multi-language, code-switching EN/IT) — automatic fallback to local **Faster-Whisper** if no key or network failure. Cached on disk for 7 days keyed by URL hash.
+3. **Detect viral moments** with **Google Gemini**. A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output.
+4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene.
+5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection.
+6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish), **Hook** text overlay (Pillow + emoji), **Subtitles** (6 ASS karaoke presets or classic SRT, pixel-faithful frontend preview).
+7. **Publish or schedule** to TikTok / Instagram / YouTube via **Zernio**, with a SmartScheduler that picks Italian-prime-time slots, avoids same-day collisions, and handles per-platform daily-limit 429s by skipping exhausted platforms across a batch.
+
+---
 
 ## Stack
 
 | Layer | Tech |
-|-------|------|
-| Backend | FastAPI, Python 3.11, async job queue |
-| AI | Google Gemini, Deepgram Nova-3 (default) / faster-whisper (fallback), YOLOv8, MediaPipe (FaceDetection + FaceMesh) |
-| Video | FFmpeg, yt-dlp (Deno JS runtime), PySceneDetect, **auto-editor (Nim, v30.x)** |
-| Publishing | Zernio API (14 social platforms) |
-| Frontend | React 18, Vite 5, Tailwind CSS v4, shadcn/ui, Sonner toasts |
-| Infra | Docker (NVIDIA CUDA 12.3 + CPU multi-arch fallback) |
-| Testing | pytest (32 unit tests, 0.1s) |
+|---|---|
+| Backend | Python 3.11, FastAPI, Pydantic v2, asyncio queue |
+| Pipeline | yt-dlp · Deepgram REST · Faster-Whisper · PySceneDetect · YOLOv8 (Ultralytics) · MediaPipe · ffmpeg · auto-editor (Nim binary) · Pillow |
+| AI | Google Gemini (viral detection) · Deepgram Nova-3 (transcription) |
+| Frontend | React 18 · Vite 5 · Tailwind CSS v4 · shadcn/ui · Radix · sonner |
+| Publishing | Zernio multi-platform API |
+| Deploy | Docker Compose (CPU multi-arch + optional NVIDIA GPU profile) |
 
-## Quick Start
+---
+
+## Quick start (Docker)
 
 ```bash
-git clone https://github.com/your-user/clippyme
+git clone https://github.com/<you>/clippyme.git
 cd clippyme
 docker compose up --build
 ```
 
-Open **http://localhost:5175**, enter your Gemini API key in **Settings**, and start clipping.
+- Backend: http://localhost:8000
+- Frontend: http://localhost:5175
 
-> [!TIP]
-> First run or after dependency changes: `docker compose down -v && docker compose up --build` to clear cached volumes and the stale `node_modules` anonymous volume.
+Open the dashboard, drop in a YouTube URL or upload a file, and watch the pipeline run live.
 
-## Local Development
+> **First run after a pull** that touches `requirements.txt` or `package.json`: `docker compose down -v && docker compose up --build` to clear the stale anonymous volume on `/app/node_modules`.
+
+### NVIDIA GPU profile
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+```
+
+---
+
+## Local development (no Docker)
 
 ```bash
 # Backend
 pip install -r requirements.txt
-pip install -e .
-python -m uvicorn clippyme.api.app:app --reload --host 0.0.0.0 --port 8000
+pip install -e .                                       # registers the clippyme src-layout package
+python -m uvicorn clippyme.api.app:app --reload --port 8000
 
 # Frontend (separate terminal)
 cd dashboard && npm install && npm run dev
+
+# Pipeline CLI (one-shot, no API)
+python -m clippyme.pipeline.main <url_or_path> [--instructions "focus on hooks"] \
+                                                [--reframe-mode auto|disabled] \
+                                                [--no-zoom]
 ```
 
-Frontend dev server: http://localhost:5173 | Backend: http://localhost:8000
+---
+
+## Configuration
+
+All API keys, model selection, and cookies are managed **from the dashboard Settings tab** and persisted to `data/config.json` (mode `0600`, git-ignored). No `.env` file required.
+
+| Key | Required for | Notes |
+|---|---|---|
+| `GEMINI_API_KEY` | Viral moment detection | Set the model from the dropdown (Flash / Pro). |
+| `DEEPGRAM_API_KEY` | Cloud transcription (default) | Falls back to local Faster-Whisper if missing. |
+| `HUGGINGFACE_TOKEN` | Optional gated models for Whisper | |
+| Zernio | Social publishing | Per-platform account IDs auto-discovered via "Discover from Zernio". |
+| Cookies | YouTube age-gated / region-locked content | Upload a Netscape `cookies.txt` from the Settings tab. Stored at `data/cookies.txt`, mode `0600`, max 10 MB. |
+
+Runtime env overrides (rarely needed):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TRANSCRIPTION_PROVIDER` | `deepgram` | Or `whisper` to force local. |
+| `DEEPGRAM_MODEL` | `nova-3` | |
+| `DEEPGRAM_LANGUAGE` | `multi` | |
+| `ZERNIO_DEFAULT_TZ` | `Europe/Rome` | |
+| `ZERNIO_MIN_GAP_SECONDS` | `5400` | SmartScheduler min spacing between posts. |
+
+---
+
+## Repository layout
+
+Backend uses an **`src/`-layout** Python package; frontend is a separate Vite app. Tests live at the root.
+
+```
+src/clippyme/
+  api/                FastAPI surface
+    app.py            App factory, lifespan, all HTTP endpoints
+    schemas.py        Pydantic request models (strict validation)
+    security.py       Trusted-origin checks, job-id UUID4 validation
+  pipeline/           Heavy lifters
+    main.py           CLI orchestrator: download → transcribe → Gemini → reframe → postprocess
+    deepgram_transcribe.py   Deepgram Nova-3 REST client (retry/backoff, keyterms)
+    gemini_parser.py  5-level JSON parsing chain + Pydantic validation + dedupe
+    gemini_service.py List available Gemini models
+  domain/             Endpoint-facing business logic
+    compose.py        Smart Cut → Hook → Subtitles compose pipeline
+    subtitle_pipeline.py     Subtitle generation + ffmpeg burn
+    clip_endpoints.py        Smart Cut + history restore helpers
+    job_results.py    Worker loop result loaders + main.py command builder (whitelisted)
+    job_artifacts.py  Filesystem helpers for job outputs
+    job_worker.py     Async queue workers + log enqueue
+    history_service.py       Disk-backed job history scan
+    smartcut.py       Two-stage filler-word + audio polish (auto-editor v3 timeline)
+    subtitles.py      ASS karaoke (6 presets) + SRT + ffmpeg burn (filtergraph-escape hardened)
+    hooks.py          Text overlay with Pillow + NotoColorEmoji
+  integrations/       External clients
+    social_publisher.py      Zernio REST + SmartScheduler + publish_clip orchestrator
+    auto_editor_updater.py   Background daily updater for the auto-editor binary
+  storage/
+    config_store.py   data/config.json read/write (mode 0600)
+
+dashboard/
+  src/
+    App.jsx                 Top-level orchestrator (≈270 lines)
+    hooks/                  useJobSubmission, useJobPolling, useHistory,
+                            useSessionPersistence, useBackendStatus, useClipStates
+    components/             MediaInput, ResultCard, ResultsGrid, SubtitleModal,
+                            HookModal, PublishModal, BatchPublishModal, SettingsTab,
+                            ZernioSettings, ProcessingView, HistoryTab, …
+    components/ui/          shadcn/ui primitives (Button, Dialog, Tabs, Tooltip, …)
+    lib/subtitlePresets.js  1:1 mirror of subtitles.py SUBTITLE_PRESETS for the live preview
+
+tests/                Unit + integration tests (pytest)
+fonts/                Bundled TTF fonts served via /fonts (subtitle + hook rendering)
+scripts/              Standalone helpers (parse_path_stats.py, …)
+data/                 Persisted config, cookies, transcript cache (git-ignored)
+```
+
+---
+
+## API
+
+All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints require a trusted-origin client (loopback or RFC1918).
+
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/api/process` | Single video (URL or upload). Accepts `reframe_mode`. |
+| `POST` | `/api/batch` | Up to 20 URLs in one shot. |
+| `GET` | `/api/status/{job_id}` | Live status + logs + result. |
+| `GET` | `/api/batch/{batch_id}` | Aggregated batch status. |
+| `POST` | `/api/cancel/{job_id}` | Kill the subprocess. |
+| `POST` | `/api/compose/{job_id}/{clip_index}` | Compose Smart Cut + Hook + Subtitles on demand. |
+| `POST` | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut a single clip. |
+| `POST` | `/api/reframe/{job_id}/{clip_index}` | Switch a clip's reframe mode. |
+| `POST` | `/api/subtitle` | Generate + burn subtitles. |
+| `POST` | `/api/hook` | Add hook overlay. |
+| `GET` | `/api/subtitle/presets` | List preset names. |
+| `GET` | `/api/history` | Past jobs from disk. |
+| `POST` | `/api/history/{job_id}/restore` | Reload a past job into memory. |
+| `DELETE` | `/api/history/{job_id}` | Delete from disk. |
+| `GET` | `/api/config/models` | List Gemini models (trusted origin). |
+| `POST` | `/api/config` | Persist API keys (trusted origin). |
+| `POST` | `/api/config/cookies` | Upload Netscape cookies file (trusted origin, 10 MB cap). |
+| `GET` | `/api/config/cookies/status` | Is a cookie file present? |
+| `DELETE` | `/api/config/cookies` | Remove the cookies file. |
+| `GET` | `/api/config/zernio` | Masked Zernio config. |
+| `POST` | `/api/config/zernio` | Save/update Zernio credentials. |
+| `GET` | `/api/zernio/accounts` | Discover accounts via Zernio. |
+| `POST` | `/api/publish/{job_id}/{clip_index}` | Upload + schedule a clip on TikTok/IG/YouTube. |
+
+Static mounts: `/videos`, `/thumbnails`, `/gallery`, `/video`, `/fonts` (read-only).
+
+---
 
 ## Tests
 
 ```bash
-python -m pytest tests/test_smartcut.py tests/test_social_publisher.py -v
+pytest tests/ -v
 ```
 
-32 unit tests covering filler-word matching (n-gram lookahead, multilingual punctuation), Smart Cut concurrency primitives, hash-based output cache invalidation, the SmartScheduler slot-picking logic, and the Zernio REST client (network mocked). Runs in ~0.1s.
+Coverage:
+- `tests/test_backend_fixes.py` — config persistence + main.py compile smoke test
+- `tests/test_gemini_parsing.py` — 13 cases against the 5-level JSON parsing chain (real parser, no mocks)
+- `tests/test_smartcut.py` — Smart Cut token normalization, silence detection, auto-editor timeline
+- `tests/test_social_publisher.py` — SmartScheduler slot selection, gap enforcement, Zernio client mock
 
-## Configuration
+Total: ~45 tests, runs in well under a second.
 
-All settings are managed through the dashboard UI (**Settings** tab):
+---
 
-| Setting | Required | Description |
-|---------|----------|-------------|
-| Gemini API Key | Yes | Powers viral detection and clip analysis |
-| **Deepgram API Key** | Recommended | Cloud transcription via Nova-3 — ~30× faster and ~2× more accurate than local Whisper. Get one at [console.deepgram.com](https://console.deepgram.com/signup) |
-| **Transcription Provider** | No | `deepgram` (default) or `whisper`. Deepgram automatically falls back to local Whisper on failure |
-| HuggingFace Token | No | Faster Whisper model downloads (only used when provider = `whisper`) |
-| YouTube/Twitch Cookies | No | Netscape `.txt` file for bypassing download restrictions |
-| Gemini Model | No | Model selection (default: gemini-2.5-flash) |
-| **Zernio API Key** | No (only for publishing) | Powers one-click multi-platform publishing |
-| **Zernio Account IDs** | No (only for publishing) | Per-platform account IDs (TikTok / IG / YT). Auto-discoverable via "Discover from Zernio" button |
+## Editing toggles (compose-on-download)
 
-> [!NOTE]
-> No `.env` file needed. Config persists in `data/config.json` (git-ignored). Cookies are stored in `data/cookies.txt`. Zernio settings live in a dedicated `"zernio"` namespace inside `data/config.json` and the API key is only ever returned to the UI in masked form.
+Each generated clip exposes three independent toggles in the UI:
 
-### Tunable env vars
+- **Smart Cut** — removes silences and filler words via auto-editor v3 timeline; falls back to ffmpeg concat demuxer if the binary is missing.
+- **Hook** — text overlay with configurable position/size, auto-prefilled from the Gemini hook suggestion. Supports emoji.
+- **Subtitles** — 6 viral karaoke presets (`classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`) or classic SRT with font/color/position controls. The frontend preview is **pixel-faithful** with the burned-in output (`dashboard/src/lib/subtitlePresets.js` mirrors the Python preset table 1:1 — keep them in sync).
 
-| Var | Default | Purpose |
-|---|---|---|
-| `AE_SILENCE_THRESHOLD` | `0.8` | Smart Cut: gap (sec) between words → silence |
-| `AE_SILENCE_KEEP` | `0.3` | Smart Cut: padding kept around each cut |
-| `AE_AUDIO_THRESHOLD` | `0.04` | Audio polish: amplitude under which audio is considered silent |
-| `AE_MARGIN` | `0.2sec` | Audio polish: padding around detected silence |
-| `AE_MAX_POLISH_CUT_RATIO` | `0.5` | Revert audio polish if it removes more than this fraction (music safety) |
-| `AE_TIMEOUT_SECONDS` | `300` | Hard cap on any auto-editor invocation |
-| `AE_SKIP_POLISH_THRESHOLD` | `8.0` | Skip audio polish if stage 1 already saved this much |
-| `AE_MAX_PARALLEL` | `2` | Cap on concurrent auto-editor processes (0 = unlimited) |
-| `AE_FILLER_CONFIG` | `data/filler_words.json` | Optional external filler word list (JSON: `{lang: [words...]}`) |
-| `ZERNIO_DEFAULT_TZ` | `Europe/Rome` | Default timezone passed to Zernio |
-| `ZERNIO_MIN_GAP_SECONDS` | `5400` | Smart scheduler: min gap (sec) between scheduled posts |
-| `DEEPGRAM_MODEL` | `nova-3` | Deepgram model (e.g. `nova-3`, `nova-3-general`, `nova-2`). Nova-3 has ~50% lower WER than Whisper |
-| `DEEPGRAM_LANGUAGE` | `multi` | `multi` = auto code-switching across 10 langs incl. Italian + English. Lock to `it` / `en` for single-language videos |
-| `DEEPGRAM_KEYTERMS` | *(unset)* | Comma-separated brand names / jargon to boost recognition (Nova-3 only) |
-| `DEEPGRAM_HTTP_TIMEOUT` | `600` | Per-request timeout (sec) |
-| `DEEPGRAM_MAX_RETRIES` | `3` | Retries with exponential backoff on 429/5xx (honours `Retry-After`) |
-| `DEEPGRAM_MAX_FILE_MB` | `1900` | Safety cap below Deepgram's 2 GB hard limit |
+Toggling is UI-only state. Nothing is processed on click. At download time the active toggles + parameters are sent to `/api/compose/{job_id}/{clip_index}` and the layers are composed in one pass: Smart Cut → Hook → Subtitles.
 
-## How It Works
-
-```
-Input (URL or file)
-  → Download (yt-dlp)
-  → Transcribe (Deepgram Nova-3 by default, faster-whisper fallback; cached by URL hash)
-  → Detect scenes (PySceneDetect, 7 sample frames per scene)
-  → Rank viral moments (Gemini)
-  → Reframe to 9:16
-       ├─ TRACK / WIDE: SpeakerTracker (MAR variance + face size, hysteresis,
-       │                 cooldown 1.5s) → SmoothedCameraman (X+Y tracking,
-       │                 dynamic 1.0–1.6× zoom, adaptive smoothing)
-       └─ GENERAL:      letterbox with blurred background
-  → Post-process (zoom, audio normalization -14 LUFS, cover frame)
-  → User toggles: Smart Cut / Hook / Subtitles
-  → Compose & Download (or Publish)
-```
-
-## Architecture
-
-```
-src/clippyme/
-  api/
-    app.py            FastAPI server, job queue, endpoints
-    schemas.py        Pydantic request models
-    security.py       Trusted-origin checks, job ID validation
-  pipeline/
-    main.py           Pipeline: download → transcribe → detect → reframe → normalize
-    deepgram_transcribe.py  Deepgram Nova-3 REST client (retry/backoff, keyterm prompting)
-    gemini_parser.py  5-level Gemini JSON parsing chain
-    gemini_service.py List available Gemini models
-  domain/
-    compose.py        Smart Cut → Hook → Subtitles compose pipeline
-    subtitle_pipeline.py  Subtitle generation + burn helper
-    clip_endpoints.py Smart Cut + history restore endpoint helpers
-    job_results.py    Worker loop result loaders + clippyme.pipeline.main command builder
-    job_artifacts.py  Filesystem helpers for job outputs
-    job_worker.py     Async queue workers + log enqueue
-    history_service.py  Job history scan + id validation
-    smartcut.py       Two-stage cut: filler-word + audio polish (auto-editor v3 timeline)
-    subtitles.py      ASS karaoke (6 presets) + SRT
-    hooks.py          Text overlay with Pillow + NotoColorEmoji
-  integrations/
-    social_publisher.py     Zernio REST client + SmartScheduler + publish_clip orchestrator
-    auto_editor_updater.py  Background daily updater for the auto-editor binary
-  storage/
-    config_store.py   Persistent config (core keys + Zernio namespace)
-
-dashboard/src/
-  App.jsx                       Top-level orchestrator (~270 lines)
-  hooks/                        useJobSubmission, useJobPolling, useHistory,
-                                useSessionPersistence, useBackendStatus,
-                                useClipStates (disable/delete/published flags)
-  components/
-    MediaInput.jsx              Single + Batch tabs (URL/file mix)
-    ResultCard.jsx              9:16 player + toggles + Download/Publish/disable/delete
-    PublishModal.jsx            Multi-platform publish modal (Zernio)
-    BatchPublishModal.jsx       Batch publish of all eligible clips
-    ZernioSettings.jsx          API key + account discovery + per-platform IDs
-    SubtitleModal.jsx           Karaoke/Classic editor with live preview
-    HookModal.jsx               Hook text overlay editor
-    ProcessingView.jsx          Processing/error/partial-results merged view
-    [...20+ other components]
-
-fonts/                          Bundled TTF fonts (served via /fonts mount)
-data/                           Config, cookies, transcription cache (git-ignored)
-tests/                          pytest suite (32 unit tests)
-```
-
-## API
-
-### Processing
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/api/process` | Process single video (URL or file upload) |
-| POST | `/api/batch` | Submit up to 20 URLs for batch processing |
-| GET | `/api/status/{job_id}` | Poll job progress |
-| GET | `/api/batch/{batch_id}` | Aggregated batch status |
-| POST | `/api/cancel/{job_id}` | Cancel a running job |
-
-### Editing
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/api/compose/{job_id}/{clip_index}` | Compose final video from active toggles |
-| POST | `/api/smartcut/{job_id}/{clip_index}` | Generate smart-cut version |
-| POST | `/api/reframe/{job_id}/{clip_index}` | Switch reframe mode (`auto` ↔ `disabled`) post-hoc |
-| POST | `/api/subtitle` | Generate and burn subtitles |
-| POST | `/api/hook` | Add hook text overlay |
-| GET | `/api/subtitle/presets` | List available subtitle preset names |
-
-### Publishing (Zernio)
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/api/publish/{job_id}/{clip_index}` | Upload + publish/schedule on TikTok/IG/YT |
-| GET | `/api/config/zernio` | Read masked Zernio settings |
-| POST | `/api/config/zernio` | Save Zernio API key + account IDs + timezone |
-| GET | `/api/zernio/accounts` | Discover connected social accounts via Zernio |
-
-### Config
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET / POST | `/api/config` | Read / write core API keys |
-| POST | `/api/config/cookies` | Upload persistent cookies file |
-| GET | `/api/config/cookies/status` | Check if cookies are configured |
-| DELETE | `/api/config/cookies` | Remove cookies file |
-
-### History
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/api/history` | List past jobs |
-| POST | `/api/history/{job_id}/restore` | Restore a past job to memory |
-| DELETE | `/api/history/{job_id}` | Delete a job from disk |
-
-## Smart Cut pipeline
-
-Stage 1 (transcript-based): n-gram filler-word matching across 5 languages plus inter-word silence detection. Cuts are emitted as a hand-built **auto-editor v3 JSON timeline** and rendered in a single frame-accurate pass. Falls back to FFmpeg concat demuxer if `auto-editor` is missing.
-
-Stage 2 (audio polish): re-runs `auto-editor --edit audio:threshold=0.04 --margin 0.2sec` on the stage-1 output to catch silences the transcript missed (mumbles below ASR confidence, music gaps). Reverts automatically if the polish would cut more than 50% (music safety net).
-
-Per-clip locking, output caching by `(segments, language)` hash, parallel-invocation cap, probe cache, and a 5-minute timeout per subprocess. Stats include the renderer used (`auto-editor-v3` / `ffmpeg-concat` / `cache`) and the auto-editor version.
+---
 
 ## Reframing
 
-`SpeakerTracker` uses **mouth-aspect-ratio (MAR) variance** as the primary signal for active speaker detection. For each detected face the pipeline runs MediaPipe FaceMesh on the face ROI, extracts mouth landmarks (13/14/78/308), and keeps a 1-second sliding window of MAR samples. Combined score = `0.3 × face_size + 1.0 × MAR_variance` so a small but talking face beats a larger silent one.
+Three per-scene strategies, decided by sampling 7 frames per scene:
 
-`SmoothedCameraman` tracks both X and Y axes with adaptive easing (slow `0.08` glide for small moves, fast `0.30` catch-up when the speaker switches sides), animates dynamic vertical zoom between 1.0× and 1.6× based on detected face height, and clamps the crop inside the source frame. YOLO person fallback aims at the upper 15% of the bbox (head zone) instead of the body center.
+- **TRACK** — single speaker → active-speaker tracking via `SpeakerTracker` (MAR variance + face size) and `SmoothedCameraman` (adaptive smoothing slow/fast, X+Y axis tracking, dynamic 1.0–1.6× zoom).
+- **WIDE** — multi-speaker → same tracker with longer cooldown (45 frames ≈ 1.5 s) for interview-style switching.
+- **GENERAL** — no faces → letterbox.
 
-`analyze_scenes_strategy()` samples 7 frames per scene (was 3) and routes each scene to `TRACK` (single speaker), `WIDE` (multi-speaker, also uses SpeakerTracker with longer cooldown — no more letterbox), or `GENERAL` (no faces, letterbox fallback).
+Override per job: `--reframe-mode disabled` forces a 4:3 center crop with black bars.
 
-## Subtitle Presets
+After a job completes, every clip can be flipped between `auto` and `disabled` post-hoc via `POST /api/reframe/{job_id}/{clip_index}`. The original 16:9 source slice is preserved as `source_<clip>.mp4` to make this latency-tolerant. Legacy jobs without the preserved slice return HTTP 409.
 
-`classic_white` · `hormozi_bold` · `neon_glow` · `mrbeast_box` · `minimal_clean` · `fire_impact`
+---
 
-The pre-selection panel shows a visual 2×3 grid of preset previews (with the actual font / color / shadow / background style) when in karaoke mode, and a font/color/position picker when in classic mode. Preview fonts are loaded via `FontFace` with the `/fonts` static mount proxied through Vite.
+## Publishing (Zernio)
 
-## Publishing
+`POST /api/publish/{job_id}/{clip_index}` uploads the clip to Zernio's presigned URL and schedules a post. Three scheduling modes:
 
-### Single clip
+- `now` — immediate
+- `auto` — `SmartScheduler` picks the next free Italian-prime-time slot per weekday, with a 90-minute minimum gap and anti-collision against already-scheduled posts (3-step algorithm: free prime-time window → 15-min scan 07–23 → fallback)
+- `manual` — caller passes an ISO 8601 `scheduled_for`
 
-Click **Publish** on any generated clip to open the publish modal:
+The dashboard `BatchPublishModal` publishes every eligible clip in one click. With `auto` it can spread one clip per day from a chosen start date (mirroring the original `tmp/programma_shorts.py` logic), and gracefully skips platforms that hit Zernio's daily limit (HTTP 429) without failing the whole batch.
 
-1. **Title + caption** prefilled from the clip's Gemini-generated metadata
-2. **Platforms** — toggle TikTok / Instagram / YouTube (disabled when no account ID is configured)
-3. **Schedule mode**:
-   - **Now** — immediate publish (`publishNow=true`)
-   - **Auto slot** — `SmartScheduler` picks the next optimal slot today/tomorrow, avoiding collisions with already-scheduled posts (Italian prime-time windows tuned for TikTok/Reels/Shorts, 90-min minimum gap)
-   - **Pick time** — datetime picker for explicit ISO 8601 scheduling
-4. If any toggle is active (Smart Cut / Hook / Subtitles), the backend re-composes the clip before upload so the published version reflects the preview
+---
 
-After a successful publish the clip gets a green **"Published"** badge and the button label changes to **"Republish"**. The state is persisted in localStorage (`clippyme_clip_states_{jobId}`) so it survives page reloads.
+## Security posture
 
-### Batch publish
+This project has been audited; the current state is suitable for **trusted LAN deployment**. Notable hardening already in place:
 
-When at least one clip is publishable (not deleted, not disabled, not already published), a **"Publish all (N)"** button appears in the ResultsGrid header. Click it to open the `BatchPublishModal`:
+- Strict UUID4 validation on every `{job_id}` path parameter.
+- Trusted-origin guard on every config-mutation endpoint (cookies upload, Gemini key probe, Zernio config).
+- Pydantic patterns on all subtitle / hook fields (font name, hex colors, file names) to prevent FFmpeg filtergraph injection.
+- `_ffmpeg_filter_escape()` covers `\\ : ' , ; [ ]` and is re-applied even on direct internal callers.
+- Subprocess calls use list-form argv with whitelisted `reframe_mode` and bounded `instructions` length — no shell interpolation.
+- Uploaded media files are saved with a server-generated name (extension whitelisted) — the client-supplied filename is discarded.
+- `data/config.json` and `data/cookies.txt` are written with mode `0600`.
+- Internal exceptions never leak `str(e)` to API clients; full stack traces are logged server-side only.
+- `ZERNIO_BASE_URL` env override is allowlisted to `https://*.zernio.com`.
+- Pre-commit hook (`.githooks/pre-commit`) blocks accidental commit of API keys / cookies / tokens — enable with `git config core.hooksPath .githooks`.
 
-- Pick the platforms once and the schedule mode (`Auto slots` or `Now`)
-- The modal iterates through every eligible clip in sequence, showing live per-clip status (pending → ok / error)
-- Each clip is marked as published as soon as its `POST /api/publish` succeeds
+**Not yet in place** (required before exposing publicly): authentication layer, rate limiting, CSRF, full reverse proxy with TLS + security headers.
 
-### Clip lifecycle
+---
 
-Every clip card has an action toolbar in the top-left corner:
+## CPU vs GPU
 
-- **Eye / Eye-off** — disable or enable the clip. Disabled clips are rendered at 50% opacity and excluded from the "Publish all" batch.
-- **Trash** — remove the clip from the grid (with confirm). The actual mp4 stays on disk; only the localStorage state is updated.
-- **Published pill** (top-right) — appears automatically after any successful publish.
+The CPU image runs everywhere (Linux x86_64, ARM64, Apple Silicon via Docker Desktop). Faster-Whisper falls back to CPU automatically and YOLOv8 uses the CPU path. The NVIDIA profile adds CUDA wheels for `torch`, `nvidia-cublas-cu12`, and the cuDNN runtime — expect a ~500 MB image-size overhead.
 
-All three flags persist via `useClipStates(jobId)` → `localStorage` and survive page reloads.
-
-### auto-editor
-
-`auto-editor` is auto-updated daily from GitHub Releases via a background asyncio task in the FastAPI lifespan, with a `fcntl.flock` so two workers can't double-download.
-
-## CLI
-
-```bash
-python -m clippyme.pipeline.main <url_or_path> [options]
-  --instructions "focus on hooks"        # Directive for Gemini
-  --no-zoom                              # Disable Ken Burns auto-zoom
-  --reframe-mode auto|disabled           # Auto tracking or 4:3 crop
-```
-
-## Privacy &amp; Security
-
-ClippyMe is fully self-hosted — your videos, transcripts, and API keys never leave your machine.
-
-- **No `.env` file, no cloud sync.** All API keys are entered through the Settings UI and saved to a local `data/config.json` that's automatically excluded from git.
-- **Zernio API key is never shown in full** after you save it — the UI only displays a masked preview (`sk_12ab...c9d0`).
-- **Backend runs as a non-root user** inside the Docker container.
-- **No telemetry.** ClippyMe doesn't phone home, doesn't track usage, and doesn't upload your videos anywhere except the social platforms *you* explicitly choose via the Publish button.
-- Your downloaded videos, generated clips, and transcription cache stay in local folders (`uploads/`, `output/`, `data/cache/`) that you can wipe at any time.
-
-## CPU / Apple Silicon
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
-```
+---
 
 ## Acknowledgements
 
-- [auto-editor](https://github.com/WyattBlue/auto-editor) — frame-accurate timeline renderer + audio polish
-- [Zernio](https://zernio.com) — multi-platform social publishing API
-- [Deepgram Nova-3](https://deepgram.com/learn/introducing-nova-3-speech-to-text-api), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [YOLOv8](https://github.com/ultralytics/ultralytics), [MediaPipe](https://github.com/google-ai-edge/mediapipe), [PySceneDetect](https://github.com/Breakthrough/PySceneDetect)
-- Originally a fork of OpenShorts
+- [OpenShorts](https://github.com/SamurAIGPT/Open-Source-Shorts-Maker) — original starting point.
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp), [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), [Deepgram](https://deepgram.com), [Google Gemini](https://ai.google.dev), [Ultralytics YOLO](https://github.com/ultralytics/ultralytics), [MediaPipe](https://github.com/google/mediapipe), [auto-editor](https://github.com/WyattBlue/auto-editor), [Zernio](https://zernio.com).
+- [shadcn/ui](https://ui.shadcn.com), [Radix UI](https://www.radix-ui.com), [Tailwind CSS](https://tailwindcss.com).
