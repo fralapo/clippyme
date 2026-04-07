@@ -679,11 +679,16 @@ def analyze_scenes_strategy(video_path, scenes):
         return ['TRACK'] * len(scenes)
 
     for start, end in tqdm(scenes, desc="   Analyzing Scenes"):
-        frames_to_check = [
-            start.get_frames() + 5,
-            int((start.get_frames() + end.get_frames()) / 2),
-            end.get_frames() - 5
-        ]
+        # Sample 7 frames evenly across the scene for a more reliable
+        # face-count estimate (was 3 frames). Catches mixed-content scenes
+        # where the face count changes mid-scene.
+        s_frame = start.get_frames()
+        e_frame = end.get_frames()
+        if e_frame - s_frame < 14:
+            frames_to_check = [s_frame + 2, (s_frame + e_frame) // 2, e_frame - 2]
+        else:
+            step = (e_frame - s_frame) // 8
+            frames_to_check = [s_frame + step * i for i in range(1, 8)]
 
         face_counts = []
         for f_idx in frames_to_check:
@@ -694,14 +699,20 @@ def analyze_scenes_strategy(video_path, scenes):
             candidates = detect_face_candidates(frame)
             face_counts.append(len(candidates))
 
-        avg_faces = sum(face_counts) / len(face_counts) if face_counts else 0
-
-        if avg_faces < 0.5:
+        if not face_counts:
             strategies.append('GENERAL')
-        elif avg_faces <= 1.2:
-            strategies.append('TRACK')
-        else:
+            continue
+
+        avg_faces = sum(face_counts) / len(face_counts)
+        max_faces = max(face_counts)
+
+        if avg_faces < 0.4:
+            strategies.append('GENERAL')
+        elif max_faces >= 2 and avg_faces > 1.0:
+            # Multi-speaker scene → WIDE (now uses dynamic switching, not letterbox)
             strategies.append('WIDE')
+        else:
+            strategies.append('TRACK')
 
     cap.release()
     return strategies
@@ -1134,7 +1145,9 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         scene_boundaries.append((s_start.get_frames(), s_end.get_frames()))
 
     # Global tracker for single-person shots
-    speaker_tracker = SpeakerTracker(cooldown_frames=30)
+    # Cooldown of 45 frames (~1.5s @ 30fps) protects against rapid back-and-forth
+    # switching in WIDE multi-speaker scenes (interview/podcast botta-risposta).
+    speaker_tracker = SpeakerTracker(cooldown_frames=45)
     detection_smoother = DetectionSmoother(window_size=5)
 
     with tqdm(total=total_frames, desc="   Processing", file=sys.stdout) as pbar:
@@ -1156,11 +1169,9 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
             if current_strategy == 'DISABLED':
                 output_frame = create_disabled_reframe(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
-            elif current_strategy in ('GENERAL', 'WIDE'):
-                # Letterbox: blur background + centered full frame
+            elif current_strategy == 'GENERAL':
+                # No faces detected anywhere in scene → letterbox fallback
                 output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
-
-                # Reset cameraman so it doesn't drift while inactive
                 cameraman.current_center_x = original_width / 2
                 cameraman.target_center_x = original_width / 2
                 cameraman.current_center_y = original_height / 2
@@ -1169,21 +1180,26 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                 cameraman.target_zoom = 1.0
 
             else:
-                # TRACK: single speaker tracking
+                # TRACK (single speaker) or WIDE (multi-speaker) — both use the
+                # same active-speaker tracker now. WIDE relies on MAR-variance
+                # to pick whichever face is currently talking, switching
+                # dynamically with cooldown protection.
                 if frame_number % 2 == 0:
                     candidates = detect_face_candidates(frame)
                     candidates = detection_smoother.smooth(candidates, frame_number)
-                    # Compute mouth aspect ratio for each face (for active-speaker detection)
                     for cand in candidates:
                         cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
                     target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
                     if target_box:
-                        # Find the matched candidate to read its face size for zoom
                         cameraman.update_target(target_box)
-                    else:
+                    elif current_strategy == 'TRACK':
+                        # Single-speaker scene: fall back to YOLO body detection
                         person_box = detect_person_yolo(frame)
                         if person_box:
                             cameraman.update_target(person_box, is_person_box=True)
+                    # WIDE: if no face detected this frame, just keep the
+                    # cameraman's current target (don't fall back to body
+                    # tracking which would jump to a random person).
 
                 # Snap camera on scene change to avoid panning from previous scene position
                 is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
