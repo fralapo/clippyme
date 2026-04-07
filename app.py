@@ -47,6 +47,7 @@ from config_store import (
 )
 from job_artifacts import relocate_root_job_artifacts
 from job_worker import make_workers
+from gemini_service import list_available_models
 
 load_dotenv()
 
@@ -57,8 +58,6 @@ DATA_DIR = "data"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)
-
-ALLOWED_MODEL_PREFIXES = ("gemini-2.5-", "gemini-3")
 
 # Initial load to env
 save_persistent_config(load_persistent_config())
@@ -75,8 +74,6 @@ jobs: Dict[str, Dict] = {}
 batches: Dict[str, Dict] = {}  # batch_id -> {job_ids: [...], created: timestamp}
 # Semaphore to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
-
-from google import genai
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -131,30 +128,7 @@ async def health():
 @app.get("/api/config/models")
 async def list_gemini_models(api_key: Optional[str] = Header(None, alias="X-Gemini-Key")):
     """List available Gemini models using the provided API key."""
-    final_api_key = api_key or os.environ.get("GEMINI_API_KEY")
-    if not final_api_key:
-        return {"models": [], "error": "API Key missing"}
-    
-    try:
-        client = genai.Client(api_key=final_api_key)
-        models = []
-        # list_models returns an iterator of model objects
-        for model in client.models.list():
-            # Filter for models that support content generation
-            if 'generateContent' in model.supported_generation_methods:
-                # model.name is like 'models/gemini-pro'
-                clean_name = model.name.replace('models/', '')
-                # Only show current-generation models (skip deprecated 1.x, 2.0)
-                if not any(clean_name.startswith(p) for p in ALLOWED_MODEL_PREFIXES):
-                    continue
-                models.append({
-                    "name": clean_name,
-                    "display_name": model.display_name,
-                    "description": model.description
-                })
-        return {"models": models}
-    except Exception as e:
-        return {"models": [], "error": str(e)}
+    return list_available_models(api_key or os.environ.get("GEMINI_API_KEY"))
 
 def enqueue_output(out, job_id):
     """Reads output from a subprocess and appends it to jobs logs."""
