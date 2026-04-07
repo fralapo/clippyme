@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from job_results import load_partial_result, load_final_result
 from schemas import (
     BatchRequest,
     ComposeRequest,
@@ -162,78 +163,29 @@ async def run_job(job_id, job_data):
         t_log.daemon = True
         t_log.start()
         
-        # Async wait for process with incremental updates
-        start_wait = time.time()
+        # Async wait for process with incremental partial-result updates
         while process.poll() is None:
             await asyncio.sleep(2)
-            
-            # Check for partial results every 2 seconds
-            # Look for metadata file
-            # main.py writes metadata atomically (complete write + close), so
-            # json.load here is safe in the common case. The outer try/except
-            # handles the rare edge case of reading during a partial write.
-            try:
-                json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
-                if json_files:
-                    target_json = json_files[0]
-                    if os.path.getsize(target_json) > 0:
-                        with open(target_json, 'r') as f:
-                            data = json.load(f)
-                            
-                        base_name = os.path.basename(target_json).replace('_metadata.json', '')
-                        clips = data.get('shorts', [])
-                        cost_analysis = data.get('cost_analysis')
-                        
-                        # Check which clips actually exist on disk
-                        ready_clips = []
-                        for i, clip in enumerate(clips):
-                             clip_filename = f"{base_name}_clip_{i+1}.mp4"
-                             clip_path = os.path.join(output_dir, clip_filename)
-                             if os.path.exists(clip_path) and os.path.getsize(clip_path) > 0:
-                                 # Checking if file is growing? For now assume if it exists and main.py moves it there, it's done.
-                                 # main.py writes to temp_... then moves to final name. So presence means ready!
-                                 clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
-                                 ready_clips.append(clip)
-                        
-                        if ready_clips:
-                             jobs[job_id]['result'] = {'clips': ready_clips, 'cost_analysis': cost_analysis}
-            except Exception as e:
-                # Ignore read errors during processing
-                pass
+            partial = load_partial_result(job_id, output_dir)
+            if partial:
+                jobs[job_id]['result'] = partial
 
         returncode = process.returncode
 
-        # Check if job was cancelled while running
         if jobs[job_id]['status'] == 'cancelled':
             jobs[job_id]['logs'].append("Process terminated (cancelled).")
         elif returncode == 0:
             jobs[job_id]['status'] = 'completed'
             jobs[job_id]['logs'].append("Process finished successfully.")
-            
-            # Find result JSON
-            json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
-            if not json_files:
-                # Backward-compat rescue if outputs were written to OUTPUT_DIR root
-                if relocate_root_job_artifacts(job_id, output_dir, OUTPUT_DIR):
-                    json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
-            if json_files:
-                target_json = json_files[0] 
-                with open(target_json, 'r') as f:
-                    data = json.load(f)
-                
-                # Enhance result with video URLs
-                base_name = os.path.basename(target_json).replace('_metadata.json', '')
-                clips = data.get('shorts', [])
-                cost_analysis = data.get('cost_analysis')
-
-                for i, clip in enumerate(clips):
-                     clip_filename = f"{base_name}_clip_{i+1}.mp4"
-                     clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
-                
-                jobs[job_id]['result'] = {'clips': clips, 'cost_analysis': cost_analysis}
+            # Backward-compat rescue if outputs were written to OUTPUT_DIR root
+            if not glob.glob(os.path.join(output_dir, "*_metadata.json")):
+                relocate_root_job_artifacts(job_id, output_dir, OUTPUT_DIR)
+            final = load_final_result(job_id, output_dir)
+            if final:
+                jobs[job_id]['result'] = final
             else:
-                 jobs[job_id]['status'] = 'failed'
-                 jobs[job_id]['logs'].append("No metadata file generated.")
+                jobs[job_id]['status'] = 'failed'
+                jobs[job_id]['logs'].append("No metadata file generated.")
         else:
             jobs[job_id]['status'] = 'failed'
             jobs[job_id]['logs'].append(f"Process failed with exit code {returncode}")
