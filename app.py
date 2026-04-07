@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from job_results import load_partial_result, load_final_result
+from job_results import load_partial_result, load_final_result, build_main_cmd
 from schemas import (
     BatchRequest,
     ComposeRequest,
@@ -226,43 +226,32 @@ async def process_endpoint(
     job_output_dir = os.path.join(OUTPUT_DIR, job_id)
     os.makedirs(job_output_dir, exist_ok=True)
     
-    # Prepare Command
-    cmd = ["python", "-u", "main.py"] # -u for unbuffered
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key # Override with key from request
-    
-    if url:
-        cmd.extend(["-u", url])
-        # Use persistent cookies if available
-        cookies_path = os.path.join("data", "cookies.txt")
-        if os.path.exists(cookies_path):
-            cmd.extend(["-c", cookies_path])
-    else:
+    env["GEMINI_API_KEY"] = api_key
+
+    input_path = None
+    if not url:
         # Save uploaded file with size limit check
         input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
-        
-        # Read file in chunks to check size
         size = 0
         limit_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
-        
         with open(input_path, "wb") as buffer:
-            while content := await file.read(1024 * 1024): # Read 1MB chunks
+            while content := await file.read(1024 * 1024):
                 size += len(content)
                 if size > limit_bytes:
                     os.remove(input_path)
                     shutil.rmtree(job_output_dir)
                     raise HTTPException(status_code=413, detail=f"File too large. Max size {MAX_FILE_SIZE_MB}MB")
                 buffer.write(content)
-                
-        cmd.extend(["-i", input_path])
 
-    cmd.extend(["-o", job_output_dir])
-
-    if instructions:
-        cmd.extend(["--instructions", instructions])
-
-    if reframe_mode and reframe_mode != 'auto':
-        cmd.extend(["--reframe-mode", reframe_mode])
+    cmd = build_main_cmd(
+        url=url,
+        input_path=input_path,
+        output_dir=job_output_dir,
+        instructions=instructions,
+        reframe_mode=reframe_mode,
+        cookies_path=os.path.join("data", "cookies.txt"),
+    )
 
     # Enqueue Job
     jobs[job_id] = {
@@ -302,11 +291,12 @@ async def batch_process(req: BatchRequest, request: Request):
         job_output_dir = os.path.join(OUTPUT_DIR, job_id)
         os.makedirs(job_output_dir, exist_ok=True)
 
-        cmd = ["python", "-u", "main.py", "-u", url, "-o", job_output_dir]
-        if req.instructions:
-            cmd.extend(["--instructions", req.instructions])
-        if req.reframe_mode and req.reframe_mode != 'auto':
-            cmd.extend(["--reframe-mode", req.reframe_mode])
+        cmd = build_main_cmd(
+            url=url,
+            output_dir=job_output_dir,
+            instructions=req.instructions,
+            reframe_mode=req.reframe_mode,
+        )
 
         env = os.environ.copy()
         env["GEMINI_API_KEY"] = api_key

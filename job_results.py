@@ -1,8 +1,33 @@
-"""Job result loading helpers extracted from app.py run_job."""
+"""Job result loading helpers + main.py command builder extracted from app.py."""
 import glob
 import json
 import os
 from typing import Any
+
+
+def build_main_cmd(
+    *,
+    url: str | None = None,
+    input_path: str | None = None,
+    output_dir: str,
+    instructions: str | None = None,
+    reframe_mode: str | None = None,
+    cookies_path: str | None = None,
+) -> list[str]:
+    """Build a `python -u main.py ...` command line for a single processing job."""
+    cmd = ["python", "-u", "main.py"]
+    if url:
+        cmd.extend(["-u", url])
+        if cookies_path and os.path.exists(cookies_path):
+            cmd.extend(["-c", cookies_path])
+    elif input_path:
+        cmd.extend(["-i", input_path])
+    cmd.extend(["-o", output_dir])
+    if instructions:
+        cmd.extend(["--instructions", instructions])
+    if reframe_mode and reframe_mode != "auto":
+        cmd.extend(["--reframe-mode", reframe_mode])
+    return cmd
 
 
 def _build_clips(data: dict, base_name: str, job_id: str, output_dir: str, only_ready: bool) -> list:
