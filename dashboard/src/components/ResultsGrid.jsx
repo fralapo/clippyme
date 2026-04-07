@@ -1,8 +1,9 @@
-import React from 'react';
-import { AlertCircle, RotateCcw, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertCircle, RotateCcw, Sparkles, Send } from 'lucide-react';
 import ResultCard from './ResultCard';
 import ProcessingAnimation from './ProcessingAnimation';
 import LogsPanel from './LogsPanel';
+import BatchPublishModal from './BatchPublishModal';
 
 /**
  * Final-state view of the Dashboard tab: header, clip grid, optional error
@@ -40,8 +41,23 @@ export default function ResultsGrid({
   onClipPlay,
   onClipPause,
   onRetry,
+  clipStates = {},
+  onUpdateClipState = () => {},
 }) {
-  const clipCount = results?.clips?.length || 0;
+  const [batchPublishOpen, setBatchPublishOpen] = useState(false);
+
+  const allClips = results?.clips || [];
+  // Filter out deleted clips from the grid
+  const visibleClips = allClips
+    .map((clip, i) => ({ clip, originalIndex: i }))
+    .filter(({ originalIndex }) => !clipStates[originalIndex]?.deleted);
+  const clipCount = visibleClips.length;
+
+  // Clips eligible for batch publish: not deleted, not disabled, not already published
+  const publishableClips = visibleClips.filter(({ originalIndex }) => {
+    const state = clipStates[originalIndex] || {};
+    return !state.disabled && !state.publishedAt;
+  });
 
   return (
     <div className="space-y-6">
@@ -70,6 +86,16 @@ export default function ResultsGrid({
               )}
             </div>
           )}
+          {publishableClips.length > 0 && (
+            <button
+              onClick={() => setBatchPublishOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-pink to-accent-purple text-white text-xs font-semibold shadow-glow-pink hover:opacity-90 transition-all"
+              title="Publish all active, not-yet-published clips to social platforms via Zernio"
+            >
+              <Send size={13} />
+              Publish all ({publishableClips.length})
+            </button>
+          )}
         </div>
       </div>
 
@@ -87,19 +113,29 @@ export default function ResultsGrid({
 
       {clipCount > 0 && (
         <div className="grid gap-6 grid-cols-1 lg:grid-cols-2">
-          {results.clips.map((clip, i) => (
+          {visibleClips.map(({ clip, originalIndex }) => (
             <ResultCard
-              key={i}
+              key={originalIndex}
               clip={clip}
-              index={i}
+              index={originalIndex}
               jobId={jobId}
               preselections={preselections}
               onPlay={(time) => onClipPlay(time)}
               onPause={onClipPause}
+              clipState={clipStates[originalIndex] || {}}
+              onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
             />
           ))}
         </div>
       )}
+
+      <BatchPublishModal
+        isOpen={batchPublishOpen}
+        onClose={() => setBatchPublishOpen(false)}
+        jobId={jobId}
+        clips={publishableClips}
+        onPublished={(originalIndex) => onUpdateClipState(originalIndex, { publishedAt: Date.now() })}
+      />
 
       {status === 'error' && (
         <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4 flex items-center justify-between">

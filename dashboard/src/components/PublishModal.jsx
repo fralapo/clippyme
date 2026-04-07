@@ -21,6 +21,7 @@ export default function PublishModal({
     defaultTitle = '', defaultCaption = '',
     videoUrl,
     composeBeforePublish = null,
+    onPublished = null,
 }) {
     const [title, setTitle] = useState(defaultTitle);
     const [caption, setCaption] = useState(defaultCaption);
@@ -136,6 +137,7 @@ export default function PublishModal({
             }
             const data = await res.json();
             setResult(data);
+            if (onPublished) onPublished(data);
             toast.success(
                 scheduleMode === 'now'
                     ? 'Published successfully!'

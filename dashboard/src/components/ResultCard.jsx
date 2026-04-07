@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send } from 'lucide-react';
+import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, Eye, EyeOff } from 'lucide-react';
 import PublishModal from './PublishModal';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
@@ -8,7 +8,18 @@ import HookModal from './HookModal';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Badge } from '@/components/ui/badge';
 
-export default function ResultCard({ clip, index, jobId, onPlay, onPause, preselections }) {
+export default function ResultCard({
+    clip,
+    index,
+    jobId,
+    onPlay,
+    onPause,
+    preselections,
+    clipState = {},
+    onUpdateState = () => {},
+}) {
+    const isDisabled = !!clipState.disabled;
+    const publishedAt = clipState.publishedAt;
     const [showSubtitleModal, setShowSubtitleModal] = useState(false);
     const [showHookModal, setShowHookModal] = useState(false);
     const videoRef = React.useRef(null);
@@ -131,13 +142,47 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, presel
 
     const settingsBtn = 'p-2 rounded-lg bg-white/5 border border-white/5 text-zinc-500 hover:text-white transition-colors';
 
+    const handleDelete = () => {
+        if (window.confirm(`Delete clip #${index + 1} permanently? This only hides it from the grid — the file stays on disk.`)) {
+            onUpdateState({ deleted: true });
+        }
+    };
+
     return (
         <div
-            className="bg-[#0f0f13] border border-white/5 rounded-2xl overflow-hidden animate-fade-in"
+            className={`bg-[#0f0f13] border rounded-2xl overflow-hidden animate-fade-in transition-opacity ${
+                isDisabled ? 'border-white/5 opacity-50' : 'border-white/5'
+            }`}
             style={{ animationDelay: `${index * 0.1}s` }}
         >
             {/* Video player - 9:16 container */}
             <div className="relative w-full aspect-[9/16] bg-black rounded-t-2xl overflow-hidden">
+                {/* Card action row (top-left) — disable/delete */}
+                <div className="absolute top-2 left-2 z-20 flex items-center gap-1.5">
+                    <button
+                        onClick={() => onUpdateState({ disabled: !isDisabled })}
+                        title={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
+                        className="p-1.5 rounded-lg bg-black/50 backdrop-blur-sm text-zinc-300 hover:text-white border border-white/10 transition-colors"
+                    >
+                        {isDisabled ? <EyeOff size={12} /> : <Eye size={12} />}
+                    </button>
+                    <button
+                        onClick={handleDelete}
+                        title="Remove clip from grid"
+                        className="p-1.5 rounded-lg bg-black/50 backdrop-blur-sm text-red-400 hover:text-red-300 border border-red-500/20 transition-colors"
+                    >
+                        <Trash2 size={12} />
+                    </button>
+                </div>
+
+                {/* Published badge (top-right, under viral score) */}
+                {publishedAt && (
+                    <div className="absolute top-2 right-2 z-20 flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/90 text-white text-[10px] font-semibold shadow-lg">
+                        <Check size={10} />
+                        Published
+                    </div>
+                )}
+
                 <video
                     ref={videoRef}
                     src={currentVideoUrl}
@@ -260,12 +305,22 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, presel
                     </button>
                     <button
                         onClick={() => setShowPublishModal(true)}
-                        disabled={isComposing}
-                        title="Publish to TikTok / Instagram / YouTube via Zernio"
-                        className="px-4 py-2.5 rounded-lg bg-accent-pink/20 hover:bg-accent-pink/30 border border-accent-pink/30 text-accent-pink text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50"
+                        disabled={isComposing || isDisabled}
+                        title={
+                            isDisabled
+                                ? 'Clip is disabled — enable it to publish'
+                                : publishedAt
+                                    ? 'Already published — click to publish again'
+                                    : 'Publish to TikTok / Instagram / YouTube via Zernio'
+                        }
+                        className={`px-4 py-2.5 rounded-lg border text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50 ${
+                            publishedAt
+                                ? 'bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-500/30 text-emerald-300'
+                                : 'bg-accent-pink/20 hover:bg-accent-pink/30 border-accent-pink/30 text-accent-pink'
+                        }`}
                     >
-                        <Send size={15} />
-                        Publish
+                        {publishedAt ? <Check size={15} /> : <Send size={15} />}
+                        {publishedAt ? 'Republish' : 'Publish'}
                     </button>
                 </div>
 
@@ -282,6 +337,7 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, presel
                             ? { toggles, hookParams, subtitleParams }
                             : null
                     }
+                    onPublished={() => onUpdateState({ publishedAt: Date.now() })}
                 />
 
                 {/* Copy-to-clipboard fields */}

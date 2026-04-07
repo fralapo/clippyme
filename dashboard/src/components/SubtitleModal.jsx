@@ -39,8 +39,11 @@ const HIGHLIGHT_COLORS = [
 
 export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl }) {
     const [mode, setMode] = useState('viral');
-    const [position, setPosition] = useState('bottom');
-    const [offsetY, setOffsetY] = useState(0);
+    // Single vertical position slider: -50 = top, 0 = center, +50 = bottom.
+    // Backend always receives position='center' so MarginV is centered on the
+    // video and offset_y drives the actual Y in percentage of video height.
+    const [offsetY, setOffsetY] = useState(35);  // default slightly below center
+    const position = 'center';
 
     // Viral mode state
     const [selectedPreset, setSelectedPreset] = useState('classic_white');
@@ -359,31 +362,13 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                             </>
                         )}
 
-                        {/* Position (shared) */}
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-zinc-400">Position</label>
-                            <div className="grid grid-cols-3 gap-2">
-                                {['top', 'middle', 'bottom'].map((pos) => (
-                                    <button
-                                        key={pos}
-                                        onClick={() => setPosition(pos)}
-                                        className={`py-2 rounded-lg border text-xs font-medium capitalize transition-all ${
-                                            position === pos
-                                                ? 'bg-white/[0.06] border-accent-pink/40 text-white'
-                                                : 'bg-white/[0.02] border-white/[0.06] text-zinc-500 hover:border-white/10'
-                                        }`}
-                                    >
-                                        {pos}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Vertical Offset (shared) */}
+                        {/* Vertical Position (single unified slider) */}
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">
-                                <label className="text-xs font-medium text-zinc-400">Vertical Offset</label>
-                                <span className="text-xs text-zinc-500">{offsetY}%</span>
+                                <label className="text-xs font-medium text-zinc-400">Vertical Position</label>
+                                <span className="text-xs text-zinc-500">
+                                    {offsetY < -15 ? 'Top' : offsetY > 15 ? 'Bottom' : 'Center'}
+                                </span>
                             </div>
                             <input
                                 type="range"
@@ -393,6 +378,11 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                 onChange={(e) => setOffsetY(Number(e.target.value))}
                                 className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-pink"
                             />
+                            <div className="flex justify-between text-[9px] text-zinc-600">
+                                <span>Top</span>
+                                <span>Center</span>
+                                <span>Bottom</span>
+                            </div>
                         </div>
                     </div>
 
@@ -410,7 +400,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                                     Rendering...
                                 </>
                             ) : (
-                                <span>{mode === 'viral' ? 'Generate Karaoke Subs' : 'Sync Subtitles'}</span>
+                                <span>{mode === 'viral' ? 'Apply Karaoke Subtitles' : 'Apply Classic Subtitles'}</span>
                             )}
                         </button>
                     </div>
@@ -421,13 +411,14 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                     <video src={videoUrl} className="w-full h-full object-contain opacity-30 grayscale" muted playsInline />
 
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-10">
-                        <div className={`w-full flex items-center justify-center transition-all duration-500 ${
-                            position === 'top' ? 'mb-auto mt-14' : ''
-                        } ${
-                            position === 'middle' ? 'my-auto' : ''
-                        } ${
-                            position === 'bottom' ? 'mt-auto mb-14' : ''
-                        }`} style={{ transform: `translateY(${offsetY}%)` }}>
+                        <div
+                            className="w-full flex items-center justify-center transition-all duration-200 absolute left-0 right-0"
+                            style={{
+                                // offsetY -50 → 0% from top, 0 → 50% (center), +50 → 100%
+                                top: `${50 + offsetY}%`,
+                                transform: 'translateY(-50%)',
+                            }}
+                        >
                             {mode === 'viral' ? (
                                 <div className="text-center">
                                     <span style={{

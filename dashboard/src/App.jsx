@@ -16,6 +16,7 @@ import { useJobSubmission } from './hooks/useJobSubmission';
 import { useHistory } from './hooks/useHistory';
 import { useSessionPersistence } from './hooks/useSessionPersistence';
 import { useJobPolling } from './hooks/useJobPolling';
+import { useClipStates } from './hooks/useClipStates';
 import { useBackendStatus } from './hooks/useBackendStatus';
 
 function App() {
@@ -39,6 +40,7 @@ function App() {
 
   const [showConfetti, setShowConfetti] = useState(false);
   const [preselections, setPreselections] = useState(null);
+  const { states: clipStates, updateClip: updateClipState } = useClipStates(jobId);
 
   const handleClipPlay = (startTime) => {
     setSyncedTime(startTime);
@@ -239,6 +241,8 @@ function App() {
                 onClipPlay={handleClipPlay}
                 onClipPause={handleClipPause}
                 onRetry={handleProcess}
+                clipStates={clipStates}
+                onUpdateClipState={updateClipState}
               />
             )}
           </div>

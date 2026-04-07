@@ -4,19 +4,13 @@ import { X, Sparkles, Loader2 } from 'lucide-react';
 
 export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl, initialText }) {
     const [text, setText] = useState(initialText || '');
-    const [position, setPosition] = useState('top');
     const [size, setSize] = useState('S');
-    const [offsetY, setOffsetY] = useState(0);
+    // Single vertical slider -50 (top) → +50 (bottom). Backend uses
+    // position='center' + offset_y so a single slider controls it all.
+    const [offsetY, setOffsetY] = useState(-35);  // default near top
+    const position = 'center';
 
     if (!isOpen) return null;
-
-    const getPositionClass = () => {
-        switch (position) {
-            case 'center': return 'justify-center';
-            case 'bottom': return 'justify-end pb-[20%]';
-            default: return 'justify-start pt-[20%]';
-        }
-    };
 
     const getSizeStyle = () => {
         switch (size) {
@@ -62,31 +56,13 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                             />
                         </div>
 
-                        {/* Position */}
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-zinc-400">Position</label>
-                            <div className="flex gap-2">
-                                {['top', 'center', 'bottom'].map((pos) => (
-                                    <button
-                                        key={pos}
-                                        onClick={() => setPosition(pos)}
-                                        className={`flex-1 py-2 rounded-lg border text-xs font-medium capitalize transition-all ${
-                                            position === pos
-                                                ? 'bg-white/[0.06] border-accent-pink/40 text-white'
-                                                : 'bg-white/[0.02] border-white/[0.06] text-zinc-500 hover:border-white/10'
-                                        }`}
-                                    >
-                                        {pos}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Vertical Offset */}
+                        {/* Vertical Position (single slider) */}
                         <div className="space-y-2">
                             <div className="flex items-center justify-between">
-                                <label className="text-xs font-medium text-zinc-400">Vertical Offset</label>
-                                <span className="text-xs text-zinc-500">{offsetY}%</span>
+                                <label className="text-xs font-medium text-zinc-400">Vertical Position</label>
+                                <span className="text-xs text-zinc-500">
+                                    {offsetY < -15 ? 'Top' : offsetY > 15 ? 'Bottom' : 'Center'}
+                                </span>
                             </div>
                             <input
                                 type="range"
@@ -96,6 +72,11 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                                 onChange={(e) => setOffsetY(Number(e.target.value))}
                                 className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-pink"
                             />
+                            <div className="flex justify-between text-[9px] text-zinc-600">
+                                <span>Top</span>
+                                <span>Center</span>
+                                <span>Bottom</span>
+                            </div>
                         </div>
 
                         {/* Size */}
@@ -144,7 +125,7 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                             ) : (
                                 <>
                                     <Sparkles size={16} />
-                                    Add Hook
+                                    Apply Hook
                                 </>
                             )}
                         </button>
@@ -155,19 +136,23 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                 <div className="flex-1 bg-black relative flex items-center justify-center min-h-[350px]">
                     <video src={videoUrl} className="w-full h-full object-contain opacity-30 grayscale" muted playsInline />
 
-                    <div className={`absolute inset-0 flex flex-col items-center p-8 pointer-events-none ${getPositionClass()}`}>
+                    <div className="absolute inset-0 pointer-events-none">
                         <div
-                            className="text-black font-bold rounded-2xl text-center whitespace-pre-wrap transition-all duration-300"
-                            style={{
-                                ...getSizeStyle(),
-                                backgroundColor: 'rgba(255, 255, 255, 0.92)',
-                                fontFamily: 'Noto Serif, Georgia, serif',
-                                padding: '12px 20px',
-                                boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
-                                transform: `translateY(${offsetY}%)`,
-                            }}
+                            className="absolute left-0 right-0 flex justify-center px-8 transition-all duration-200"
+                            style={{ top: `${50 + offsetY}%`, transform: 'translateY(-50%)' }}
                         >
-                            {text || 'Enter your hook text...'}
+                            <div
+                                className="text-black font-bold rounded-2xl text-center whitespace-pre-wrap"
+                                style={{
+                                    ...getSizeStyle(),
+                                    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+                                    fontFamily: 'Noto Serif, Georgia, serif',
+                                    padding: '12px 20px',
+                                    boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+                                }}
+                            >
+                                {text || 'Enter your hook text...'}
+                            </div>
                         </div>
                     </div>
 

@@ -183,9 +183,10 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
         img_path, box_w, box_h = create_hook_image(text, target_box_width, hook_filename, font_scale=font_scale)
 
         overlay_x = (video_width - box_w) // 2
-        if position == "center":
+        position_norm = "center" if position == "middle" else position
+        if position_norm == "center":
             overlay_y = (video_height - box_h) // 2
-        elif position == "bottom":
+        elif position_norm == "bottom":
             overlay_y = int(video_height * 0.70)
         else:
             overlay_y = int(video_height * 0.20)

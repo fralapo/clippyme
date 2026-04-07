@@ -198,7 +198,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 80,
+        "fontsize": 62,
     },
     "hormozi_bold": {
         "font": "Bangers-Regular",
@@ -210,7 +210,7 @@ SUBTITLE_PRESETS = {
         "shadow": 2,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 85,
+        "fontsize": 66,
     },
     "neon_glow": {
         "font": "Montserrat-Black",
@@ -222,7 +222,7 @@ SUBTITLE_PRESETS = {
         "shadow": 3,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 80,
+        "fontsize": 62,
     },
     "mrbeast_box": {
         "font": "Poppins-Black",
@@ -234,7 +234,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": False,
-        "fontsize": 75,
+        "fontsize": 58,
     },
     "minimal_clean": {
         "font": "Poppins-Medium",
@@ -246,7 +246,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": False,
-        "fontsize": 70,
+        "fontsize": 54,
     },
     "fire_impact": {
         "font": "Anton-Regular",
@@ -258,7 +258,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 85,
+        "fontsize": 66,
     },
 }
 
@@ -304,10 +304,13 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         style["uppercase"] = uppercase
 
     # Position → ASS alignment + margin
-    if str(position).lower() == "top":
+    position_norm = str(position).lower()
+    if position_norm == "middle":
+        position_norm = "center"  # frontend alias
+    if position_norm == "top":
         ass_alignment = 8  # top-center
         base_margin_v = 260
-    elif str(position).lower() == "center":
+    elif position_norm == "center":
         ass_alignment = 5  # center-center
         base_margin_v = 0
     else:
@@ -347,7 +350,7 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         f"Style: Viral,{style['font']},{style['fontsize']},"
         f"{primary_colour},{secondary_colour},{outline_colour},{back_colour},"
         f"-1,0,0,0,100,100,0,0,{style['border_style']},{style['outline_width']},{style.get('shadow', 0)},"
-        f"{ass_alignment},40,40,{margin_v},1\n\n"
+        f"{ass_alignment},110,110,{margin_v},1\n\n"  # MarginL/R 110px ≈ 10% safe zone (TikTok/Reels)
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
