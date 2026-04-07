@@ -1,0 +1,19 @@
+# NVIDIA GPU override
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+
+name: clippyme
+
+services:
+  backend:
+    build:
+      args:
+        GPU_RUNTIME: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

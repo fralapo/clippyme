@@ -1,14 +1,21 @@
 # CPU-only / Apple Silicon / ARM override
 # Removes GPU reservation and uses python:3.11-slim base
 #
-# Usage:
+# Usage (either works):
+#   docker compose -f docker-compose.cpu.yml up --build
 #   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up --build
 
 name: clippyme
+
+include:
+  - docker-compose.yml
 
 services:
   backend:
     build:
       args:
         GPU_RUNTIME: cpu
-    deploy: {}
+    deploy:
+      resources:
+        reservations:
+          devices: []
