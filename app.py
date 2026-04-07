@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from job_results import load_partial_result, load_final_result, build_main_cmd
 from compose import compose_layers
+from subtitle_pipeline import resolve_clip_filename, run_subtitle_pipeline
 from schemas import (
     BatchRequest,
     ComposeRequest,
@@ -474,61 +475,23 @@ async def add_subtitles(req: SubtitleRequest):
         
     clip_data = clips[req.clip_index]
     
-    if req.input_filename:
-        filename = os.path.basename(req.input_filename)
-    else:
-        filename = clip_data.get('video_url', '').split('/')[-1]
-        if not filename:
-             base_name = os.path.basename(metadata_path).replace('_metadata.json', '')
-             filename = f"{base_name}_clip_{req.clip_index+1}.mp4"
-
+    filename = resolve_clip_filename(req, clip_data, metadata_path)
     input_path = os.path.join(output_dir, filename)
     if not os.path.exists(input_path):
         raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
 
-    use_karaoke = req.preset is not None and req.preset in SUBTITLE_PRESETS
-    ts = int(time.time())
-
-    if use_karaoke:
-        sub_filename = f"subs_{req.clip_index}_{ts}.ass"
-    else:
-        sub_filename = f"subs_{req.clip_index}_{ts}.srt"
-    sub_path = os.path.join(output_dir, sub_filename)
-
     output_filename = f"subtitled_{filename}"
-    output_path = os.path.join(output_dir, output_filename)
-
     try:
-        if use_karaoke:
-            success = generate_ass_karaoke(
-                transcript, clip_data['start'], clip_data['end'], sub_path,
-                preset=req.preset,
-                mode=req.karaoke_mode or "word_group",
-                words_per_group=req.words_per_group,
-                uppercase=req.uppercase,
-                font_name=req.font_name if req.font_name != "Verdana" else None,
-                font_color=req.font_color if req.font_color != "#FFFFFF" else None,
-                highlight_color=req.highlight_color,
-                font_size=req.font_size if req.font_size != 16 else None,
-                outline_width=req.border_width if req.border_width != 2 else None,
-                position=req.position
-            )
-        else:
-            success = generate_srt(transcript, clip_data['start'], clip_data['end'], sub_path)
-
-        if not success:
-             raise HTTPException(status_code=400, detail="No words found for this clip range.")
-
-        def run_burn():
-             burn_subtitles(input_path, sub_path, output_path,
-                           alignment=req.position, fontsize=req.font_size,
-                           font_name=req.font_name, font_color=req.font_color,
-                           border_color=req.border_color, border_width=req.border_width,
-                           bg_color=req.bg_color, bg_opacity=req.bg_opacity)
-        
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, run_burn)
-        
+        await run_subtitle_pipeline(
+            req=req,
+            output_dir=output_dir,
+            transcript=transcript,
+            clip_data=clip_data,
+            input_path=input_path,
+            output_filename=output_filename,
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Subtitle error: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
