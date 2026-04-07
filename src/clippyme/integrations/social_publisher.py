@@ -34,7 +34,36 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-ZERNIO_BASE_URL = os.environ.get("ZERNIO_BASE_URL", "https://zernio.com/api/v1")
+def _safe_zernio_base_url() -> str:
+    """Resolve ZERNIO_BASE_URL with a strict allowlist on the host.
+
+    The Zernio integration uploads clip media and exchanges a long-lived
+    API key on every call. Allowing an arbitrary override via env var would
+    be an SSRF-by-configuration primitive (a compromised env could redirect
+    every clip + every API key to an attacker-controlled host). We therefore
+    only honour overrides that are HTTPS and resolve to the official
+    `zernio.com` apex (or its `*.zernio.com` subdomains).
+    """
+    default = "https://zernio.com/api/v1"
+    raw = os.environ.get("ZERNIO_BASE_URL", default).strip()
+    if not raw:
+        return default
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(raw)
+    except Exception:
+        return default
+    if parsed.scheme != "https":
+        logger.warning("Ignoring ZERNIO_BASE_URL with non-https scheme: %r", raw)
+        return default
+    host = (parsed.hostname or "").lower()
+    if host != "zernio.com" and not host.endswith(".zernio.com"):
+        logger.warning("Ignoring ZERNIO_BASE_URL with unauthorised host: %r", raw)
+        return default
+    return raw
+
+
+ZERNIO_BASE_URL = _safe_zernio_base_url()
 DEFAULT_TIMEZONE = os.environ.get("ZERNIO_DEFAULT_TZ", "Europe/Rome")
 HTTP_TIMEOUT_SECONDS = int(os.environ.get("ZERNIO_HTTP_TIMEOUT", "60"))
 UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("ZERNIO_UPLOAD_TIMEOUT", "600"))

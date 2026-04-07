@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 
 
@@ -426,6 +427,29 @@ def _group_words(words, clip_start, max_chars=60, max_duration=5.0):
     return groups
 
 
+def _ffmpeg_filter_escape(value: str) -> str:
+    """Escape a string so it is safe to inject inside an ffmpeg filtergraph
+    single-quoted argument. Order matters: backslashes first, then the chars
+    that have special meaning to libavfilter's lexer.
+    """
+    return (
+        value.replace('\\', '\\\\')
+             .replace(':', '\\:')
+             .replace("'", "\\'")
+             .replace(',', '\\,')
+             .replace(';', '\\;')
+             .replace('[', '\\[')
+             .replace(']', '\\]')
+    )
+
+
+# Whitelists used by burn_subtitles to defend against ffmpeg filtergraph
+# injection. Pydantic already enforces the same patterns at the API boundary
+# but we re-validate here so direct callers (smartcut/compose) cannot bypass.
+_HEX_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
+_FONT_NAME_RE = re.compile(r'^[A-Za-z0-9 _\-]{1,40}$')
+
+
 def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
@@ -434,13 +458,19 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     Burns subtitles into the video using FFmpeg.
     Supports .srt (with force_style) and .ass (native ASS rendering with fontsdir).
     """
-    safe_sub_path = srt_path.replace('\\', '/').replace(':', '\\:')
+    if not _FONT_NAME_RE.match(font_name):
+        raise ValueError(f"invalid font_name: {font_name!r}")
+    for label, color in (("font_color", font_color), ("border_color", border_color), ("bg_color", bg_color)):
+        if not _HEX_RE.match(color):
+            raise ValueError(f"invalid {label}: {color!r}")
+
+    safe_sub_path = _ffmpeg_filter_escape(srt_path.replace('\\', '/'))
     is_ass = srt_path.lower().endswith('.ass')
 
     if is_ass:
         # ASS files have their own embedded styles (including karaoke tags).
         # Use the 'ass' filter with fontsdir so custom fonts are found.
-        fonts_path = FONTS_DIR.replace('\\', '/').replace(':', '\\:')
+        fonts_path = _ffmpeg_filter_escape(FONTS_DIR.replace('\\', '/'))
         vf_filter = f"ass='{safe_sub_path}':fontsdir='{fonts_path}'"
     else:
         # SRT: build force_style for legacy subtitle rendering

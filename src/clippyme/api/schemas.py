@@ -5,46 +5,55 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class ProcessRequest(BaseModel):
-    url: str
+    url: str = Field(..., max_length=2048)
 
 
 class BatchRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=20)
-    instructions: Optional[str] = None
-    reframe_mode: Optional[str] = None
+    instructions: Optional[str] = Field(None, max_length=2000)
+    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled)$")
 
 
 class ConfigUpdateRequest(BaseModel):
     keys: dict
 
 
+_HEX_COLOR = r"^#[0-9A-Fa-f]{6}$"
+_FONT_NAME = r"^[A-Za-z0-9 _\-]{1,40}$"
+_POSITION = r"^(top|middle|center|bottom)$"
+_HOOK_SIZE = r"^[SML]$"
+_FILENAME = r"^[A-Za-z0-9_\-.]{1,200}$"
+_PRESET = r"^[a-z0-9_]{1,40}$"
+_KARAOKE_MODE = r"^(word_group|full_line)$"
+
+
 class SubtitleRequest(BaseModel):
-    job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
-    clip_index: int
-    position: str = "bottom"
-    font_size: int = 16
-    font_name: str = "Verdana"
-    font_color: str = "#FFFFFF"
-    border_color: str = "#000000"
-    border_width: int = 2
-    bg_color: str = "#000000"
-    bg_opacity: float = 0.0
-    input_filename: Optional[str] = None
+    job_id: str = Field(..., pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+    clip_index: int = Field(..., ge=0, lt=100)
+    position: str = Field("bottom", pattern=_POSITION)
+    font_size: int = Field(16, ge=8, le=120)
+    font_name: str = Field("Verdana", pattern=_FONT_NAME)
+    font_color: str = Field("#FFFFFF", pattern=_HEX_COLOR)
+    border_color: str = Field("#000000", pattern=_HEX_COLOR)
+    border_width: int = Field(2, ge=0, le=10)
+    bg_color: str = Field("#000000", pattern=_HEX_COLOR)
+    bg_opacity: float = Field(0.0, ge=0.0, le=1.0)
+    input_filename: Optional[str] = Field(None, pattern=_FILENAME)
     # Karaoke / viral subtitle options
-    preset: Optional[str] = None  # e.g. "classic_white", "hormozi_bold"
-    karaoke_mode: Optional[str] = None  # "word_group" or "full_line"
-    words_per_group: int = 3
+    preset: Optional[str] = Field(None, pattern=_PRESET)
+    karaoke_mode: Optional[str] = Field(None, pattern=_KARAOKE_MODE)
+    words_per_group: int = Field(3, ge=1, le=10)
     uppercase: bool = True
-    highlight_color: Optional[str] = None
+    highlight_color: Optional[str] = Field(None, pattern=_HEX_COLOR)
 
 
 class HookRequest(BaseModel):
-    job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
-    clip_index: int
-    text: str
-    input_filename: Optional[str] = None
-    position: str = "top"
-    size: str = "M"
+    job_id: str = Field(..., pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
+    clip_index: int = Field(..., ge=0, lt=100)
+    text: str = Field(..., max_length=200)
+    input_filename: Optional[str] = Field(None, pattern=_FILENAME)
+    position: str = Field("top", pattern=_POSITION)
+    size: str = Field("M", pattern=_HOOK_SIZE)
 
 
 class ReframeRequest(BaseModel):

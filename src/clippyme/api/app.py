@@ -146,8 +146,12 @@ async def health():
     return {"status": "healthy"}
 
 @app.get("/api/config/models")
-async def list_gemini_models(api_key: Optional[str] = Header(None, alias="X-Gemini-Key")):
+async def list_gemini_models(
+    request: Request,
+    api_key: Optional[str] = Header(None, alias="X-Gemini-Key"),
+):
     """List available Gemini models using the provided API key."""
+    require_trusted_config_request(request)
     return list_available_models(api_key or os.environ.get("GEMINI_API_KEY"))
 
 async def run_job(job_id, job_data):
@@ -245,8 +249,12 @@ async def process_endpoint(
 
     input_path = None
     if not url:
-        # Save uploaded file with size limit check
-        input_path = os.path.join(UPLOAD_DIR, f"{job_id}_{file.filename}")
+        # Save uploaded file with a server-generated name. We deliberately
+        # discard the client-supplied filename (path traversal risk) and only
+        # preserve a sanitized extension whitelisted to known media formats.
+        raw_ext = os.path.splitext(file.filename or "")[1].lower()
+        safe_ext = raw_ext if raw_ext in {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"} else ".mp4"
+        input_path = os.path.join(UPLOAD_DIR, f"{job_id}{safe_ext}")
         size = 0
         limit_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
         with open(input_path, "wb") as buffer:
@@ -375,9 +383,11 @@ async def get_batch_status(batch_id: str):
 
 @app.get("/api/status/{job_id}")
 async def get_status(job_id: str):
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     job = jobs[job_id]
     return {
         "status": job['status'],
@@ -388,6 +398,8 @@ async def get_status(job_id: str):
 @app.post("/api/cancel/{job_id}")
 async def cancel_job(job_id: str):
     """Cancel a running job by killing its subprocess."""
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -437,25 +449,51 @@ async def update_config(req: ConfigUpdateRequest, request: Request):
     else:
         raise HTTPException(status_code=500, detail="Failed to save configuration.")
 
+COOKIES_MAX_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
+
 @app.post("/api/config/cookies")
-async def upload_cookies(cookies_file: UploadFile = File(...)):
+async def upload_cookies(request: Request, cookies_file: UploadFile = File(...)):
     """Upload and persist a Netscape-format cookies.txt file."""
+    require_trusted_config_request(request)
     os.makedirs("data", exist_ok=True)
     cookies_path = os.path.join("data", "cookies.txt")
-    content = await cookies_file.read()
-    with open(cookies_path, "wb") as f:
+
+    # Stream-read with hard size cap to avoid buffering arbitrary uploads in RAM.
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await cookies_file.read(64 * 1024):
+        total += len(chunk)
+        if total > COOKIES_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Cookies file too large (max 10 MB)")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+
+    # Validate Netscape format: first non-comment line should mention the header
+    # or look like a tab-separated cookie row. We accept either the canonical
+    # header or a permissive check that ensures the file is plain text.
+    try:
+        text_head = content[:4096].decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Cookies file must be UTF-8 text")
+    if "Netscape HTTP Cookie File" not in text_head and "\t" not in text_head:
+        raise HTTPException(status_code=400, detail="File does not look like a Netscape cookies.txt")
+
+    fd = os.open(cookies_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
         f.write(content)
     return {"status": "ok", "message": "Cookies saved"}
 
 @app.get("/api/config/cookies/status")
-async def cookies_status():
+async def cookies_status(request: Request):
     """Check if a cookies file is configured."""
+    require_trusted_config_request(request)
     cookies_path = os.path.join("data", "cookies.txt")
     return {"configured": os.path.exists(cookies_path)}
 
 @app.delete("/api/config/cookies")
-async def delete_cookies():
+async def delete_cookies(request: Request):
     """Remove the persisted cookies file."""
+    require_trusted_config_request(request)
     cookies_path = os.path.join("data", "cookies.txt")
     if os.path.exists(cookies_path):
         os.remove(cookies_path)
@@ -506,7 +544,7 @@ async def add_subtitles(req: SubtitleRequest):
         raise
     except Exception as e:
         logger.error("Subtitle error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Subtitle generation failed")
         
     if req.clip_index < len(job['result']['clips']):
          job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
@@ -702,7 +740,7 @@ async def add_hook(req: HookRequest):
         )
     except Exception as e:
         logger.error("Hook error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Hook overlay failed")
 
     if 'result' in job and 'clips' in job['result'] and req.clip_index < len(job['result']['clips']):
         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
@@ -790,7 +828,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
         raise
     except Exception as e:
         logger.error("Compose error for job %s clip %d: %s", job_id, clip_index, e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Compose pipeline failed")
 
 
 # ---------------------------------------------------------------------------
@@ -930,9 +968,9 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
             status_code=502 if e.status_code is None else e.status_code,
             detail=detail_msg,
         )
-    except Exception as e:
+    except Exception:
         logger.exception("publish: unexpected error")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Publish failed")
 
     return {"success": True, **result}
 

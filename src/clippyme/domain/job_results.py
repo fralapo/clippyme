@@ -3,6 +3,9 @@ import glob
 import json
 import os
 
+ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled"})
+MAX_INSTRUCTIONS_LEN = 2000
+
 
 def build_main_cmd(
     *,
@@ -13,7 +16,12 @@ def build_main_cmd(
     reframe_mode: str | None = None,
     cookies_path: str | None = None,
 ) -> list[str]:
-    """Build a `python -u main.py ...` command line for a single processing job."""
+    """Build a `python -u -m clippyme.pipeline.main ...` command line for a single processing job."""
+    if reframe_mode is not None and reframe_mode not in ALLOWED_REFRAME_MODES:
+        raise ValueError(f"invalid reframe_mode: {reframe_mode!r}")
+    if instructions is not None and len(instructions) > MAX_INSTRUCTIONS_LEN:
+        raise ValueError(f"instructions too long (>{MAX_INSTRUCTIONS_LEN} chars)")
+
     cmd = ["python", "-u", "-m", "clippyme.pipeline.main"]
     if url:
         cmd.extend(["-u", url])

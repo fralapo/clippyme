@@ -36,7 +36,10 @@ def _read_raw_config() -> dict:
 def _write_raw_config(data: dict) -> bool:
     try:
         os.makedirs(DATA_DIR, exist_ok=True)
-        with open(CONFIG_FILE, "w") as f:
+        # Write with mode 0o600 so the file (which holds Gemini, Deepgram and
+        # Zernio API keys) is not world-readable under the default Docker umask.
+        fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=4)
         return True
     except OSError as e:

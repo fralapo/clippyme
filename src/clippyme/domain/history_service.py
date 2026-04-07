@@ -8,7 +8,13 @@ from typing import List
 
 logger = logging.getLogger("clippyme")
 
-_JOB_ID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
+# Strict UUID4 pattern: 8-4-4-4-12 hex with the version/variant nibbles
+# fixed (4xxx and [89ab]xxx). Rejects degenerate values like 36 hyphens
+# that the loose `[0-9a-fA-F-]{36}` regex used to accept.
+_JOB_ID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 
 def is_valid_job_id(job_id: str) -> bool:
