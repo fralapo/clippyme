@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="dashboard/public/logo-clippyme.png" alt="ClippyMe" width="200" />
+</p>
+
 # ClippyMe
 
 Self-hosted AI video pipeline that turns long-form videos (YouTube links or local uploads) into viral 9:16 vertical shorts. Fork of OpenShorts, hardened and extended.
