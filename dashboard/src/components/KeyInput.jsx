@@ -7,7 +7,7 @@ const KEY_TYPES = [
     { id: 'HF_TOKEN', label: 'Hugging Face Token', link: 'https://huggingface.co/settings/tokens', placeholder: 'hf_...', required: false, hint: 'Optional — enables faster Whisper model downloads and avoids rate limits.' }
 ];
 
-export default function KeyInput({ onKeySet, onHfTokenSet }) {
+export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
     const [keys, setKeys] = useState({});
     const [serverConfig, setServerConfig] = useState({});
     const [visibleKeys, setVisibleKeys] = useState({});
@@ -48,12 +48,16 @@ export default function KeyInput({ onKeySet, onHfTokenSet }) {
             const response = await fetch(`${config.API_BASE_URL}/api/config/cookies/status`);
             if (response.ok) {
                 const data = await response.json();
-                setCookiesConfigured(!!data.configured);
+                const configured = !!data.configured;
+                setCookiesConfigured(configured);
+                // Propagate to the parent (App) so the MediaInput cookie warning
+                // updates in real time without requiring a page reload.
+                if (onCookiesChange) onCookiesChange(configured);
             }
         } catch (error) {
             console.error("Failed to check cookie status:", error);
         }
-    }, []);
+    }, [onCookiesChange]);
 
     const fetchConfig = useCallback(async () => {
         try {

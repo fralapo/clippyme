@@ -9,9 +9,10 @@ import ZernioSettings from './ZernioSettings';
  * @param {{
  *   onKeySet: (key: string) => void,
  *   onHfTokenSet: () => void,
+ *   onCookiesChange?: (configured: boolean) => void,
  * }} props
  */
-export default function SettingsTab({ onKeySet, onHfTokenSet }) {
+export default function SettingsTab({ onKeySet, onHfTokenSet, onCookiesChange }) {
   const goToLanding = (e) => {
     e.preventDefault();
     localStorage.removeItem('clippyme_skip_landing');
@@ -34,7 +35,7 @@ export default function SettingsTab({ onKeySet, onHfTokenSet }) {
           <span className="text-sm font-medium text-zinc-300">API Keys &amp; Security</span>
         </div>
         <div className="p-6">
-          <KeyInput onKeySet={onKeySet} onHfTokenSet={onHfTokenSet} />
+          <KeyInput onKeySet={onKeySet} onHfTokenSet={onHfTokenSet} onCookiesChange={onCookiesChange} />
         </div>
       </div>
 

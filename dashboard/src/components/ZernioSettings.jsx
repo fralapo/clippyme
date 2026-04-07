@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, EyeOff, RefreshCw, Save, Check } from 'lucide-react';
+import { Eye, EyeOff, RefreshCw, Save, Check, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 
@@ -89,31 +89,46 @@ export default function ZernioSettings() {
         <div className="space-y-5">
             {/* API Key */}
             <div className="space-y-2">
-                <label className="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                    Zernio API Key
-                </label>
+                <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium text-zinc-300 flex items-center gap-2">
+                        Zernio API Key
+                        {hasKey ? (
+                            <span className="flex items-center gap-1 text-[10px] text-success bg-success/10 border border-success/20 px-1.5 py-0.5 rounded">
+                                <Check size={9} /> {maskedKey || 'Connected'}
+                            </span>
+                        ) : (
+                            <span className="text-[10px] text-zinc-600 bg-white/[0.03] border border-white/[0.06] px-1.5 py-0.5 rounded">
+                                Not connected
+                            </span>
+                        )}
+                    </label>
+                    <a
+                        href="https://zernio.com"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[11px] text-accent-pink hover:text-accent-pink/80 transition-colors"
+                    >
+                        Get token
+                    </a>
+                </div>
                 <div className="relative">
                     <input
                         type={showKey ? 'text' : 'password'}
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
-                        placeholder={hasKey ? `Configured: ${maskedKey}` : 'sk_...'}
-                        className="w-full bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3 pr-10 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 font-mono"
+                        placeholder={hasKey ? 'Leave empty to keep current key, or paste a new one' : 'sk_...'}
+                        className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 pr-10 text-sm text-white placeholder:text-zinc-700 focus:outline-none focus:border-accent-pink/50 font-mono"
                     />
                     <button
                         type="button"
                         onClick={() => setShowKey((s) => !s)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
                     >
-                        {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        {showKey ? <EyeOff size={15} /> : <Eye size={15} />}
                     </button>
                 </div>
-                <p className="text-[11px] text-zinc-500">
-                    Get your API key from{' '}
-                    <a href="https://zernio.com" target="_blank" rel="noreferrer" className="text-accent-pink hover:underline">
-                        zernio.com
-                    </a>{' '}
-                    → Settings → API Keys. Stored server-side in <code className="text-[10px] bg-white/5 px-1 rounded">data/config.json</code>.
+                <p className="text-[11px] text-zinc-600">
+                    Powers one-click publishing to TikTok, Instagram and YouTube. Stored server-side in <code className="text-zinc-500">data/config.json</code>.
                 </p>
             </div>
 
@@ -167,21 +182,31 @@ export default function ZernioSettings() {
             {/* Per-platform IDs */}
             <div className="grid grid-cols-1 gap-3">
                 {[
-                    { key: 'tiktok', label: 'TikTok account ID' },
-                    { key: 'instagram', label: 'Instagram account ID' },
-                    { key: 'youtube', label: 'YouTube account ID' },
-                ].map(({ key, label }) => (
-                    <div key={key} className="space-y-1">
-                        <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">{label}</label>
-                        <input
-                            type="text"
-                            value={accounts[key]}
-                            onChange={(e) => setAccounts({ ...accounts, [key]: e.target.value })}
-                            placeholder="68becb..."
-                            className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-2 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 font-mono"
-                        />
-                    </div>
-                ))}
+                    { key: 'tiktok', label: 'TikTok' },
+                    { key: 'instagram', label: 'Instagram' },
+                    { key: 'youtube', label: 'YouTube' },
+                ].map(({ key, label }) => {
+                    const isSet = !!accounts[key];
+                    return (
+                        <div key={key} className="space-y-1">
+                            <label className="text-[11px] font-medium text-zinc-400 flex items-center gap-2">
+                                {label} account ID
+                                {isSet && (
+                                    <span className="flex items-center gap-1 text-[9px] text-success bg-success/10 border border-success/20 px-1.5 py-0.5 rounded">
+                                        <Check size={8} /> Linked
+                                    </span>
+                                )}
+                            </label>
+                            <input
+                                type="text"
+                                value={accounts[key]}
+                                onChange={(e) => setAccounts({ ...accounts, [key]: e.target.value })}
+                                placeholder="68becb..."
+                                className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-zinc-700 focus:outline-none focus:border-accent-pink/50 font-mono"
+                            />
+                        </div>
+                    );
+                })}
             </div>
 
             {/* Timezone */}

@@ -162,6 +162,7 @@ function App() {
           <SettingsTab
             onKeySet={setApiKey}
             onHfTokenSet={() => setHfTokenSet(true)}
+            onCookiesChange={setCookiesConfigured}
           />
         )}
 
