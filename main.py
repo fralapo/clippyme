@@ -223,11 +223,23 @@ class DetectionSmoother:
 
 class SmoothedCameraman:
     """
-    Handles smooth camera movement with exponential easing.
+    Handles smooth camera movement with adaptive exponential easing.
+
     The camera accelerates toward the target and decelerates as it approaches,
-    mimicking a professional human operator.
+    mimicking a professional human operator. Smoothing is *adaptive*:
+      - Tiny moves (inside safe zone): zero motion (dead-band, kills jitter).
+      - Small/medium moves: gentle 0.08 glide (cinematic).
+      - Large moves (>60% of crop width away, e.g. speaker switch on opposite
+        side): aggressive 0.30 catch-up so the camera doesn't visibly drift
+        for a full second.
+
+    This kills the "software-glide" feel on rapid speaker switches inside a
+    single PySceneDetect scene, while preserving the smooth feel for normal
+    head movement.
     """
-    SMOOTHING = 0.08  # Exponential decay factor (0.05=slow, 0.08=balanced, 0.12=snappy)
+    SMOOTHING_SLOW = 0.08   # cinematic glide for small/medium moves
+    SMOOTHING_FAST = 0.30   # aggressive catch-up for large jumps
+    FAST_THRESHOLD_RATIO = 0.6  # diff > this * crop_width → use fast smoothing
 
     def __init__(self, output_width, output_height, video_width, video_height):
         self.output_width = output_width
@@ -268,15 +280,15 @@ class SmoothedCameraman:
             self.current_center_x = self.target_center_x
         else:
             diff = self.target_center_x - self.current_center_x
+            abs_diff = abs(diff)
 
-            # Only move if target is outside the safe zone
-            if abs(diff) > self.safe_zone_radius:
-                # Exponential easing: move a fraction of the remaining distance
-                # This naturally accelerates (large diff → large step) and
-                # decelerates (small diff → small step) like a real camera operator
-                self.current_center_x += diff * self.SMOOTHING
-
-            # If inside safe zone, camera stays still (no micro-jitter)
+            if abs_diff > self.safe_zone_radius:
+                # Adaptive smoothing: large jumps catch up fast, small moves glide
+                if abs_diff > self.crop_width * self.FAST_THRESHOLD_RATIO:
+                    self.current_center_x += diff * self.SMOOTHING_FAST
+                else:
+                    self.current_center_x += diff * self.SMOOTHING_SLOW
+            # Inside safe zone: camera stays still (no micro-jitter)
                 
         # Clamp center
         half_crop = self.crop_width / 2
