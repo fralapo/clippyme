@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, Eye, EyeOff, Crop, Square } from 'lucide-react';
+import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, Eye, EyeOff, Crop, Square, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
 import PublishModal from './PublishModal';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Badge } from '@/components/ui/badge';
 
 export default function ResultCard({
     clip,
     index,
+    rank = null,
+    totalClips = 0,
     jobId,
     onPlay,
     onPause,
@@ -18,6 +19,7 @@ export default function ResultCard({
     clipState = {},
     onUpdateState = () => {},
 }) {
+    const [showMetadata, setShowMetadata] = useState(false);
     const isDisabled = !!clipState.disabled;
     const publishedAt = clipState.publishedAt;
     // Reframe mode: persisted per-clip. Default to 'auto' — the backend
@@ -130,6 +132,28 @@ export default function ResultCard({
     };
 
     const duration = Math.floor(clip.end - clip.start);
+    // Format timestamp as mm:ss
+    const fmtTs = (sec) => {
+        const s = Math.max(0, Math.floor(sec || 0));
+        const m = Math.floor(s / 60);
+        const r = s % 60;
+        return `${m}:${String(r).padStart(2, '0')}`;
+    };
+    const startTs = fmtTs(clip.start);
+    const endTs = fmtTs(clip.end);
+
+    // A clip is "customized" when the user has modified any toggle or
+    // param away from the preselection defaults. Shown as a pink dot
+    // next to the title so the user can see at a glance which cards
+    // have been touched vs which still use the default pipeline config.
+    const defaultSmartCut = !!preselections?.smartcut;
+    const defaultHookOn = !!preselections?.hook;
+    const defaultSubsOn = !!preselections?.subtitles;
+    const isCustomized =
+        toggles.smartcut !== defaultSmartCut ||
+        toggles.hook !== defaultHookOn ||
+        toggles.subtitles !== defaultSubsOn ||
+        (toggles.hook && hookParams.text && hookParams.text !== (clip.viral_hook_text || clip.hook_text || ''));
 
     const scoreLevel = clip.viral_score >= 80 ? 'high' : clip.viral_score >= 50 ? 'mid' : 'low';
     const viralScoreGradient = {
@@ -137,15 +161,6 @@ export default function ResultCard({
         mid: 'linear-gradient(135deg, #f59e0b, #d97706)',
         low: 'linear-gradient(135deg, #f97316, #ea580c)',
     }[scoreLevel];
-
-    const toggleBtn = (active) =>
-        `flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all flex items-center gap-2 ${
-            active
-                ? 'bg-accent-pink/20 text-accent-pink border border-accent-pink/30'
-                : 'bg-white/5 text-zinc-500 border border-white/5 hover:text-zinc-300'
-        }`;
-
-    const settingsBtn = 'p-2 rounded-lg bg-white/5 border border-white/5 text-zinc-500 hover:text-white transition-colors';
 
     const handleDelete = () => {
         if (window.confirm(`Delete clip #${index + 1} permanently? This only hides it from the grid — the file stays on disk.`)) {
@@ -246,11 +261,37 @@ export default function ResultCard({
                     </button>
                 </div>
 
-                {/* Published badge (top-right, under viral score) */}
-                {publishedAt && (
-                    <div className="absolute top-2 right-2 z-20 flex items-center gap-1 px-2 py-1 rounded-full bg-emerald-500/90 text-white text-[10px] font-semibold shadow-lg">
-                        <Check size={10} />
-                        Published
+                {/* Top-right stack: rank + viral score + published (vertical) */}
+                <div className="absolute top-2 right-2 z-20 flex flex-col items-end gap-1.5">
+                    {rank && totalClips > 1 && (
+                        <div
+                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-lg backdrop-blur-sm ${
+                                rank === 1
+                                    ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-black'
+                                    : 'bg-black/60 text-white border border-white/10'
+                            }`}
+                            title={rank === 1 ? 'Top clip (highest viral score)' : `Rank ${rank}/${totalClips}`}
+                        >
+                            {rank === 1 && <Trophy size={9} />}
+                            #{rank}
+                            <span className="opacity-60 font-normal">/{totalClips}</span>
+                        </div>
+                    )}
+                    {publishedAt && (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/90 text-white text-[10px] font-semibold shadow-lg">
+                            <Check size={10} />
+                            Published
+                        </div>
+                    )}
+                </div>
+
+                {/* Disabled overlay banner */}
+                {isDisabled && (
+                    <div className="absolute bottom-16 left-0 right-0 z-10 text-center pointer-events-none">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/80 backdrop-blur-sm border border-white/20 text-[10px] font-semibold text-zinc-300 uppercase tracking-wider shadow-xl">
+                            <EyeOff size={10} />
+                            Disabled — not published in batch
+                        </span>
                     </div>
                 )}
 
@@ -275,82 +316,125 @@ export default function ResultCard({
             </div>
 
             {/* Content area */}
-            <div className="p-5 space-y-4">
-                {/* Title + badges row */}
-                <div>
-                    <h3
-                        className="text-[15px] font-semibold text-white leading-snug line-clamp-2 mb-3"
-                        title={clip.video_title_for_youtube_short}
-                    >
-                        {clip.video_title_for_youtube_short || "Viral Clip Generated"}
-                    </h3>
-                    <div className="flex items-center gap-2 flex-wrap">
+            <div className="p-4 space-y-3">
+                {/* Header — title, viral score, timestamp */}
+                <div className="space-y-2">
+                    <div className="flex items-start gap-2">
                         {clip.viral_score != null && (
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <span
-                                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold text-white cursor-help select-none"
+                                    <div
+                                        className="flex flex-col items-center justify-center rounded-xl px-2.5 py-1.5 shrink-0 cursor-help select-none shadow-md"
                                         style={{ background: viralScoreGradient }}
                                     >
-                                        {clip.viral_score}
-                                        <span className="opacity-70 font-normal">/100</span>
-                                    </span>
+                                        <span className="text-base font-black text-white leading-none">{clip.viral_score}</span>
+                                        <span className="text-[8px] font-semibold text-white/70 uppercase tracking-wider leading-none mt-0.5">score</span>
+                                    </div>
                                 </TooltipTrigger>
                                 <TooltipContent side="top" className="max-w-[220px] text-center">
                                     {clip.viral_reason || 'AI viral potential score'}
                                 </TooltipContent>
                             </Tooltip>
                         )}
-                        {!clip.viral_score && (
-                            <Badge variant="outline" className="border-blue-500/20 text-blue-400 bg-blue-500/10">
-                                AI Ranked
-                            </Badge>
-                        )}
-                        <span className="text-xs text-zinc-500 font-medium">{duration}s</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                                <h3
+                                    className="text-[14px] font-semibold text-white leading-snug line-clamp-2"
+                                    title={clip.video_title_for_youtube_short}
+                                >
+                                    {clip.video_title_for_youtube_short || 'Viral Clip Generated'}
+                                </h3>
+                                {isCustomized && (
+                                    <span
+                                        className="w-1.5 h-1.5 rounded-full bg-accent-pink shrink-0 mt-1"
+                                        title="Customized — toggles or params differ from defaults"
+                                    />
+                                )}
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
+                                <span className="flex items-center gap-1">
+                                    <Clock size={9} />
+                                    {startTs} → {endTs}
+                                </span>
+                                <span className="text-zinc-700">·</span>
+                                <span>{duration}s</span>
+                            </div>
+                        </div>
                     </div>
+
+                    {/* Viral reason quote — below the header, subtle */}
+                    {clip.viral_reason && (
+                        <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                            <Quote size={10} className="text-zinc-600 mt-0.5 shrink-0" />
+                            <p className="text-[11px] text-zinc-500 italic leading-relaxed line-clamp-2">
+                                {clip.viral_reason}
+                            </p>
+                        </div>
+                    )}
                 </div>
 
-                {/* Toggle buttons — vertical stack */}
-                <div className="space-y-2">
-                    {/* Smart Cut */}
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setToggles(t => ({ ...t, smartcut: !t.smartcut }))}
-                            className={toggleBtn(toggles.smartcut)}
-                        >
-                            <span className={`w-1.5 h-1.5 rounded-full transition-colors ${toggles.smartcut ? 'bg-accent-pink' : 'bg-zinc-600'}`} />
-                            <Scissors size={13} />
-                            Smart Cut
-                        </button>
-                    </div>
+                {/* Compact toggles — single horizontal row, 3 slim pills */}
+                <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                        onClick={() => setToggles((t) => ({ ...t, smartcut: !t.smartcut }))}
+                        title="Smart Cut — remove silences and filler words"
+                        className={`flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border text-[10px] font-semibold transition-all ${
+                            toggles.smartcut
+                                ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
+                                : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
+                        }`}
+                    >
+                        <Scissors size={13} />
+                        Smart Cut
+                    </button>
 
-                    {/* Hook */}
-                    <div className="flex items-center gap-2">
+                    <div className={`relative flex flex-col ${toggles.hook ? '' : ''}`}>
                         <button
-                            onClick={() => setToggles(t => ({ ...t, hook: !t.hook }))}
-                            className={toggleBtn(toggles.hook)}
+                            onClick={() => setToggles((t) => ({ ...t, hook: !t.hook }))}
+                            title="Hook text overlay"
+                            className={`flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border text-[10px] font-semibold transition-all w-full ${
+                                toggles.hook
+                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
+                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
+                            }`}
                         >
-                            <span className={`w-1.5 h-1.5 rounded-full transition-colors ${toggles.hook ? 'bg-accent-pink' : 'bg-zinc-600'}`} />
                             <MessageSquare size={13} />
                             Hook
                         </button>
-                        <button onClick={() => setShowHookModal(true)} className={settingsBtn}>
-                            <Settings size={13} />
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setShowHookModal(true);
+                            }}
+                            title="Hook settings"
+                            className="absolute top-1 right-1 p-0.5 rounded text-zinc-600 hover:text-white hover:bg-white/10 transition-colors"
+                        >
+                            <Settings size={10} />
                         </button>
                     </div>
 
-                    {/* Subtitles */}
-                    <div className="flex items-center gap-2">
+                    <div className="relative flex flex-col">
                         <button
-                            onClick={() => setToggles(t => ({ ...t, subtitles: !t.subtitles }))}
-                            className={toggleBtn(toggles.subtitles)}
+                            onClick={() => setToggles((t) => ({ ...t, subtitles: !t.subtitles }))}
+                            title="Subtitles"
+                            className={`flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border text-[10px] font-semibold transition-all w-full ${
+                                toggles.subtitles
+                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
+                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
+                            }`}
                         >
-                            <span className={`w-1.5 h-1.5 rounded-full transition-colors ${toggles.subtitles ? 'bg-accent-pink' : 'bg-zinc-600'}`} />
                             <Type size={13} />
                             Subtitles
                         </button>
-                        <button onClick={() => setShowSubtitleModal(true)} className={settingsBtn}>
-                            <Settings size={13} />
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setShowSubtitleModal(true);
+                            }}
+                            title="Subtitle settings"
+                            className="absolute top-1 right-1 p-0.5 rounded text-zinc-600 hover:text-white hover:bg-white/10 transition-colors"
+                        >
+                            <Settings size={10} />
                         </button>
                     </div>
                 </div>
@@ -411,47 +495,58 @@ export default function ResultCard({
                     onPublished={() => onUpdateState({ publishedAt: Date.now() })}
                 />
 
-                {/* Copy-to-clipboard fields */}
-                <div className="space-y-2.5">
-                    {/* YouTube title */}
-                    <div className="group/field">
-                        <div className="flex items-center justify-between mb-1">
-                            <label className="text-[11px] text-zinc-500 flex items-center gap-1.5">
-                                <Youtube size={11} className="text-red-500" />
-                                YouTube Title
-                            </label>
-                            <button
-                                onClick={() => copyToClipboard(clip.video_title_for_youtube_short, 'title')}
-                                aria-label={copiedField === 'title' ? 'Copied!' : 'Copy YouTube title'}
-                                className="opacity-0 group-hover/field:opacity-100 transition-opacity p-1.5 text-zinc-500 hover:text-white rounded"
-                            >
-                                {copiedField === 'title' ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-                            </button>
-                        </div>
-                        <div className="bg-white/[0.03] border border-white/5 rounded-lg px-3 py-2 text-xs text-zinc-400 leading-relaxed">
-                            {clip.video_title_for_youtube_short || "Untitled Viral Short"}
-                        </div>
-                    </div>
+                {/* Metadata (collapsible) — YouTube title + TikTok caption */}
+                <div className="border-t border-white/5 pt-2 -mx-4 px-4">
+                    <button
+                        onClick={() => setShowMetadata((v) => !v)}
+                        className="w-full flex items-center justify-between text-[10px] font-semibold text-zinc-500 uppercase tracking-wider hover:text-zinc-300 transition-colors"
+                    >
+                        <span>Copy metadata</span>
+                        <ChevronDown size={12} className={`transition-transform ${showMetadata ? 'rotate-180' : ''}`} />
+                    </button>
+                    {showMetadata && (
+                        <div className="space-y-2 mt-2 animate-fade-in">
+                            {/* YouTube title */}
+                            <div>
+                                <div className="flex items-center justify-between mb-0.5">
+                                    <label className="text-[10px] text-zinc-600 flex items-center gap-1">
+                                        <Youtube size={9} className="text-red-500" />
+                                        YouTube title
+                                    </label>
+                                    <button
+                                        onClick={() => copyToClipboard(clip.video_title_for_youtube_short, 'title')}
+                                        aria-label={copiedField === 'title' ? 'Copied!' : 'Copy YouTube title'}
+                                        className="p-1 text-zinc-500 hover:text-white rounded transition-colors"
+                                    >
+                                        {copiedField === 'title' ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-zinc-400 leading-relaxed bg-white/[0.02] rounded px-2 py-1.5 border border-white/[0.04]">
+                                    {clip.video_title_for_youtube_short || 'Untitled Viral Short'}
+                                </p>
+                            </div>
 
-                    {/* TikTok / Instagram caption */}
-                    <div className="group/field">
-                        <div className="flex items-center justify-between mb-1">
-                            <label className="text-[11px] text-zinc-500 flex items-center gap-1.5">
-                                <Instagram size={11} className="text-pink-500" />
-                                TikTok Caption
-                            </label>
-                            <button
-                                onClick={() => copyToClipboard(clip.video_description_for_tiktok, 'caption')}
-                                aria-label={copiedField === 'caption' ? 'Copied!' : 'Copy TikTok caption'}
-                                className="opacity-0 group-hover/field:opacity-100 transition-opacity p-1.5 text-zinc-500 hover:text-white rounded"
-                            >
-                                {copiedField === 'caption' ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-                            </button>
+                            {/* TikTok / Instagram caption */}
+                            <div>
+                                <div className="flex items-center justify-between mb-0.5">
+                                    <label className="text-[10px] text-zinc-600 flex items-center gap-1">
+                                        <Instagram size={9} className="text-pink-500" />
+                                        TikTok / IG caption
+                                    </label>
+                                    <button
+                                        onClick={() => copyToClipboard(clip.video_description_for_tiktok || clip.video_description_for_instagram, 'caption')}
+                                        aria-label={copiedField === 'caption' ? 'Copied!' : 'Copy caption'}
+                                        className="p-1 text-zinc-500 hover:text-white rounded transition-colors"
+                                    >
+                                        {copiedField === 'caption' ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-zinc-500 italic leading-relaxed bg-white/[0.02] rounded px-2 py-1.5 border border-white/[0.04] line-clamp-3 hover:line-clamp-none transition-all cursor-text">
+                                    {clip.video_description_for_tiktok || clip.video_description_for_instagram || 'No caption available'}
+                                </p>
+                            </div>
                         </div>
-                        <div className="bg-white/[0.03] border border-white/5 rounded-lg px-3 py-2 text-xs text-zinc-500 italic line-clamp-3 hover:line-clamp-none transition-all cursor-text leading-relaxed">
-                            {clip.video_description_for_tiktok || clip.video_description_for_instagram}
-                        </div>
-                    </div>
+                    )}
                 </div>
             </div>
 
