@@ -26,5 +26,5 @@ export function useBackendStatus() {
       .catch(() => {});
   }, []);
 
-  return { hfTokenSet, cookiesConfigured, setCookiesConfigured };
+  return { hfTokenSet, setHfTokenSet, cookiesConfigured, setCookiesConfigured };
 }
