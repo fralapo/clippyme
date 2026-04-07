@@ -45,6 +45,7 @@ from config_store import (
     load_persistent_config,
     save_persistent_config,
 )
+from job_artifacts import relocate_root_job_artifacts
 
 load_dotenv()
 
@@ -75,47 +76,6 @@ batches: Dict[str, Dict] = {}  # batch_id -> {job_ids: [...], created: timestamp
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
 from google import genai
-
-def _relocate_root_job_artifacts(job_id: str, job_output_dir: str) -> bool:
-    """
-    Backward-compat rescue:
-    If main.py accidentally wrote metadata/clips into OUTPUT_DIR root (e.g. output/<jobid>_...),
-    move them into output/<job_id>/ so the API can find and serve them.
-    """
-    try:
-        os.makedirs(job_output_dir, exist_ok=True)
-        root = OUTPUT_DIR
-        pattern = os.path.join(root, f"{job_id}_*_metadata.json")
-        meta_candidates = sorted(glob.glob(pattern), key=lambda p: os.path.getmtime(p), reverse=True)
-        if not meta_candidates:
-            return False
-
-        # Move the newest metadata and its associated clips.
-        metadata_path = meta_candidates[0]
-        base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
-
-        # Move metadata
-        dest_metadata = os.path.join(job_output_dir, os.path.basename(metadata_path))
-        if os.path.abspath(metadata_path) != os.path.abspath(dest_metadata):
-            shutil.move(metadata_path, dest_metadata)
-
-        # Move any clips that match the same base_name into the job folder
-        clip_pattern = os.path.join(root, f"{base_name}_clip_*.mp4")
-        for clip_path in glob.glob(clip_pattern):
-            dest_clip = os.path.join(job_output_dir, os.path.basename(clip_path))
-            if os.path.abspath(clip_path) != os.path.abspath(dest_clip):
-                shutil.move(clip_path, dest_clip)
-
-        # Also move any temp_ clips that might remain
-        temp_clip_pattern = os.path.join(root, f"temp_{base_name}_clip_*.mp4")
-        for clip_path in glob.glob(temp_clip_pattern):
-            dest_clip = os.path.join(job_output_dir, os.path.basename(clip_path))
-            if os.path.abspath(clip_path) != os.path.abspath(dest_clip):
-                shutil.move(clip_path, dest_clip)
-
-        return True
-    except Exception:
-        return False
 
 async def cleanup_jobs():
     """Background task to remove old jobs and files."""
@@ -355,7 +315,7 @@ async def run_job(job_id, job_data):
             json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
             if not json_files:
                 # Backward-compat rescue if outputs were written to OUTPUT_DIR root
-                if _relocate_root_job_artifacts(job_id, output_dir):
+                if relocate_root_job_artifacts(job_id, output_dir, OUTPUT_DIR):
                     json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
             if json_files:
                 target_json = json_files[0] 
