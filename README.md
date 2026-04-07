@@ -1,6 +1,6 @@
-<p align="center">
-  <img src="dashboard/public/logo-clippyme.png" alt="ClippyMe" width="200" />
-</p>
+<div align="center">
+  <img src="dashboard/public/logo.svg" alt="ClippyMe Logo" width="80" />
+</div>
 
 # ClippyMe
 
