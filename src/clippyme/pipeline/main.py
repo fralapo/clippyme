@@ -141,6 +141,7 @@ Score each axis from 1 to 20 and sum (cap at 100):
 - Prefer starting 0.2–0.4s BEFORE the hook and ending 0.2–0.4s AFTER the payoff
 - Never cut in the middle of a word or phrase
 - viral_reason MUST be at least 20 characters and cite the specific hook, payoff or quote
+- viral_hook_text is REQUIRED, NEVER empty: 3-10 words, MUST be a literal phrase the speaker actually says inside the clip (or a tight paraphrase ≤10 words). It is the on-screen hook overlay — write it like a thumbnail caption.
 - No generic intros/outros or pure sponsorship unless they ARE the hook
 
 ## LANGUAGE RULE
@@ -179,7 +180,7 @@ WORDS_JSON (array of {{w, s, e}} where s/e are seconds):
 JSON formatting rules (violating = parse failure):
 - Escape every backslash as \\\\ inside strings
 - Use straight double quotes " only — NO curly/smart quotes
-- No trailing commas before } or ]
+- No trailing commas before }} or ]
 - Strings stay on a single line (no raw \\n mid-string)
 - In the descriptions, ALWAYS include a CTA like "Follow me and comment X and I'll send you the workflow"
 
@@ -195,7 +196,7 @@ Output schema:
       "video_description_for_tiktok": "<TikTok description with CTA>",
       "video_description_for_instagram": "<Instagram description with CTA>",
       "video_title_for_youtube_short": "<max 100 chars>",
-      "viral_hook_text": "<max 10 words, same language as transcript>"
+      "viral_hook_text": "<REQUIRED, 3-10 words, literal phrase from the clip, same language as transcript>"
     }}
   ]
 }}
@@ -1541,6 +1542,16 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         if not clips:
             print("❌ No valid clips after Pydantic validation + dedupe")
             return None
+
+        # Fallback: if Gemini left viral_hook_text empty, derive a hook from
+        # the first ~8 transcript words inside the clip window so the
+        # frontend always has an auto-filled hook to show.
+        for clip in clips:
+            if not (clip.get("viral_hook_text") or "").strip():
+                cs, ce = clip.get("start", 0.0), clip.get("end", 0.0)
+                hook_words = [w["w"] for w in words if cs <= w["s"] < ce][:8]
+                if hook_words:
+                    clip["viral_hook_text"] = " ".join(hook_words).strip()
 
         print(f"✅ {len(clips)} clips passed validation + dedupe")
         result_json = {"shorts": clips}
