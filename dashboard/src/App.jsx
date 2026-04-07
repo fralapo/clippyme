@@ -12,9 +12,9 @@ import ProcessingAnimation from './components/ProcessingAnimation';
 import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
-import { pollJob } from './lib/api';
 import { useHistory } from './hooks/useHistory';
 import { useSessionPersistence } from './hooks/useSessionPersistence';
+import { useJobPolling } from './hooks/useJobPolling';
 
 const TikTokIcon = ({ size = 16, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -78,74 +78,56 @@ function App() {
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    let interval;
-    if (status === 'processing' && jobId) {
-      interval = setInterval(async () => {
-        try {
-          const data = await pollJob(jobId);
-          if (data.result) setResults(data.result);
-          if (data.status === 'completed') {
-            setStatus('complete');
-            setShowConfetti(true);
-            setTimeout(() => setShowConfetti(false), 3000);
-            // Auto-apply smartcut pre-selection: fire-and-forget so files are ready at download time
-            if (preselections?.smartcut && data.result?.clips) {
-              data.result.clips.forEach((clip, i) => {
-                fetch(getApiUrl(`/api/smartcut/${jobId}/${i}`), { method: 'POST' })
-                  .catch(err => console.warn('Pre-smartcut failed for clip', i, err));
-              });
-            }
-            saveToHistory({
-              jobId,
-              status: 'complete',
-              timestamp: Date.now(),
-              source: processingMedia?.type === 'url' ? processingMedia.payload : processingMedia?.payload?.name || 'Local file',
-              sourceType: processingMedia?.type || 'file',
-              clipCount: data.result?.clips?.length || 0,
-              cost: data.result?.cost_analysis?.total_cost || null,
-            });
-            clearInterval(interval);
-          } else if (data.status === 'cancelled') {
-            setStatus('idle');
-            setJobId(null);
-            setResults(null);
-            setLogs([]);
-            setCurrentStep(null);
-            clearInterval(interval);
-          } else if (data.status === 'failed') {
-            setStatus('error');
-            const errorMsg = data.error || (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : "Process failed");
-            setLogs(prev => [...prev, "Error: " + errorMsg]);
-            saveToHistory({
-              jobId,
-              status: 'error',
-              timestamp: Date.now(),
-              source: processingMedia?.type === 'url' ? processingMedia.payload : processingMedia?.payload?.name || 'Local file',
-              sourceType: processingMedia?.type || 'file',
-              clipCount: 0,
-              cost: null,
-            });
-            clearInterval(interval);
-          } else {
-            if (data.logs) {
-              setLogs(data.logs);
-              // Detect current pipeline step from log keywords
-              const joined = data.logs.join(' ');
-              if (joined.includes('Processing Clip') || joined.includes('Step 4:') || joined.includes('Step 5:') || joined.includes('Step 6:')) setCurrentStep('processing');
-              else if (joined.includes('Analyzing with Gemini') || joined.includes('Gemini')) setCurrentStep('analyzing');
-              else if (joined.includes('Transcribing') || joined.includes('Faster-Whisper')) setCurrentStep('transcribing');
-              else if (joined.includes('Downloading') || joined.includes('yt-dlp')) setCurrentStep('downloading');
-              else if (joined.includes('queued') || joined.includes('started')) setCurrentStep('queued');
-            }
-          }
-        } catch (e) {
-          console.error("Polling error", e);
-        }
-      }, 2000);
-    }
-    return () => clearInterval(interval);
-  }, [status, jobId]);
+  useJobPolling({
+    jobId,
+    isActive: status === 'processing',
+    onResult: setResults,
+    onCompleted: (data) => {
+      setStatus('complete');
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 3000);
+      // Auto-apply smartcut pre-selection: fire-and-forget so files are ready at download time
+      if (preselections?.smartcut && data.result?.clips) {
+        data.result.clips.forEach((clip, i) => {
+          fetch(getApiUrl(`/api/smartcut/${jobId}/${i}`), { method: 'POST' })
+            .catch(err => console.warn('Pre-smartcut failed for clip', i, err));
+        });
+      }
+      saveToHistory({
+        jobId,
+        status: 'complete',
+        timestamp: Date.now(),
+        source: processingMedia?.type === 'url' ? processingMedia.payload : processingMedia?.payload?.name || 'Local file',
+        sourceType: processingMedia?.type || 'file',
+        clipCount: data.result?.clips?.length || 0,
+        cost: data.result?.cost_analysis?.total_cost || null,
+      });
+    },
+    onCancelled: () => {
+      setStatus('idle');
+      setJobId(null);
+      setResults(null);
+      setLogs([]);
+      setCurrentStep(null);
+    },
+    onFailed: (errorMsg) => {
+      setStatus('error');
+      setLogs(prev => [...prev, "Error: " + errorMsg]);
+      saveToHistory({
+        jobId,
+        status: 'error',
+        timestamp: Date.now(),
+        source: processingMedia?.type === 'url' ? processingMedia.payload : processingMedia?.payload?.name || 'Local file',
+        sourceType: processingMedia?.type || 'file',
+        clipCount: 0,
+        cost: null,
+      });
+    },
+    onProgress: (logs, step) => {
+      setLogs(logs);
+      if (step) setCurrentStep(step);
+    },
+  });
 
   const handleProcess = async (data) => {
     if (!apiKey) {
