@@ -238,20 +238,9 @@ When using ASS karaoke, the `ass` FFmpeg filter is used with `fontsdir` pointing
 
 ## Faithful modal preview scaling
 
-`SubtitleModal.jsx` and `HookModal.jsx` now render **pixel-faithful previews** of the final burned-in output — what you see in the modal is what you get in the rendered video.
+`SubtitleModal.jsx` and `HookModal.jsx` render **pixel-faithful** previews of the burned-in output. Shared spec in `dashboard/src/lib/subtitlePresets.js` mirrors `subtitles.py:SUBTITLE_PRESETS` 1:1 and exports `scaleFontToPreview(backendFontsize, renderedHeightPx)` (formula: `backendFontsize * renderedHeightPx / 1920`) + `outlineToTextShadow()` (8-way CSS shadow approximating libass outline). Modals measure `<video>` `clientHeight` via `ResizeObserver` and feed it through the scaler. HookModal replicates `hooks.py` formula `video_width * 0.9 * 0.05 * font_scale` with `S=0.8 / M=1.0 / L=1.3`.
 
-**Shared spec** (`dashboard/src/lib/subtitlePresets.js`):
-- Mirrors `subtitles.py:SUBTITLE_PRESETS` 1:1 (font, fontsize, outline width, colors, border style, uppercase). **This file MUST be kept in sync with the Python side** — when you bump a preset's fontsize on the backend, update the same number here.
-- Exports `REFERENCE_VIDEO_HEIGHT = 1920` (ClippyMe's vertical target resolution) and `scaleFontToPreview(backendFontsize, renderedHeightPx)` — the canonical formula `backendFontsize * (renderedHeightPx / 1920)`.
-- Exports `outlineToTextShadow(width, color)` which builds an 8-way CSS `text-shadow` approximating libass's stroked outline.
-
-**How the modals use it**:
-- Each modal attaches a `ref` to its `<video>` element and measures its rendered `clientHeight` via `ResizeObserver` + `useLayoutEffect`. The measured height feeds `scaleFontToPreview`.
-- **SubtitleModal karaoke path**: reads the selected preset from the shared spec, scales `fontsize` and `outlineWidth` to the video height, applies the real outline color, handles `borderStyle=3` (box background for MrBeast) with padding proportional to the scaled font size, and adds a neon glow for `neon_glow`.
-- **SubtitleModal classic path**: exposes a user-controllable fontsize slider (20–80, default 42) that mirrors `burn_subtitles`'s `fontsize * 0.85` internal scaling, then projects through `scaleFontToPreview` the same way.
-- **HookModal**: replicates `hooks.py:add_hook_to_video`'s formula `video_width * 0.9 * 0.05 * font_scale` with `S=0.8 / M=1.0 / L=1.3` at 1080 px reference width → backend sizes `{S: 38.88, M: 48.6, L: 63.18}`. Same `scaleFontToPreview` pass.
-
-This is a hard requirement: if you ever add a new preset or change font scaling on the backend, **you must update `subtitlePresets.js` in the same commit**. The preview is billed as "1:1 Preview" in the modal header.
+**Hard rule:** if you change a preset's fontsize on the backend, update `subtitlePresets.js` in the same commit.
 
 ## Unified vertical position slider
 
@@ -271,29 +260,18 @@ The apply buttons are labelled **"Apply Hook"** / **"Apply Karaoke Subtitles"** 
   - **Per-platform daily-limit handling**: when Zernio returns HTTP 429 with a "Daily limit reached" error (e.g. YouTube's 5/5 daily posts cap), the modal parses the offending platform from the error body (regex on `"platform":"..."` — the backend passes the Zernio body verbatim through `ZernioError`), disables that platform in the local `activePlatforms` map for the rest of the batch, and continues publishing the remaining clips to the other platforms. If all selected platforms get exhausted, the remaining clips are marked `skipped` (not `error`) and left untouched so the user can republish them tomorrow. A toast explains exactly which platform was disabled and the final summary reports `ok / failed / skipped` counts plus the exhausted platform list.
 - **`PublishModal.jsx`** (single-clip path) now accepts an `onPublished` callback so the parent `ResultCard` can flip the clip's `publishedAt` flag without duplicating state.
 
-## Reframing Modes (overhauled)
+## Reframing Modes
 
-`analyze_scenes_strategy()` samples **7 frames per scene** (was 3) and returns one of three modes:
-- `TRACK`: single speaker (≤1.0 avg faces) → active-speaker tracking via `SpeakerTracker` + `SmoothedCameraman`
-- `WIDE`: multi-speaker (max ≥2 and avg >1.0) → **also routed through `SpeakerTracker`** with longer cooldown (45 frames ≈ 1.5s) for interview/podcast switching. **No more letterbox-with-blurred-bg fallback.**
-- `GENERAL`: no faces seen anywhere in scene → letterbox via `create_general_frame()`
+`analyze_scenes_strategy()` samples 7 frames per scene → 3 modes:
+- `TRACK`: single speaker → `SpeakerTracker` + `SmoothedCameraman`
+- `WIDE`: multi-speaker → same tracker with longer cooldown (45 frames ≈ 1.5s)
+- `GENERAL`: no faces → letterbox via `create_general_frame()`
 
-`--reframe-mode disabled` overrides all scenes to `DISABLED`: center-crops to 4:3 + black bars.
+`--reframe-mode disabled` overrides all scenes → 4:3 center crop + black bars.
 
-### Active speaker detection (`SpeakerTracker`)
-Uses **mouth-aspect-ratio (MAR) variance** as the dominant signal. For each detected face the pipeline:
-1. Runs MediaPipe `FaceMesh` (max_num_faces=1) on the face ROI to extract mouth landmarks (13/14/78/308) → `compute_mouth_aspect_ratio()`
-2. Keeps a 1-second sliding window of MAR samples per speaker ID
-3. Combined score = `0.3 * face_size_norm + 1.0 * MAR_variance` — mouth motion dominates, so a small but speaking face beats a larger silent one
-4. Hysteresis: active speaker gets a 3.0× sticky bonus; switches require `cooldown_frames=45` to elapse
+**`SpeakerTracker`**: mouth-aspect-ratio (MAR) variance from MediaPipe FaceMesh (landmarks 13/14/78/308), 1s sliding window per speaker. Score = `0.3 * face_size_norm + 1.0 * MAR_variance`. 3× sticky bonus on the active speaker, switches require `cooldown_frames=45`.
 
-### `SmoothedCameraman` (overhauled)
-- **Adaptive smoothing**: `SMOOTHING_SLOW=0.08` for small/medium moves, `SMOOTHING_FAST=0.30` when target is >60% of crop_width away (eliminates "software-glide" on speaker switches inside one scene)
-- **Y-axis tracking**: crop now follows faces vertically, not just horizontally — separate dead-band per axis
-- **Dynamic vertical zoom**: animates between 1.0× and 1.6× based on detected face height ratio (small face → tight zoom; large face → no zoom)
-- **YOLO person fallback**: when faces aren't detectable, the YOLO body bbox is used with `is_person_box=True` so the cameraman aims at the upper 15% (head zone) instead of the body center — fixes the "camera shows knees" bug
-
-`DetectionSmoother` still applies a rolling average (window=5) on bbox coordinates before feeding to `SpeakerTracker`. MAR is computed *after* smoothing on the smoothed bbox.
+**`SmoothedCameraman`**: adaptive smoothing (`SLOW=0.08`, `FAST=0.30` for jumps >60% of crop_width), X+Y axis tracking, dynamic 1.0–1.6× zoom based on face height ratio, YOLO person bbox fallback aiming at upper 15% (head zone) when no face detected. `DetectionSmoother` rolling average (window=5) before MAR.
 
 ## Pipeline Post-processing (per clip)
 
@@ -342,45 +320,9 @@ Clips can be published/scheduled directly to TikTok, Instagram and YouTube from 
 
 ## Gemini viral detection — parsing chain
 
-Gemini occasionally emits JSON the strict `json.loads` decoder rejects: stray backslashes (e.g. `\w+` inside a regex example), curly/smart quotes, trailing commas, code fences, or chain-of-thought reasoning prepended to the JSON body. A single failure used to cascade into "fallback to whole-video conversion" — an entire job lost.
+`clippyme.pipeline.gemini_parser` applies a **5-level fallback** when Gemini emits malformed JSON: `strict` → `clean` (smart-quote/comma/backslash fix) → `json_repair` lib → `retry` (one round-trip with error context) → `fallback` (None → whole-video mode). Prompt emits chain-of-thought BEFORE a `### JSON ###` delimiter and uses a 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) + 3 few-shot examples. Each attempt logs `📊 gemini_parse path=<...> duration_ms=<N>`. Pydantic validation (`ViralClip`) enforces `10≤duration≤75`, `viral_score∈[1,100]`, `viral_reason≥20 chars`. `validate_and_dedupe` drops clips with IoU>0.7 vs a higher-scoring neighbour. Tests in `tests/test_gemini_parsing.py` (13 cases) — **do not break them**.
 
-The viral-clip parser now lives in `gemini_parser.py` and applies a **5-level fallback chain**:
+## Code organization rules
 
-| Level | Name | What it does |
-|---|---|---|
-| 1 | `strict` | Extract the section after the literal `### JSON ###` delimiter (or the whole text if absent), strip code fences, `json.loads`. |
-| 2 | `clean` | Deterministic cleanup: smart-quotes → straight quotes, trailing commas removed, lone backslashes doubled, ASCII control chars stripped. Retry `json.loads`. |
-| 3 | `json_repair` | Delegate to the [`json_repair`](https://pypi.org/project/json-repair/) library (now in `requirements.txt`). |
-| 4 | `retry` | ONE round-trip back to Gemini with the decoder error as context: "Your previous response was not valid JSON: <err>. Return ONLY the JSON object after the `### JSON ###` delimiter…" |
-| 5 | `fallback` | All levels failed → return `None`, caller degrades to whole-video mode. |
-
-The new prompt in `main.py:GEMINI_PROMPT_TEMPLATE` co-operates with the parser:
-- Chain-of-thought is emitted BEFORE a literal `### JSON ###` delimiter, so reasoning never contaminates the JSON body.
-- Explicit formatting rules: straight quotes only, no trailing commas, escape every backslash as `\\\\`, strings on a single line.
-- A 5-axis **viral_score rubric** (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) replaces the vague "predict viral performance".
-- 2 positive + 1 negative **few-shot examples** anchor the model's idea of a "good" vs "bad" `viral_reason`.
-
-Every parse attempt logs one structured line: `📊 gemini_parse path=<strict|clean|json_repair|retry|fallback> duration_ms=<N> error=<...>` — useful for grep-based quality monitoring.
-
-Post-parse, the result flows through **Pydantic validation** (`schemas.py:ViralClip` + `ViralClipsResponse`) which enforces:
-- `10 ≤ duration ≤ 75` (slightly wider than the user-facing 15-60s target so near-misses survive).
-- `start < end`, both clamped to `video_duration`.
-- `viral_score ∈ [1, 100]`.
-- `viral_reason` at least 20 characters (kills generic "interesting point" responses).
-
-Then `validate_and_dedupe` removes clips whose IoU with a higher-scoring neighbour exceeds **0.7**, preventing the "same payoff timestamp emitted with slightly different boundaries 4 times" failure mode.
-
-**Tests**: `tests/test_gemini_parsing.py` covers 6 malformed fixtures (clean, backslash rogue, smart quotes, trailing comma, code fence, reasoning-before-JSON) plus 7 validation/dedupe cases. All 13 tests pass end-to-end via the real parser, not mocks. **Do not break them.**
-
-## Refactor History (8-round autoresearch pipeline)
-
-`app.py` and `App.jsx` were systematically split into focused modules. **Do not re-merge them.** When adding new logic, prefer extending an existing module or creating a new one over growing the orchestrators.
-
-| File | Before | After | Δ |
-|---|---|---|---|
-| `app.py` | 1271 | 678 | −47% |
-| `dashboard/src/App.jsx` | 1068 | 270 | −75% |
-
-**Backend rule of thumb:** if an endpoint handler grows past ~25 lines, extract its body into a helper module (see `compose.py`, `subtitle_pipeline.py`, `clip_endpoints.py`). Endpoints should stay thin: validate → call helper → return JSON.
-
-**Frontend rule of thumb:** `App.jsx` only owns top-level state wiring + JSX composition. Side effects belong in custom hooks (`hooks/`), visual chunks belong in components (`components/`).
+- **Backend:** endpoint handlers stay thin (validate → call helper → return JSON). If a handler grows past ~25 lines, extract into a `clippyme.domain.*` module. Don't re-merge `app.py`.
+- **Frontend:** `App.jsx` only owns top-level state wiring + JSX composition. Side effects → custom hooks (`hooks/`), visual chunks → components (`components/`).
