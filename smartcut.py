@@ -19,16 +19,21 @@ Public API (unchanged): smart_cut(clip_path, transcript, clip_start, clip_end, l
 
 import logging
 import os
+import re
 import json
 import shutil
 import subprocess
 import tempfile
+import threading
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
-# Filler words by language (lowercase, stripped of punctuation)
+# Filler words by language. Each entry can be a single word OR a multi-word
+# phrase ("you know", "uh huh"). The matcher below builds an n-gram lookup
+# so multi-word phrases actually match (the previous single-token-only set
+# lookup made all multi-word entries dead config).
 FILLER_WORDS = {
     "it": {"ehm", "uhm", "eh", "ah", "mhm", "cioe", "cioè", "tipo", "praticamente",
            "diciamo", "insomma", "ecco", "allora", "niente", "vabbè", "vabbe"},
@@ -42,10 +47,67 @@ FILLER_WORDS = {
 DEFAULT_LANG = "en"
 
 # Gaps longer than this between words are considered "dead silence"
-SILENCE_THRESHOLD = 0.8
+SILENCE_THRESHOLD = float(os.environ.get("AE_SILENCE_THRESHOLD", "0.8"))
 
 # Minimum silence kept around the cut (one breath, avoids whiplash edits)
-SILENCE_KEEP = 0.3
+SILENCE_KEEP = float(os.environ.get("AE_SILENCE_KEEP", "0.3"))
+
+# Polish safety net: if the audio polish pass removes more than this fraction
+# of the stage-1 output, the result is suspicious (likely a music clip with
+# legitimate quiet sections being misidentified as silence). Revert in that
+# case rather than serve a butchered video.
+MAX_POLISH_CUT_RATIO = float(os.environ.get("AE_MAX_POLISH_CUT_RATIO", "0.5"))
+
+# Per-clip mutex registry: prevents two concurrent smart_cut calls on the
+# same source clip from clobbering each other's _smartcut.mp4 output.
+# Lazily populated by _clip_lock(). Workers from FastAPI's executor pool
+# may hit the same clip when the user spam-clicks Download.
+_CLIP_LOCKS: dict[str, threading.Lock] = {}
+_CLIP_LOCKS_GUARD = threading.Lock()
+
+
+def _clip_lock(clip_path: str) -> threading.Lock:
+    """Return a process-wide lock unique to `clip_path`. Lazy + thread-safe."""
+    abs_path = os.path.abspath(clip_path)
+    with _CLIP_LOCKS_GUARD:
+        lock = _CLIP_LOCKS.get(abs_path)
+        if lock is None:
+            lock = threading.Lock()
+            _CLIP_LOCKS[abs_path] = lock
+            # Bound the registry. 256 in-flight clips is plenty for any
+            # realistic worker count.
+            if len(_CLIP_LOCKS) > 256:
+                _CLIP_LOCKS.pop(next(iter(_CLIP_LOCKS)))
+        return lock
+
+
+# Regex that strips ALL non-alphanumeric chars (unicode-aware) for the
+# filler-word lookup. Replaces the .strip('.,!?') hack which missed
+# parentheses, brackets, quotes (straight and typographic), em-dash, etc.
+_NORM_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _normalize_token(text: str) -> str:
+    """Lowercase + strip punctuation + collapse whitespace."""
+    return _NORM_RE.sub("", text).strip().lower()
+
+
+def _build_filler_index(lang: str) -> tuple[set[str], int]:
+    """Compile the filler list for a language into (phrase_set, max_ngram).
+
+    Returns the set of normalized filler phrases and the maximum number
+    of words across all phrases — used to drive the n-gram window size.
+    """
+    raw = FILLER_WORDS.get(lang, FILLER_WORDS[DEFAULT_LANG])
+    phrases: set[str] = set()
+    max_n = 1
+    for entry in raw:
+        norm = _normalize_token(entry)
+        if not norm:
+            continue
+        phrases.add(norm)
+        max_n = max(max_n, len(norm.split()))
+    return phrases, max_n
 
 # Audio polish pass: amplitude threshold under which audio is considered silent.
 # 0.04 ≈ -28 dB. Conservative — won't touch normal speech, only true quiet.
@@ -102,13 +164,21 @@ def _run(cmd: list[str], *, timeout: Optional[int] = None) -> tuple[int, str, st
 # ---------------------------------------------------------------------------
 
 def analyze_silences(transcript, clip_start, clip_end, language=None):
-    """
-    Inspect word timestamps and produce a list of (start, end) segments to KEEP,
-    expressed in seconds relative to `clip_start`. Identical to the legacy
-    behaviour — auto-editor only enters at the rendering stage.
+    """Inspect word timestamps and produce a list of (start, end) segments
+    to KEEP, expressed in seconds relative to `clip_start`.
+
+    Two filter passes:
+    1. **Multi-word filler matching** via n-gram lookahead. Phrases like
+       "you know" or "uh huh" now actually match (the previous single-token
+       set lookup made multi-word entries dead config).
+    2. **Inter-word silence gaps** longer than SILENCE_THRESHOLD.
+
+    Punctuation is normalized via _normalize_token() so "(uh,)" and "ehm;"
+    are detected (the previous .strip('.,!?') hack missed brackets, quotes,
+    semicolons, em-dashes, and unicode punctuation).
     """
     lang = (language or DEFAULT_LANG).lower()[:2]
-    fillers = FILLER_WORDS.get(lang, FILLER_WORDS[DEFAULT_LANG])
+    fillers, max_ngram = _build_filler_index(lang)
 
     words = []
     for segment in transcript.get('segments', []):
@@ -116,53 +186,80 @@ def analyze_silences(transcript, clip_start, clip_end, language=None):
             if word_info['end'] > clip_start and word_info['start'] < clip_end:
                 words.append({
                     'word': word_info['word'].strip(),
+                    'norm': _normalize_token(word_info['word']),
                     'start': max(0, word_info['start'] - clip_start),
                     'end': max(0, word_info['end'] - clip_start),
                 })
 
     if not words:
+        # Whisper sometimes returns segment-level timestamps without per-word
+        # timing (faster_whisper word_timestamps=False). Log so the operator
+        # knows why smart cut is a no-op.
+        if not any('words' in s for s in transcript.get('segments', [])):
+            logger.info("smartcut: transcript has no word-level timestamps; nothing to cut")
         return [], {"error": "No words found in clip range"}
 
     clip_duration = clip_end - clip_start
-    segments_to_keep = []
+
+    # Pre-compute filler skip mask using n-gram lookahead.
+    # word_skip[i] = True if `words[i]` is part of a filler phrase
+    word_skip = [False] * len(words)
+    i = 0
+    while i < len(words):
+        matched = False
+        # Try the longest n-gram first so "uh huh" beats "uh"
+        for n in range(min(max_ngram, len(words) - i), 0, -1):
+            phrase = " ".join(words[i + k]['norm'] for k in range(n))
+            if phrase in fillers:
+                for k in range(n):
+                    word_skip[i + k] = True
+                i += n
+                matched = True
+                break
+        if not matched:
+            i += 1
+
+    segments_to_keep: list[tuple[float, float]] = []
     removed_silences = 0
     removed_fillers = 0
-    silence_time_saved = 0.0
 
     current_start = 0.0
+    last_kept_end = 0.0
 
-    for i, word in enumerate(words):
-        is_filler = word['word'].lower().strip('.,!?') in fillers
-
-        if is_filler:
+    for idx, word in enumerate(words):
+        if word_skip[idx]:
             if current_start < word['start']:
                 segments_to_keep.append((current_start, word['start']))
+                last_kept_end = word['start']
             current_start = word['end']
             removed_fillers += 1
             continue
 
-        if i > 0:
-            prev_end = words[i - 1]['end']
+        if idx > 0:
+            prev_end = words[idx - 1]['end']
             gap = word['start'] - prev_end
             if gap > SILENCE_THRESHOLD:
                 segments_to_keep.append((current_start, prev_end + SILENCE_KEEP))
+                last_kept_end = prev_end + SILENCE_KEEP
                 current_start = max(0, word['start'] - 0.05)
                 removed_silences += 1
-                silence_time_saved += gap - SILENCE_KEEP
 
     if words:
-        segments_to_keep.append((current_start, min(clip_duration, words[-1]['end'] + 0.2)))
+        final_end = min(clip_duration, words[-1]['end'] + 0.2)
+        segments_to_keep.append((current_start, final_end))
 
     # Merge near-touching segments (gap < 0.1s)
-    merged = []
+    merged: list[tuple[float, float]] = []
     for seg in segments_to_keep:
+        if seg[1] <= seg[0]:
+            continue
         if merged and seg[0] - merged[-1][1] < 0.1:
             merged[-1] = (merged[-1][0], seg[1])
         else:
             merged.append(seg)
 
     new_duration = sum(end - start for start, end in merged)
-    stats = {
+    return merged, {
         "original_duration": round(clip_duration, 1),
         "new_duration": round(new_duration, 1),
         "time_saved": round(clip_duration - new_duration, 1),
@@ -170,7 +267,6 @@ def analyze_silences(transcript, clip_start, clip_end, language=None):
         "fillers_removed": removed_fillers,
         "segments": len(merged),
     }
-    return merged, stats
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +294,7 @@ def _auto_editor_version() -> Optional[str]:
     return version
 
 
-def _probe_video(clip_path: str) -> dict | None:
+def _probe_video(clip_path: str) -> Optional[dict]:
     """Probe a video file for fps, resolution, and audio sample rate.
     Cached per (path, size, mtime).
 
@@ -437,6 +533,7 @@ def _audio_polish_pass(input_path: str) -> tuple[str, float]:
     out_dur = _probe_duration(polished_path)
     saved = (in_dur - out_dur) if (in_dur and out_dur) else 0.0
 
+    # Discard if no real benefit
     if saved < 0.5:
         try:
             os.remove(polished_path)
@@ -444,11 +541,33 @@ def _audio_polish_pass(input_path: str) -> tuple[str, float]:
             pass
         return input_path, 0.0
 
+    # SAFETY: revert if polish removed an unreasonable fraction of the clip.
+    # Likely a music/ambient clip where quiet sections are intentional.
+    if in_dur > 0 and (saved / in_dur) > MAX_POLISH_CUT_RATIO:
+        logger.warning(
+            "audio polish reverted: cut %.1f%% of clip (cap %.0f%%) — likely music/ambient",
+            (saved / in_dur) * 100, MAX_POLISH_CUT_RATIO * 100,
+        )
+        try:
+            os.remove(polished_path)
+        except OSError:
+            pass
+        return input_path, 0.0
+
+    # Atomic-ish replace, falling back to copy+unlink for cross-FS mounts.
     try:
-        os.remove(input_path)
-    except OSError:
-        pass
-    os.rename(polished_path, input_path)
+        os.replace(polished_path, input_path)
+    except OSError as e:
+        logger.debug("os.replace failed (%s), falling back to shutil.move", e)
+        try:
+            shutil.move(polished_path, input_path)
+        except Exception as e2:
+            logger.warning("polish output swap failed: %s", e2)
+            try:
+                os.remove(polished_path)
+            except OSError:
+                pass
+            return input_path, 0.0
     return input_path, saved
 
 
@@ -474,6 +593,11 @@ def _probe_duration(path: str) -> float:
 def smart_cut(clip_path, transcript, clip_start, clip_end, language=None):
     """Generate a tighter version of `clip_path` by removing silences and fillers.
 
+    Concurrency-safe: a per-clip threading.Lock prevents two simultaneous
+    smart_cut calls on the same source from clobbering each other's output.
+    If a previous run already produced the expected `_smartcut.mp4` and the
+    source hasn't changed, we reuse it (cache hit).
+
     Pipeline:
       1. analyze_silences()  →  list of keep-segments (transcript-based)
       2. _render_with_auto_editor()  →  v3 timeline render (frame-accurate)
@@ -485,6 +609,11 @@ def smart_cut(clip_path, transcript, clip_start, clip_end, language=None):
         (output_path, stats)  on success
         (None, stats)         on no-op or failure
     """
+    with _clip_lock(clip_path):
+        return _smart_cut_inner(clip_path, transcript, clip_start, clip_end, language)
+
+
+def _smart_cut_inner(clip_path, transcript, clip_start, clip_end, language=None):
     segments, stats = analyze_silences(transcript, clip_start, clip_end, language)
 
     if not segments or len(segments) < 2:
@@ -495,6 +624,22 @@ def smart_cut(clip_path, transcript, clip_start, clip_end, language=None):
         return None, stats
 
     output_path = os.path.splitext(clip_path)[0] + "_smartcut.mp4"
+    # Cache hit: a previous run already produced the smartcut for this exact
+    # source mtime. Skip re-rendering — the work is identical.
+    try:
+        if (os.path.exists(output_path)
+                and os.path.exists(clip_path)
+                and os.path.getmtime(output_path) >= os.path.getmtime(clip_path)
+                and os.path.getsize(output_path) > 0):
+            stats["cached"] = True
+            stats["renderer"] = "cache"
+            stats["new_duration"] = round(_probe_duration(output_path), 1)
+            stats["time_saved"] = round(stats["original_duration"] - stats["new_duration"], 1)
+            logger.info("smartcut cache hit: reusing %s", os.path.basename(output_path))
+            return output_path, stats
+    except OSError:
+        pass
+
     if os.path.exists(output_path):
         os.remove(output_path)
 
