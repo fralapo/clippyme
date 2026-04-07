@@ -15,10 +15,7 @@ Pillow==12.2.0
 curl-cffi==0.14.0
 opencv-python==4.13.0.92
 psutil==7.0.0
-# auto-editor: used by smartcut.py as a frame-accurate single-pass renderer
-# (we feed it a hand-built v3 JSON timeline) plus an optional audio-loudness
-# polish pass that catches silences the transcript misses. The legacy v29.x
-# Python release on PyPI is fine — CLI is stable across the v29→v30 Nim
-# rewrite. If the binary is missing at runtime, smartcut falls back to the
-# original FFmpeg concat path automatically.
-auto-editor==29.3.1
+# Note: auto-editor is NOT a pip dep. It's installed as a Nim binary
+# (v30.x track) by the Dockerfile from GitHub releases, and kept up-to-date
+# at runtime by auto_editor_updater.py. The legacy v29.x PyPI release is
+# frozen and not used here.

@@ -101,8 +101,12 @@ async def lifespan(app: FastAPI):
     )
     worker_task = asyncio.create_task(process_queue())
     cleanup_task = asyncio.create_task(cleanup_jobs())
+    # Background auto-update for the auto-editor binary used by smartcut.py.
+    # Failures are non-fatal — smartcut has an FFmpeg fallback path.
+    from auto_editor_updater import background_updater_loop
+    ae_updater_task = asyncio.create_task(background_updater_loop())
     yield
-    # Cleanup (optional: cancel worker)
+    ae_updater_task.cancel()
 
 app = FastAPI(lifespan=lifespan)
 
