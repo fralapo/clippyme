@@ -25,6 +25,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from schemas import (
+    BatchRequest,
+    ComposeRequest,
+    ConfigUpdateRequest,
+    HookRequest,
+    ProcessRequest,
+    SubtitleRequest,
+)
+
 load_dotenv()
 
 # Constants
@@ -345,9 +354,6 @@ async def list_gemini_models(api_key: Optional[str] = Header(None, alias="X-Gemi
     except Exception as e:
         return {"models": [], "error": str(e)}
 
-class ProcessRequest(BaseModel):
-    url: str
-
 def enqueue_output(out, job_id):
     """Reads output from a subprocess and appends it to jobs logs."""
     try:
@@ -558,12 +564,6 @@ async def process_endpoint(
     return {"job_id": job_id, "status": "queued"}
 
 
-class BatchRequest(BaseModel):
-    urls: List[str] = Field(..., min_length=1, max_length=20)
-    instructions: Optional[str] = None
-    reframe_mode: Optional[str] = None
-
-
 @app.post("/api/batch")
 async def batch_process(req: BatchRequest, request: Request):
     """Submit multiple URLs for batch processing. Each URL becomes a separate job."""
@@ -705,9 +705,6 @@ async def get_config(request: Request):
             masked[k] = v
     return masked
 
-class ConfigUpdateRequest(BaseModel):
-    keys: dict
-
 @app.post("/api/config")
 async def update_config(req: ConfigUpdateRequest, request: Request):
     """Update and persist API keys."""
@@ -744,25 +741,6 @@ async def delete_cookies():
 from subtitles import generate_srt, burn_subtitles, generate_srt_from_video, generate_ass_karaoke, SUBTITLE_PRESETS
 from smartcut import smart_cut
 from hooks import add_hook_to_video
-
-class SubtitleRequest(BaseModel):
-    job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
-    clip_index: int
-    position: str = "bottom"
-    font_size: int = 16
-    font_name: str = "Verdana"
-    font_color: str = "#FFFFFF"
-    border_color: str = "#000000"
-    border_width: int = 2
-    bg_color: str = "#000000"
-    bg_opacity: float = 0.0
-    input_filename: Optional[str] = None
-    # Karaoke / viral subtitle options
-    preset: Optional[str] = None  # e.g. "classic_white", "hormozi_bold", etc.
-    karaoke_mode: Optional[str] = None  # "word_group" or "full_line"
-    words_per_group: int = 3
-    uppercase: bool = True
-    highlight_color: Optional[str] = None
 
 @app.post("/api/subtitle")
 async def add_subtitles(req: SubtitleRequest):
@@ -936,14 +914,6 @@ async def smart_cut_clip(job_id: str, clip_index: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class HookRequest(BaseModel):
-    job_id: str = Field(..., pattern=r"^[0-9a-fA-F-]{36}$")
-    clip_index: int
-    text: str
-    input_filename: Optional[str] = None
-    position: str = "top"
-    size: str = "M"
-
 @app.post("/api/hook")
 async def add_hook(req: HookRequest):
     if req.job_id not in jobs:
@@ -1071,11 +1041,6 @@ async def delete_history(job_id: str):
         del jobs[job_id]
     logger.info("Deleted job %s and all files", job_id)
     return {"success": True}
-
-class ComposeRequest(BaseModel):
-    toggles: dict = {}
-    hook_params: dict = {}
-    subtitle_params: dict = {}
 
 @app.post("/api/compose/{job_id}/{clip_index}")
 async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
