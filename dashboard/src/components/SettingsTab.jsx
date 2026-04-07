@@ -1,6 +1,7 @@
 import React from 'react';
-import { Github, Globe, Shield } from 'lucide-react';
+import { Github, Globe, Shield, Send } from 'lucide-react';
 import KeyInput from './KeyInput';
+import ZernioSettings from './ZernioSettings';
 
 /**
  * Settings tab: API key + credential management plus a few shortcut links.
@@ -34,6 +35,16 @@ export default function SettingsTab({ onKeySet, onHfTokenSet }) {
         </div>
         <div className="p-6">
           <KeyInput onKeySet={onKeySet} onHfTokenSet={onHfTokenSet} />
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-[#0f0f13] border border-white/5 overflow-hidden">
+        <div className="px-6 py-4 border-b border-white/5 flex items-center gap-2.5">
+          <Send size={16} className="text-accent-pink" />
+          <span className="text-sm font-medium text-zinc-300">Social Publishing (Zernio)</span>
+        </div>
+        <div className="p-6">
+          <ZernioSettings />
         </div>
       </div>
 

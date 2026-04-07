@@ -13,6 +13,10 @@ uvicorn==0.42.0
 python-multipart==0.0.22
 Pillow==12.2.0
 curl-cffi==0.14.0
+# Used by social_publisher.py for the Zernio REST client (presign upload,
+# scheduled-post lookup, post creation). Standard library `urllib` would
+# work but `requests` gives us session reuse + better error messages.
+requests>=2.32,<3
 opencv-python==4.13.0.92
 psutil==7.0.0
 # Note: auto-editor is NOT a pip dep. It's installed as a Nim binary

@@ -34,7 +34,9 @@ from schemas import (
     ConfigUpdateRequest,
     HookRequest,
     ProcessRequest,
+    PublishRequest,
     SubtitleRequest,
+    ZernioConfigRequest,
 )
 from security import (
     ALLOWED_ORIGINS,
@@ -48,6 +50,9 @@ from config_store import (
     VALID_CONFIG_KEYS,
     load_persistent_config,
     save_persistent_config,
+    load_zernio_config,
+    save_zernio_config,
+    zernio_config_status,
 )
 from job_artifacts import (
     relocate_root_job_artifacts,
@@ -668,6 +673,141 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
     except Exception as e:
         logger.error("Compose error for job %s clip %d: %s", job_id, clip_index, e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Publish (Zernio) endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/config/zernio")
+async def get_zernio_config(request: Request):
+    """Return persisted Zernio settings (api_key masked)."""
+    require_trusted_config_request(request)
+    return zernio_config_status()
+
+
+@app.post("/api/config/zernio")
+async def update_zernio_config(req: ZernioConfigRequest, request: Request):
+    """Update Zernio API key + accounts + timezone (merge semantics)."""
+    require_trusted_config_request(request)
+    ok = save_zernio_config(
+        api_key=req.api_key,
+        accounts=req.accounts,
+        timezone=req.timezone,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to save Zernio config")
+    return zernio_config_status()
+
+
+@app.get("/api/zernio/accounts")
+async def list_zernio_accounts(request: Request):
+    """Discovery: list connected social accounts via Zernio API."""
+    require_trusted_config_request(request)
+    cfg = load_zernio_config()
+    api_key = cfg.get("api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Zernio API key not configured")
+    from social_publisher import ZernioClient, ZernioError
+    try:
+        client = ZernioClient(api_key)
+        accounts = client.list_accounts()
+    except ZernioError as e:
+        raise HTTPException(status_code=502, detail=f"Zernio API error: {e}")
+    return {"accounts": accounts}
+
+
+@app.post("/api/publish/{job_id}/{clip_index}")
+async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishRequest):
+    """Upload a clip to Zernio and create a post on the requested platforms.
+
+    If req.compose_first is True, the clip is freshly composed (Smart Cut →
+    Hook → Subtitles) using req.toggles before upload — same flow as
+    /api/compose. Otherwise we look for an existing composed_clip_{i}.mp4
+    on disk and fall back to the base clip.
+    """
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    job_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.isdir(job_dir):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    cfg = load_zernio_config()
+    api_key = cfg.get("api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Zernio API key not configured")
+
+    metadata_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
+    if not metadata_files:
+        raise HTTPException(status_code=404, detail="No metadata found")
+    with open(metadata_files[0]) as f:
+        metadata = json.load(f)
+    clips = metadata.get("shorts", [])
+    if clip_index < 0 or clip_index >= len(clips):
+        raise HTTPException(status_code=400, detail="Invalid clip index")
+    clip_info = clips[clip_index]
+
+    # Resolve the source clip
+    base_filename = clip_info.get("video_url", "").split("/")[-1]
+    if not base_filename:
+        base_name = os.path.basename(metadata_files[0]).replace("_metadata.json", "")
+        base_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
+    base_clip = os.path.join(job_dir, base_filename)
+
+    upload_path = base_clip
+    composed_path = os.path.join(job_dir, f"composed_clip_{clip_index}.mp4")
+
+    if req.compose_first and req.toggles:
+        try:
+            composed_filename = await compose_layers(
+                base_clip=base_clip,
+                job_dir=job_dir,
+                clip_index=clip_index,
+                metadata=metadata,
+                clip_info=clip_info,
+                toggles=req.toggles,
+                hook_params=req.hook_params or {},
+                subtitle_params=req.subtitle_params or {},
+            )
+            upload_path = os.path.join(job_dir, composed_filename)
+        except Exception as e:
+            logger.error("publish: compose_layers failed for %s/%d: %s", job_id, clip_index, e)
+            raise HTTPException(status_code=500, detail=f"Compose before publish failed: {e}")
+    elif os.path.exists(composed_path):
+        upload_path = composed_path
+
+    if not os.path.exists(upload_path):
+        raise HTTPException(status_code=404, detail=f"Clip file not found: {upload_path}")
+
+    # Run the publish in a worker thread (presign + PUT + create are blocking)
+    from social_publisher import publish_clip, ZernioError
+    try:
+        result = await asyncio.to_thread(
+            publish_clip,
+            api_key=api_key,
+            clip_path=upload_path,
+            title=req.title or clip_info.get("title", "")[:100] or f"Clip {clip_index + 1}",
+            caption=req.caption or "",
+            platform_targets=req.platforms,
+            schedule_mode=req.schedule_mode,
+            scheduled_for=req.scheduled_for,
+            timezone=req.timezone or cfg.get("timezone") or "Europe/Rome",
+            tiktok_settings=req.tiktok_settings,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ZernioError as e:
+        logger.error("publish: Zernio error: %s (status=%s body=%s)",
+                     e, e.status_code, (e.body or "")[:200])
+        raise HTTPException(
+            status_code=502 if e.status_code is None else e.status_code,
+            detail=f"Zernio API error: {e}",
+        )
+    except Exception as e:
+        logger.exception("publish: unexpected error")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"success": True, **result}
 
 
 @app.post("/api/history/{job_id}/restore")

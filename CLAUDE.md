@@ -231,6 +231,34 @@ After `process_video_to_vertical()`:
 2. `normalize_audio(clip_path)` — two-pass EBU R128 loudnorm at -14 LUFS
 3. `select_cover_frame(clip_path)` — scores frames by face presence + sharpness (Laplacian) + exposure; saves `{clip}_cover.jpg`
 
+## Social Publishing (Zernio integration)
+
+Clips can be published/scheduled directly to TikTok, Instagram and YouTube from the ResultCard's **Publish** button. All posting goes through **Zernio** (https://zernio.com) as the unified multi-platform API.
+
+- **`social_publisher.py`**: the integration module.
+  - `ZernioClient` — minimal REST client (requests-based, no SDK dep). Methods: `list_accounts()`, `list_scheduled_posts()`, `presign_upload()`, `upload_to_presigned()`, `create_post()`. All raise `ZernioError` on HTTP failures.
+  - `SmartScheduler` — picks an optimal posting slot based on Italian-prime-time windows per weekday (tuned for TikTok / Reels / Shorts), with a configurable minimum gap between posts (default 90 min) and anti-collision against already-scheduled posts. Fully deterministic when the `rng` field is seeded — enables reproducible tests.
+  - `publish_clip()` — orchestrator. Three `schedule_mode` values: `"now"` (publishNow=true), `"auto"` (SmartScheduler picks the slot after fetching existing scheduled posts), `"manual"` (caller supplies `scheduled_for` ISO 8601). Does presign → PUT upload → create post. Returns `{post_id, status, scheduled_for, schedule_mode, platforms}`.
+
+- **Persistence**: Zernio credentials live in `data/config.json` under a dedicated `"zernio"` namespace (isolated from the core keys). `load_zernio_config()` / `save_zernio_config()` in `config_store.py`. The API key is never returned in full — only a `{prefix}...{suffix}` masked form via `zernio_config_status()`.
+
+- **Endpoints** (all require trusted-origin / private-network client):
+  - `GET /api/config/zernio` — masked status
+  - `POST /api/config/zernio` — merge-update (api_key, accounts, timezone)
+  - `GET /api/zernio/accounts` — discovery via Zernio's `/v1/accounts`
+  - `POST /api/publish/{job_id}/{clip_index}` — upload + schedule. Accepts `PublishRequest` with title, caption, platforms (list of `{platform, accountId, platformSpecificData?}`), `schedule_mode`, `scheduled_for?`, `timezone?`, `tiktok_settings?`. Optionally runs a fresh compose pass first (`compose_first=true` + toggles/hook_params/subtitle_params) so the uploaded clip reflects the user's Smart Cut / Hook / Subtitles toggles.
+
+- **Frontend** (`dashboard/src/components/`):
+  - `ZernioSettings.jsx` — API key input (masked), per-platform account ID fields for TikTok/Instagram/YouTube, "Discover from Zernio" button that hits `/api/zernio/accounts` and lets the user click-pick from discovered accounts, timezone field. Rendered inside SettingsTab.
+  - `PublishModal.jsx` — modal launched from the ResultCard's **Publish** button. Title + caption editor (prefilled from clip's `video_title_for_youtube_short` and `tiktok_caption`), platform toggles (disabled if no account ID saved), schedule mode picker (`Now` / `Auto slot` / `Pick time`), datetime-local input for manual mode. Automatically forwards the current ResultCard toggles (Smart Cut / Hook / Subtitles) via `compose_first` so published clips match what the user sees in the preview.
+  - `ResultCard.jsx` — has a new **Publish** button next to **Download**. Preserves the existing toggle/compose flow: if any toggle is active, the publish request asks the backend to re-compose before upload.
+
+- **Env vars**: `ZERNIO_BASE_URL` (default `https://zernio.com/api/v1`), `ZERNIO_DEFAULT_TZ` (default `Europe/Rome`), `ZERNIO_HTTP_TIMEOUT` (60s), `ZERNIO_UPLOAD_TIMEOUT` (600s), `ZERNIO_MIN_GAP_SECONDS` (5400 = 90 min for SmartScheduler).
+
+- **Tests**: `tests/test_social_publisher.py` covers SmartScheduler (slot selection, gap enforcement, past-time skipping, fallback when overcrowded), publish_clip input validation, and ZernioClient with a mocked `requests.Session` (no real network). 13 tests; the full suite including smartcut is 32 tests in ~0.1s.
+
+- **Security note**: the reference script shared by the user lives in `tmp/` and contains a real API key in plaintext. **`tmp/` is gitignored** via `.gitignore` — never commit anything from that directory.
+
 ## Refactor History (8-round autoresearch pipeline)
 
 `app.py` and `App.jsx` were systematically split into focused modules. **Do not re-merge them.** When adding new logic, prefer extending an existing module or creating a new one over growing the orchestrators.

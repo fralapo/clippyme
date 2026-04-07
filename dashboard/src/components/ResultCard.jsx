@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings } from 'lucide-react';
+import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send } from 'lucide-react';
+import PublishModal from './PublishModal';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
@@ -44,6 +45,7 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, presel
     });
 
     const [isComposing, setIsComposing] = useState(false);
+    const [showPublishModal, setShowPublishModal] = useState(false);
 
     const copyToClipboard = (text, field) => {
         navigator.clipboard.writeText(text);
@@ -237,24 +239,50 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, presel
                     </div>
                 </div>
 
-                {/* Download button - full width, shows composing state */}
-                <button
-                    onClick={handleDownload}
-                    disabled={isComposing}
-                    className="w-full py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 disabled:pointer-events-none"
-                >
-                    {isComposing ? (
-                        <>
-                            <Loader2 size={15} className="animate-spin" />
-                            Composing...
-                        </>
-                    ) : (
-                        <>
-                            <Download size={15} />
-                            Download
-                        </>
-                    )}
-                </button>
+                {/* Download + Publish row */}
+                <div className="flex gap-2">
+                    <button
+                        onClick={handleDownload}
+                        disabled={isComposing}
+                        className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 disabled:pointer-events-none"
+                    >
+                        {isComposing ? (
+                            <>
+                                <Loader2 size={15} className="animate-spin" />
+                                Composing...
+                            </>
+                        ) : (
+                            <>
+                                <Download size={15} />
+                                Download
+                            </>
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setShowPublishModal(true)}
+                        disabled={isComposing}
+                        title="Publish to TikTok / Instagram / YouTube via Zernio"
+                        className="px-4 py-2.5 rounded-lg bg-accent-pink/20 hover:bg-accent-pink/30 border border-accent-pink/30 text-accent-pink text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50"
+                    >
+                        <Send size={15} />
+                        Publish
+                    </button>
+                </div>
+
+                <PublishModal
+                    isOpen={showPublishModal}
+                    onClose={() => setShowPublishModal(false)}
+                    jobId={jobId}
+                    clipIndex={index}
+                    defaultTitle={clip.video_title_for_youtube_short || ''}
+                    defaultCaption={clip.tiktok_caption || ''}
+                    videoUrl={currentVideoUrl}
+                    composeBeforePublish={
+                        Object.values(toggles).some(Boolean)
+                            ? { toggles, hookParams, subtitleParams }
+                            : null
+                    }
+                />
 
                 {/* Copy-to-clipboard fields */}
                 <div className="space-y-2.5">
