@@ -15,7 +15,10 @@
 - **Hook Overlay** — Text overlay with emoji support, configurable position and size
 - **Pre-selection** — Choose options before processing (including classic subtitle font/color/position); applied automatically to all generated clips
 - **Mixed Batch Processing** — Submit up to 20 items mixing URLs and file uploads
+- **Clip Lifecycle** — Disable / delete / mark-as-published flags per clip (persisted in localStorage)
+- **Single Vertical Position Slider** — One unified slider for subtitle & hook placement (top→center→bottom) with safe-zone safeguards
 - **Social Publishing (Zernio)** — One-click publish/schedule to **TikTok, Instagram, YouTube** with smart auto-scheduling (Italian prime-time slots, anti-collision)
+- **Batch Publish** — "Publish all" button schedules every eligible clip in sequence with live per-clip status
 - **Self-updating auto-editor** — The Nim binary refreshes itself daily from GitHub Releases via a background updater
 
 ## Stack
@@ -135,11 +138,13 @@ hooks.py            Text overlay with Pillow + NotoColorEmoji
 dashboard/src/
   App.jsx                       Top-level orchestrator (~270 lines)
   hooks/                        useJobSubmission, useJobPolling, useHistory,
-                                useSessionPersistence, useBackendStatus
+                                useSessionPersistence, useBackendStatus,
+                                useClipStates (disable/delete/published flags)
   components/
     MediaInput.jsx              Single + Batch tabs (URL/file mix)
-    ResultCard.jsx              9:16 player + toggles + Download/Publish
+    ResultCard.jsx              9:16 player + toggles + Download/Publish/disable/delete
     PublishModal.jsx            Multi-platform publish modal (Zernio)
+    BatchPublishModal.jsx       Batch publish of all eligible clips
     ZernioSettings.jsx          API key + account discovery + per-platform IDs
     SubtitleModal.jsx           Karaoke/Classic editor with live preview
     HookModal.jsx               Hook text overlay editor
@@ -223,6 +228,8 @@ The pre-selection panel shows a visual 2×3 grid of preset previews (with the ac
 
 ## Publishing
 
+### Single clip
+
 Click **Publish** on any generated clip to open the publish modal:
 
 1. **Title + caption** prefilled from the clip's Gemini-generated metadata
@@ -232,6 +239,28 @@ Click **Publish** on any generated clip to open the publish modal:
    - **Auto slot** — `SmartScheduler` picks the next optimal slot today/tomorrow, avoiding collisions with already-scheduled posts (Italian prime-time windows tuned for TikTok/Reels/Shorts, 90-min minimum gap)
    - **Pick time** — datetime picker for explicit ISO 8601 scheduling
 4. If any toggle is active (Smart Cut / Hook / Subtitles), the backend re-composes the clip before upload so the published version reflects the preview
+
+After a successful publish the clip gets a green **"Published"** badge and the button label changes to **"Republish"**. The state is persisted in localStorage (`clippyme_clip_states_{jobId}`) so it survives page reloads.
+
+### Batch publish
+
+When at least one clip is publishable (not deleted, not disabled, not already published), a **"Publish all (N)"** button appears in the ResultsGrid header. Click it to open the `BatchPublishModal`:
+
+- Pick the platforms once and the schedule mode (`Auto slots` or `Now`)
+- The modal iterates through every eligible clip in sequence, showing live per-clip status (pending → ok / error)
+- Each clip is marked as published as soon as its `POST /api/publish` succeeds
+
+### Clip lifecycle
+
+Every clip card has an action toolbar in the top-left corner:
+
+- **Eye / Eye-off** — disable or enable the clip. Disabled clips are rendered at 50% opacity and excluded from the "Publish all" batch.
+- **Trash** — remove the clip from the grid (with confirm). The actual mp4 stays on disk; only the localStorage state is updated.
+- **Published pill** (top-right) — appears automatically after any successful publish.
+
+All three flags persist via `useClipStates(jobId)` → `localStorage` and survive page reloads.
+
+### auto-editor
 
 `auto-editor` is auto-updated daily from GitHub Releases via a background asyncio task in the FastAPI lifespan, with a `fcntl.flock` so two workers can't double-download.
 

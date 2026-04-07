@@ -30,11 +30,11 @@ ClippyMe is a self-hosted AI video platform that transforms long-form videos (Yo
   - **Failure modes**: GitHub unreachable / sanity check fails / arch unsupported → updater logs a warning and the existing binary keeps working. Smart Cut's FFmpeg fallback covers the worst case where no binary exists at all.
 - **Hooks** (`hooks.py`): Text overlay generation with Pillow. Supports emoji via NotoColorEmoji font (lazy-downloaded). Configurable position, size, and `offset_y`.
 - **Frontend** (`dashboard/`): React 18 + Vite 5 + Tailwind CSS v4 + shadcn/ui. `App.jsx` (~270 lines) is now a thin orchestrator — wiring + composition only. Toggle-based editing system with compose-on-download. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
-  - **Custom hooks** (`dashboard/src/hooks/`): `useJobSubmission` (process+batch handlers), `useJobPolling` (status polling loop), `useHistory` (history list state), `useSessionPersistence` (localStorage round-trip), `useBackendStatus` (health check).
+  - **Custom hooks** (`dashboard/src/hooks/`): `useJobSubmission` (process+batch handlers), `useJobPolling` (status polling loop), `useHistory` (history list state), `useSessionPersistence` (localStorage round-trip), `useBackendStatus` (health check), `useClipStates` (per-clip disable/delete/published flags persisted in localStorage per jobId).
   - **Logo**: Custom SVG with multi-color gradient design (`public/logo.svg`)
   - **Color palette**: Dark foundation (#050507, #0f0f13, #16161d, #1e1e28) + brand colors (blue #0a81d9 primary, pink-purple-indigo gradient accent, teal #02c5bf, cyan #00d9ff)
   - **Design tokens**: Glassmorphism with backdrop-blur, gradient borders, glow shadows, ambient noise texture, responsive single-column layout
-  - **Components** (`dashboard/src/components/`): `TopNav` (logo + tabs + status + cancel), `IdleHero`, `MediaInput` (**Single** tab with URL/Upload toggle + **Batch** tab with mixed URLs+files, pre-selection panel), `ResultCard` (9:16 video + toggles + compose download), `ResultsGrid`, `SubtitleModal`/`HookModal` (two-column settings/preview with offset slider), `ProcessingView` (merges processing + error + partial-results states), `ProcessingAnimation`, `PipelineSteps`, `LogsPanel`, `HistoryTab`, `SettingsTab`, `ApiKeyModal`, `ConfettiOverlay`, Landing page
+  - **Components** (`dashboard/src/components/`): `TopNav` (logo + tabs + status + cancel), `IdleHero`, `MediaInput` (**Single** tab with URL/Upload toggle + **Batch** tab with mixed URLs+files, pre-selection panel), `ResultCard` (9:16 video + toggles + compose download + disable/delete/publish + `Published` pill), `ResultsGrid` (grid + **`Publish all`** batch button), `SubtitleModal`/`HookModal` (two-column settings/preview with **unified vertical position slider**, `Apply` buttons), `PublishModal` (single-clip publish), `BatchPublishModal` (sequential multi-clip publish with per-clip live status), `ProcessingView` (merges processing + error + partial-results states), `ProcessingAnimation`, `PipelineSteps`, `LogsPanel`, `HistoryTab`, `SettingsTab` (with `ZernioSettings`), `ApiKeyModal`, `ConfettiOverlay`, Landing page
   - **shadcn/ui components** (`dashboard/src/components/ui/`): Button, Badge, Tooltip, Skeleton, Sonner (toasts), Progress, Dialog, Tabs — all using Radix UI primitives via `radix-ui` monorepo
 - **Fonts** (`fonts/`): Bundled TTF fonts for subtitle and hook rendering (Anton, Bangers, Montserrat-Black/ExtraBold, Poppins-Black/Medium, NotoSerif-Bold). Served via `/fonts` static mount.
 
@@ -199,6 +199,23 @@ Defined in `subtitles.py:SUBTITLE_PRESETS`. Six built-in presets:
 `classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`.
 
 When using ASS karaoke, the `ass` FFmpeg filter is used with `fontsdir` pointing to the `fonts/` directory. For SRT the `subtitles` filter is used with adjustable `MarginV` (default 350, modified by `offset_y`).
+
+**Safe zone defaults**: MarginL/R = **110 px** (≈10% of the 1080px vertical frame → TikTok/Reels safe zone so long captions don't get cropped). Preset fontsize defaults have been reduced (`80→62`, `85→66`, `75→58`, `70→54`) to avoid horizontal overflow.
+
+## Unified vertical position slider
+
+`HookModal.jsx` and `SubtitleModal.jsx` expose a **single `-50 → +50` slider** for vertical placement — no more separate top/center/bottom radio buttons. The slider value is the absolute Y position in percent (−50 = top, 0 = center, +50 = bottom) and the modal preview uses `top: {50 + offsetY}%` so what-you-see matches what-you-get.
+
+Under the hood the frontend always sends `position='center'` to the backend, which is aliased to `'middle'` in both `subtitles.py` and `hooks.py`. This keeps the existing ASS/ffmpeg pipeline untouched while giving the user a single continuous control.
+
+The apply buttons are labelled **"Apply Hook"** / **"Apply Karaoke Subtitles"** / **"Apply Classic Subtitles"** (not "Add" — the toggle switch outside already decides whether the layer is rendered at download time).
+
+## Clip lifecycle & batch publish
+
+- **`useClipStates(jobId)`** (`dashboard/src/hooks/useClipStates.js`) — per-clip state keyed by index, persisted in localStorage under `clippyme_clip_states_{jobId}`. Shape: `{ disabled, deleted, publishedAt }`. Survives page reloads without a backend round-trip.
+- **`ResultCard.jsx`** top-left action toolbar: Eye/Eye-off (disable → opacity 50%, excluded from batch publish), Trash (with confirm → hides from grid, file stays on disk). Top-right: green **"Published"** pill when `publishedAt` is set.
+- **`BatchPublishModal.jsx`** — launched from the `Publish all (N)` button in `ResultsGrid`. Iterates every clip where `!disabled && !deleted && !publishedAt` and calls `POST /api/publish/{jobId}/{index}` sequentially with live per-clip status (pending / ok / error). Supports `schedule_mode='auto'` (SmartScheduler picks a different slot per clip) and `'now'` (all immediate). Each successful publish marks the clip via `onUpdateClipState(index, { publishedAt: Date.now() })`.
+- **`PublishModal.jsx`** (single-clip path) now accepts an `onPublished` callback so the parent `ResultCard` can flip the clip's `publishedAt` flag without duplicating state.
 
 ## Reframing Modes (overhauled)
 
