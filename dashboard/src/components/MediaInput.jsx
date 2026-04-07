@@ -71,12 +71,14 @@ const SUBTITLE_PRESETS = [
 ];
 
 export default function MediaInput({ onProcess, onBatchProcess, isProcessing, cookiesConfigured }) {
-    const [mode, setMode] = useState('url'); // 'url' | 'file' | 'batch'
+    const [mode, setMode] = useState('single'); // 'single' | 'batch'
+    const [singleSource, setSingleSource] = useState('url'); // 'url' | 'file'
     const [url, setUrl] = useState('');
     const [file, setFile] = useState(null);
     const [instructions, setInstructions] = useState('');
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [batchUrls, setBatchUrls] = useState('');
+    const [batchFiles, setBatchFiles] = useState([]); // File[]
     const [isDragging, setIsDragging] = useState(false);
     const urlInputRef = useRef(null);
 
@@ -101,15 +103,17 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
             hook: preHook ? { position: preHookPosition, size: preHookSize } : null,
         };
         const opts = { instructions: instructions.trim() || undefined, preselections };
-        if (mode === 'batch' && batchUrls.trim()) {
+        if (mode === 'batch') {
             const urls = batchUrls.split('\n').map(u => u.trim()).filter(u => u);
-            if (urls.length > 0 && onBatchProcess) {
-                onBatchProcess({ urls, ...opts });
+            if ((urls.length > 0 || batchFiles.length > 0) && onBatchProcess) {
+                onBatchProcess({ urls, files: batchFiles, ...opts });
             }
-        } else if (mode === 'url' && url) {
-            onProcess({ type: 'url', payload: url, ...opts });
-        } else if (mode === 'file' && file) {
-            onProcess({ type: 'file', payload: file, ...opts });
+        } else if (mode === 'single') {
+            if (singleSource === 'url' && url) {
+                onProcess({ type: 'url', payload: url, ...opts });
+            } else if (singleSource === 'file' && file) {
+                onProcess({ type: 'file', payload: file, ...opts });
+            }
         }
     };
 
@@ -117,8 +121,12 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
         e.preventDefault();
         setIsDragging(false);
         if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            setFile(e.dataTransfer.files[0]);
-            setMode('file');
+            if (mode === 'batch') {
+                setBatchFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
+            } else {
+                setFile(e.dataTransfer.files[0]);
+                setSingleSource('file');
+            }
         }
     };
 
@@ -133,14 +141,17 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     };
 
     const batchUrlCount = batchUrls.split('\n').filter(u => u.trim()).length;
+    const batchTotal = batchUrlCount + batchFiles.length;
 
     const tabs = [
-        { id: 'url', label: 'URL', icon: Globe },
-        { id: 'file', label: 'Upload', icon: FileUp },
+        { id: 'single', label: 'Single', icon: FileVideo },
         { id: 'batch', label: 'Batch', icon: Layers },
     ];
 
-    const isDisabled = isProcessing || (mode === 'url' && !url) || (mode === 'file' && !file) || (mode === 'batch' && !batchUrls.trim());
+    const isDisabled = isProcessing
+        || (mode === 'single' && singleSource === 'url' && !url)
+        || (mode === 'single' && singleSource === 'file' && !file)
+        || (mode === 'batch' && batchTotal === 0);
 
     return (
         <div className="bg-[#0f0f13] border border-white/5 rounded-xl overflow-hidden animate-fade-in shadow-2xl shadow-black/40">
@@ -169,115 +180,196 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
             <div className="p-6">
                 <form onSubmit={handleSubmit} className="space-y-5">
 
-                    {/* URL Mode */}
-                    {mode === 'url' && (
+                    {/* Single Mode — URL or File via inner toggle */}
+                    {mode === 'single' && (
                         <div className="space-y-4">
-                            <div className="relative">
-                                <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600" aria-hidden="true">
-                                    <Youtube size={20} />
-                                </div>
-                                <label htmlFor="video-url" className="sr-only">Video URL</label>
-                                <input
-                                    id="video-url"
-                                    ref={urlInputRef}
-                                    type="url"
-                                    value={url}
-                                    onChange={(e) => setUrl(e.target.value)}
-                                    placeholder="Paste a YouTube or video URL..."
-                                    className="w-full bg-white/[0.03] border border-white/5 rounded-xl pl-12 pr-24 py-4 text-[15px] text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent transition-all"
-                                    required
-                                />
+                            {/* Source toggle */}
+                            <div className="inline-flex bg-white/[0.04] rounded-full p-1 gap-0.5">
                                 <button
                                     type="button"
-                                    onClick={handlePaste}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-medium transition-all"
+                                    onClick={() => setSingleSource('url')}
+                                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-semibold tracking-wide transition-all ${
+                                        singleSource === 'url'
+                                            ? 'bg-white/10 text-white shadow-sm'
+                                            : 'text-zinc-500 hover:text-zinc-300'
+                                    }`}
                                 >
-                                    <Clipboard size={13} />
-                                    Paste
+                                    <Globe size={12} />
+                                    URL
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setSingleSource('file')}
+                                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-semibold tracking-wide transition-all ${
+                                        singleSource === 'file'
+                                            ? 'bg-white/10 text-white shadow-sm'
+                                            : 'text-zinc-500 hover:text-zinc-300'
+                                    }`}
+                                >
+                                    <FileUp size={12} />
+                                    Upload
                                 </button>
                             </div>
 
-                            {/* Cookie warning banner */}
-                            {!cookiesConfigured && (
-                                <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
-                                    <span className="mt-0.5">⚠</span>
-                                    <span>Cookie non configurati. Senza cookie, il download potrebbe fallire o essere più lento. Configura i cookie nelle <strong>Impostazioni</strong>.</span>
-                                </div>
-                            )}
-                        </div>
-                    )}
+                            {singleSource === 'url' ? (
+                                <>
+                                    <div className="relative">
+                                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600" aria-hidden="true">
+                                            <Youtube size={20} />
+                                        </div>
+                                        <label htmlFor="video-url" className="sr-only">Video URL</label>
+                                        <input
+                                            id="video-url"
+                                            ref={urlInputRef}
+                                            type="url"
+                                            value={url}
+                                            onChange={(e) => setUrl(e.target.value)}
+                                            placeholder="Paste a YouTube or video URL..."
+                                            className="w-full bg-white/[0.03] border border-white/5 rounded-xl pl-12 pr-24 py-4 text-[15px] text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent transition-all"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handlePaste}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-medium transition-all"
+                                        >
+                                            <Clipboard size={13} />
+                                            Paste
+                                        </button>
+                                    </div>
 
-                    {/* Upload Mode */}
-                    {mode === 'file' && (
-                        <div
-                            className={`border-2 border-dashed rounded-xl p-10 text-center transition-all duration-300 relative group cursor-pointer ${
-                                file
-                                    ? 'border-emerald-500/30 bg-emerald-500/[0.03]'
-                                    : isDragging
-                                        ? 'border-blue-500/50 bg-blue-500/[0.04] shadow-[0_0_30px_-5px_rgba(59,130,246,0.15)]'
-                                        : 'border-white/[0.06] hover:border-white/[0.12] hover:shadow-[0_0_30px_-5px_rgba(255,255,255,0.03)] bg-white/[0.01]'
-                            }`}
-                            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-                            onDragLeave={() => setIsDragging(false)}
-                            onDrop={handleDrop}
-                        >
-                            {file ? (
-                                <div className="flex flex-col items-center gap-3">
-                                    <div className="w-14 h-14 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
-                                        <FileVideo size={28} />
-                                    </div>
-                                    <div className="text-center">
-                                        <p className="text-white font-semibold text-sm truncate max-w-[240px]">{file.name}</p>
-                                        <p className="text-[11px] text-zinc-500 mt-0.5">Ready to process</p>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setFile(null)}
-                                        aria-label="Remove selected file"
-                                        className="mt-1 p-2.5 hover:bg-white/10 rounded-lg transition-all text-zinc-500 hover:text-white min-h-[44px] min-w-[44px] flex items-center justify-center"
-                                    >
-                                        <X size={16} />
-                                    </button>
-                                </div>
+                                    {!cookiesConfigured && (
+                                        <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+                                            <span className="mt-0.5">⚠</span>
+                                            <span>Cookie non configurati. Senza cookie, il download potrebbe fallire o essere più lento. Configura i cookie nelle <strong>Impostazioni</strong>.</span>
+                                        </div>
+                                    )}
+                                </>
                             ) : (
-                                <label className="cursor-pointer flex flex-col items-center gap-3">
-                                    <input
-                                        type="file"
-                                        accept="video/*"
-                                        onChange={(e) => setFile(e.target.files?.[0] || null)}
-                                        className="hidden"
-                                    />
-                                    <div className="w-14 h-14 rounded-xl bg-white/[0.03] flex items-center justify-center text-zinc-500 group-hover:text-white group-hover:bg-white/[0.06] border border-white/5 transition-all duration-300">
-                                        <Upload size={26} />
-                                    </div>
-                                    <div className="text-center">
-                                        <p className="text-zinc-300 font-medium text-sm">Drop your video here or click to browse</p>
-                                        <p className="text-[11px] text-zinc-600 mt-1">MP4, MOV, WEBM up to 2GB</p>
-                                    </div>
-                                </label>
+                                <div
+                                    className={`border-2 border-dashed rounded-xl p-10 text-center transition-all duration-300 relative group cursor-pointer ${
+                                        file
+                                            ? 'border-emerald-500/30 bg-emerald-500/[0.03]'
+                                            : isDragging
+                                                ? 'border-blue-500/50 bg-blue-500/[0.04] shadow-[0_0_30px_-5px_rgba(59,130,246,0.15)]'
+                                                : 'border-white/[0.06] hover:border-white/[0.12] hover:shadow-[0_0_30px_-5px_rgba(255,255,255,0.03)] bg-white/[0.01]'
+                                    }`}
+                                    onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                                    onDragLeave={() => setIsDragging(false)}
+                                    onDrop={handleDrop}
+                                >
+                                    {file ? (
+                                        <div className="flex flex-col items-center gap-3">
+                                            <div className="w-14 h-14 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                                                <FileVideo size={28} />
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-white font-semibold text-sm truncate max-w-[240px]">{file.name}</p>
+                                                <p className="text-[11px] text-zinc-500 mt-0.5">Ready to process</p>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => setFile(null)}
+                                                aria-label="Remove selected file"
+                                                className="mt-1 p-2.5 hover:bg-white/10 rounded-lg transition-all text-zinc-500 hover:text-white min-h-[44px] min-w-[44px] flex items-center justify-center"
+                                            >
+                                                <X size={16} />
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <label className="cursor-pointer flex flex-col items-center gap-3">
+                                            <input
+                                                type="file"
+                                                accept="video/*"
+                                                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                                                className="hidden"
+                                            />
+                                            <div className="w-14 h-14 rounded-xl bg-white/[0.03] flex items-center justify-center text-zinc-500 group-hover:text-white group-hover:bg-white/[0.06] border border-white/5 transition-all duration-300">
+                                                <Upload size={26} />
+                                            </div>
+                                            <div className="text-center">
+                                                <p className="text-zinc-300 font-medium text-sm">Drop your video here or click to browse</p>
+                                                <p className="text-[11px] text-zinc-600 mt-1">MP4, MOV, WEBM up to 2GB</p>
+                                            </div>
+                                        </label>
+                                    )}
+                                </div>
                             )}
                         </div>
                     )}
 
-                    {/* Batch Mode */}
+                    {/* Batch Mode — URLs textarea + multi-file upload */}
                     {mode === 'batch' && (
-                        <div className="space-y-2.5">
-                            <label htmlFor="batch-urls" className="sr-only">Batch URLs (one per line)</label>
-                            <textarea
-                                id="batch-urls"
-                                value={batchUrls}
-                                onChange={(e) => setBatchUrls(e.target.value)}
-                                placeholder={"https://youtube.com/watch?v=abc\nhttps://youtube.com/watch?v=def\nhttps://youtube.com/watch?v=ghi"}
-                                className="w-full bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent resize-none h-36 font-mono leading-relaxed transition-all"
-                                maxLength={5000}
-                                aria-describedby="batch-url-hint"
-                            />
-                            <div className="flex items-center justify-between px-1">
-                                <p id="batch-url-hint" className="text-[11px] text-zinc-500">
-                                    One URL per line
+                        <div className="space-y-4">
+                            {/* URLs textarea */}
+                            <div className="space-y-2">
+                                <label htmlFor="batch-urls" className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                                    <Globe size={11} /> URLs
+                                </label>
+                                <textarea
+                                    id="batch-urls"
+                                    value={batchUrls}
+                                    onChange={(e) => setBatchUrls(e.target.value)}
+                                    placeholder={"https://youtube.com/watch?v=abc\nhttps://youtube.com/watch?v=def"}
+                                    className="w-full bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent resize-none h-24 font-mono leading-relaxed transition-all"
+                                    maxLength={5000}
+                                />
+                                <p className="text-[11px] text-zinc-500 px-1">One URL per line</p>
+                            </div>
+
+                            {/* File uploads */}
+                            <div className="space-y-2">
+                                <label className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
+                                    <FileUp size={11} /> Files
+                                </label>
+                                <div
+                                    className={`border-2 border-dashed rounded-xl p-5 text-center transition-all duration-300 cursor-pointer ${
+                                        isDragging
+                                            ? 'border-blue-500/50 bg-blue-500/[0.04]'
+                                            : 'border-white/[0.06] hover:border-white/[0.12] bg-white/[0.01]'
+                                    }`}
+                                    onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+                                    onDragLeave={() => setIsDragging(false)}
+                                    onDrop={handleDrop}
+                                >
+                                    <label className="cursor-pointer flex flex-col items-center gap-2">
+                                        <input
+                                            type="file"
+                                            accept="video/*"
+                                            multiple
+                                            onChange={(e) => setBatchFiles((prev) => [...prev, ...Array.from(e.target.files || [])])}
+                                            className="hidden"
+                                        />
+                                        <Upload size={20} className="text-zinc-500" />
+                                        <p className="text-xs text-zinc-400">Drop videos or click to add (multiple)</p>
+                                    </label>
+                                </div>
+
+                                {batchFiles.length > 0 && (
+                                    <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                        {batchFiles.map((f, i) => (
+                                            <li key={`${f.name}-${i}`} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/5">
+                                                <FileVideo size={13} className="text-emerald-400/70 flex-shrink-0" />
+                                                <span className="text-[11px] text-zinc-300 truncate flex-1">{f.name}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setBatchFiles((prev) => prev.filter((_, j) => j !== i))}
+                                                    className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-white transition-colors"
+                                                    aria-label={`Remove ${f.name}`}
+                                                >
+                                                    <X size={12} />
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+
+                            <div className="flex items-center justify-between px-1 pt-1 border-t border-white/5">
+                                <p className="text-[11px] text-zinc-500">
+                                    Total items
                                 </p>
-                                <p className={`text-[11px] font-medium ${batchUrlCount > 20 ? 'text-red-400' : batchUrlCount > 0 ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                                    {batchUrlCount} / 20 URLs
+                                <p className={`text-[11px] font-medium ${batchTotal > 20 ? 'text-red-400' : batchTotal > 0 ? 'text-zinc-300' : 'text-zinc-600'}`}>
+                                    {batchTotal} / 20
                                 </p>
                             </div>
                         </div>
