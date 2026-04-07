@@ -13,8 +13,8 @@ import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { pollJob } from './lib/api';
-import { SESSION_KEY } from './lib/constants';
 import { useHistory } from './hooks/useHistory';
+import { useSessionPersistence } from './hooks/useSessionPersistence';
 
 const TikTokIcon = ({ size = 16, className = "" }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" className={className}>
@@ -56,31 +56,7 @@ function App() {
     setIsSyncedPlaying(false);
   };
 
-  // Session auto-recovery disabled — History tab replaces this.
-  // Old sessions are cleaned up on mount.
-  useEffect(() => {
-    localStorage.removeItem(SESSION_KEY);
-  }, []);
-
-  useEffect(() => {
-    if (status === 'idle') {
-      localStorage.removeItem(SESSION_KEY);
-      return;
-    }
-    try {
-      const sessionData = {
-        jobId,
-        status,
-        results,
-        processingMedia: processingMedia?.type === 'url' ? processingMedia : null,
-        activeTab,
-        timestamp: Date.now()
-      };
-      localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
-    } catch (e) {
-      console.debug('Skipping session persistence', e);
-    }
-  }, [jobId, status, results, activeTab, processingMedia]);
+  useSessionPersistence({ status, jobId, results, processingMedia, activeTab });
 
   useEffect(() => {
     if (apiKey) localStorage.setItem('gemini_key', apiKey);
