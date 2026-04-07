@@ -1,6 +1,75 @@
 import React, { useState, useRef } from 'react';
 import { Youtube, Upload, FileVideo, X, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard, Settings } from 'lucide-react';
 
+// Visual previews for subtitle preset selection. Each entry mimics the
+// rendered look of the corresponding preset in subtitles.py:SUBTITLE_PRESETS.
+const SUBTITLE_PRESETS = [
+    {
+        id: 'classic_white',
+        label: 'Classic',
+        highlight: '#FFFF00',
+        previewStyle: {
+            color: '#FFFFFF',
+            fontFamily: 'Verdana, sans-serif',
+            textShadow: '-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
+        },
+    },
+    {
+        id: 'hormozi_bold',
+        label: 'Hormozi',
+        highlight: '#00FF00',
+        previewStyle: {
+            color: '#FFFFFF',
+            fontFamily: 'Impact, "Arial Black", sans-serif',
+            textShadow: '-1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000',
+            letterSpacing: '0.02em',
+        },
+    },
+    {
+        id: 'neon_glow',
+        label: 'Neon',
+        highlight: '#00FFFF',
+        previewStyle: {
+            color: '#FFFFFF',
+            fontFamily: '"Helvetica Neue", sans-serif',
+            textShadow: '0 0 4px #00FFFF, 0 0 8px #00FFFF',
+        },
+    },
+    {
+        id: 'mrbeast_box',
+        label: 'MrBeast',
+        highlight: '#FFFF00',
+        previewStyle: {
+            color: '#FFFFFF',
+            fontFamily: '"Arial Black", sans-serif',
+            backgroundColor: '#000',
+            padding: '2px 6px',
+            borderRadius: '3px',
+        },
+    },
+    {
+        id: 'minimal_clean',
+        label: 'Minimal',
+        highlight: '#FFFFFF',
+        previewStyle: {
+            color: '#FFFFFF',
+            fontFamily: '"Helvetica Neue", sans-serif',
+            fontWeight: 500,
+        },
+    },
+    {
+        id: 'fire_impact',
+        label: 'Fire',
+        highlight: '#FF4444',
+        previewStyle: {
+            color: '#FFFFFF',
+            fontFamily: 'Impact, sans-serif',
+            textShadow: '0 0 3px #FF4444, -1px -1px 0 #000, 1px 1px 0 #000',
+            letterSpacing: '0.03em',
+        },
+    },
+];
+
 export default function MediaInput({ onProcess, onBatchProcess, isProcessing, cookiesConfigured }) {
     const [mode, setMode] = useState('url'); // 'url' | 'file' | 'batch'
     const [url, setUrl] = useState('');
@@ -20,7 +89,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     const [showSubConfig, setShowSubConfig] = useState(false);
     const [preHook, setPreHook] = useState(false);
     const [preHookPosition, setPreHookPosition] = useState('top');
-    const [preHookSize, setPreHookSize] = useState('M');
+    const [preHookSize, setPreHookSize] = useState('S');
     const [showHookConfig, setShowHookConfig] = useState(false);
 
     const handleSubmit = (e) => {
@@ -329,20 +398,35 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
 
                                     {preSubtitles && showSubConfig && (
                                         <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-3 animate-fade-in">
-                                            {/* Preset */}
+                                            {/* Preset — visual grid */}
                                             <div className="space-y-1.5">
                                                 <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Preset</p>
-                                                <select
-                                                    value={preSubPreset}
-                                                    onChange={(e) => setPreSubPreset(e.target.value)}
-                                                    className="w-full bg-white/[0.04] border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-                                                >
-                                                    {['classic_white', 'hormozi_bold', 'neon_glow', 'mrbeast_box', 'minimal_clean', 'fire_impact'].map(p => (
-                                                        <option key={p} value={p} className="bg-[#1e1e28]">
-                                                            {p.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                                                        </option>
-                                                    ))}
-                                                </select>
+                                                <div className="grid grid-cols-2 gap-1.5">
+                                                    {SUBTITLE_PRESETS.map((p) => {
+                                                        const isActive = preSubPreset === p.id;
+                                                        return (
+                                                            <button
+                                                                key={p.id}
+                                                                type="button"
+                                                                onClick={() => setPreSubPreset(p.id)}
+                                                                className={`relative rounded-lg border overflow-hidden transition-all ${
+                                                                    isActive
+                                                                        ? 'border-accent-pink/50 bg-white/[0.06]'
+                                                                        : 'border-white/5 bg-white/[0.02] hover:border-white/10'
+                                                                }`}
+                                                            >
+                                                                <div className="px-2 py-2.5 flex items-center justify-center min-h-[44px]">
+                                                                    <span style={p.previewStyle} className="text-[11px] font-bold leading-tight text-center">
+                                                                        WORD <span style={{ color: p.highlight }}>UP</span>
+                                                                    </span>
+                                                                </div>
+                                                                <div className="px-1.5 py-1 bg-black/40 border-t border-white/5">
+                                                                    <p className={`text-[9px] uppercase tracking-wider truncate ${isActive ? 'text-accent-pink' : 'text-zinc-500'}`}>{p.label}</p>
+                                                                </div>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
                                             </div>
                                             {/* Mode */}
                                             <div className="space-y-1.5">

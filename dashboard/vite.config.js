@@ -35,6 +35,10 @@ export default defineConfig({
       '/video': {
         target: 'http://backend:8000',
         changeOrigin: true,
+      },
+      '/fonts': {
+        target: 'http://backend:8000',
+        changeOrigin: true,
       }
     }
   }

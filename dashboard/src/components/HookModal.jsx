@@ -5,7 +5,7 @@ import { X, Sparkles, Loader2 } from 'lucide-react';
 export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl, initialText }) {
     const [text, setText] = useState(initialText || '');
     const [position, setPosition] = useState('top');
-    const [size, setSize] = useState('M');
+    const [size, setSize] = useState('S');
     const [offsetY, setOffsetY] = useState(0);
 
     if (!isOpen) return null;

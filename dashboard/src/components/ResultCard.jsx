@@ -25,7 +25,7 @@ export default function ResultCard({ clip, index, jobId, onPlay, onPause, presel
     const [hookParams, setHookParams] = useState({
         text: clip.viral_hook_text || clip.hook_text || '',
         position: preselections?.hook?.position || 'top',
-        size: preselections?.hook?.size || 'M',
+        size: preselections?.hook?.size || 'S',
         offset_y: 0,
     });
 
