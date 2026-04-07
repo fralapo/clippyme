@@ -177,9 +177,27 @@ export default function PublishModal({
                 </div>
 
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-                    {!isConfigured && (
-                        <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
-                            ⚠ Zernio is not configured. Open <strong>Settings → Social Publishing</strong> and add your API key + account IDs.
+                    {zernioConfig === null && (
+                        <div className="px-4 py-3 rounded-lg bg-white/[0.02] border border-white/5 text-zinc-500 text-xs flex items-center gap-2">
+                            <Loader2 size={12} className="animate-spin" /> Checking Zernio configuration…
+                        </div>
+                    )}
+                    {zernioConfig !== null && !isConfigured && (
+                        <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-2">
+                            <p>
+                                ⚠ Zernio is not configured. You need an API key + at least one connected social account before you can publish.
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onClose();
+                                    // Tab change is owned by App; let the user navigate manually for now.
+                                    toast.info('Open Settings → Social Publishing to configure Zernio.');
+                                }}
+                                className="text-[11px] font-semibold text-amber-200 hover:text-white underline underline-offset-2"
+                            >
+                                Open Settings →
+                            </button>
                         </div>
                     )}
 

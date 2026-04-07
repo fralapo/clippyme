@@ -82,7 +82,6 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     const [isDragging, setIsDragging] = useState(false);
     const urlInputRef = useRef(null);
 
-    const [showPreselections, setShowPreselections] = useState(false);
     const [reframeMode, setReframeMode] = useState('auto');
     const [preSmartCut, setPreSmartCut] = useState(false);
     const [preSubtitles, setPreSubtitles] = useState(false);
@@ -388,7 +387,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                         </div>
                     )}
 
-                    {/* AI Instructions (collapsible) */}
+                    {/* Advanced options — unified drawer containing AI Instructions + Clip Options */}
                     <div className="rounded-xl border border-white/5 overflow-hidden">
                         <button
                             type="button"
@@ -396,41 +395,37 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                             className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors"
                         >
                             <span className="flex items-center gap-2 text-[11px] font-medium text-zinc-400">
-                                <Sparkles size={13} className="text-purple-400/70" />
-                                AI Instructions
+                                <Settings size={13} className="text-purple-400/70" />
+                                Advanced options
+                                {(instructions.trim() || preSmartCut || preSubtitles || preHook || reframeMode !== 'auto') && (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent-pink/20 text-accent-pink font-semibold uppercase tracking-wider">Custom</span>
+                                )}
                             </span>
                             <ChevronDown size={14} className={`text-zinc-600 transition-transform duration-200 ${showAdvanced ? 'rotate-180' : ''}`} />
                         </button>
                         {showAdvanced && (
-                            <div className="px-4 pb-4 space-y-2 animate-fade-in">
-                                <textarea
-                                    value={instructions}
-                                    onChange={(e) => setInstructions(e.target.value)}
-                                    placeholder="Guide the AI... e.g. 'Find the funniest moments' or 'Focus on the cooking parts, skip the intro'"
-                                    className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent resize-none h-20 transition-all"
-                                    maxLength={500}
-                                />
-                                <p className="text-[11px] text-zinc-600 px-0.5">Optional. Helps the AI find specific types of clips.</p>
-                            </div>
-                        )}
-                    </div>
+                            <div className="px-4 pb-4 space-y-5 animate-fade-in border-t border-white/5 pt-4">
+                                {/* Section: AI Instructions */}
+                                <div className="space-y-2">
+                                    <p className="flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                                        <Sparkles size={11} className="text-purple-400/70" />
+                                        AI Instructions
+                                    </p>
+                                    <textarea
+                                        value={instructions}
+                                        onChange={(e) => setInstructions(e.target.value)}
+                                        placeholder="Guide the AI... e.g. 'Find the funniest moments' or 'Focus on the cooking parts, skip the intro'"
+                                        className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent resize-none h-20 transition-all"
+                                        maxLength={500}
+                                    />
+                                    <p className="text-[11px] text-zinc-600 px-0.5">Optional. Helps the AI find specific types of clips.</p>
+                                </div>
 
-                    {/* Clip Options (collapsible) */}
-                    <div className="rounded-xl border border-white/5 overflow-hidden">
-                        <button
-                            type="button"
-                            onClick={() => setShowPreselections(!showPreselections)}
-                            className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors"
-                        >
-                            <span className="flex items-center gap-2 text-[11px] font-medium text-zinc-400">
-                                <Settings size={13} className="text-blue-400/70" />
-                                Clip Options
-                            </span>
-                            <ChevronDown size={14} className={`text-zinc-600 transition-transform duration-200 ${showPreselections ? 'rotate-180' : ''}`} />
-                        </button>
+                                {/* Divider */}
+                                <div className="border-t border-white/5" />
 
-                        {showPreselections && (
-                            <div className="px-4 pb-4 space-y-4 animate-fade-in">
+                                {/* Section: Clip Options */}
+                                <div className="space-y-4">
 
                                 {/* Reframe Mode */}
                                 <div className="space-y-2">
@@ -695,6 +690,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                     )}
                                 </div>
 
+                                </div>
                             </div>
                         )}
                     </div>
@@ -715,7 +711,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                 <span>Processing...</span>
                             </>
                         ) : (
-                            <span>{mode === 'batch' ? 'Launch Batch' : 'Start Processing'}</span>
+                            <span>{mode === 'batch' ? `Launch batch (${batchTotal})` : 'Generate viral clips'}</span>
                         )}
                     </button>
                 </form>

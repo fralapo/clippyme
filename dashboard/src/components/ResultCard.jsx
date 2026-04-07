@@ -203,12 +203,12 @@ export default function ResultCard({
         >
             {/* Video player - 9:16 container */}
             <div className="relative w-full aspect-[9/16] bg-black rounded-t-2xl overflow-hidden">
-                {/* Card action row (top-left) — disable/delete */}
-                <div className="absolute top-2 left-2 z-20 flex items-center gap-1.5">
+                {/* Card action row (top-left) — disable/delete grouped in a translucent pill */}
+                <div className="absolute top-2 left-2 z-20 flex items-center gap-1 bg-black/60 backdrop-blur-sm rounded-full p-1 border border-white/10 shadow-lg">
                     <button
                         onClick={() => onUpdateState({ disabled: !isDisabled })}
                         title={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
-                        className="p-1.5 rounded-lg bg-black/50 backdrop-blur-sm text-zinc-300 hover:text-white border border-white/10 transition-colors"
+                        className="p-1 rounded-full hover:bg-white/10 text-zinc-300 hover:text-white transition-colors"
                     >
                         {isDisabled ? <EyeOff size={12} /> : <Eye size={12} />}
                     </button>
@@ -222,10 +222,10 @@ export default function ResultCard({
                                     ? 'Reframe: Auto (face tracking) — click to disable'
                                     : 'Reframe: Disabled (4:3 + black bars) — click to enable auto'
                         }
-                        className={`p-1.5 rounded-lg backdrop-blur-sm border transition-colors ${
+                        className={`p-1 rounded-full transition-colors ${
                             reframeMode === 'auto'
-                                ? 'bg-accent-pink/25 text-accent-pink border-accent-pink/40 hover:bg-accent-pink/35'
-                                : 'bg-black/50 text-zinc-300 hover:text-white border-white/10'
+                                ? 'text-accent-pink hover:bg-accent-pink/20'
+                                : 'text-zinc-300 hover:text-white hover:bg-white/10'
                         } disabled:opacity-60 disabled:cursor-wait`}
                     >
                         {isReframing ? (
@@ -236,10 +236,11 @@ export default function ResultCard({
                             <Square size={12} />
                         )}
                     </button>
+                    <div className="w-px h-3 bg-white/10" />
                     <button
                         onClick={handleDelete}
                         title="Remove clip from grid"
-                        className="p-1.5 rounded-lg bg-black/50 backdrop-blur-sm text-red-400 hover:text-red-300 border border-red-500/20 transition-colors"
+                        className="p-1 rounded-full text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
                     >
                         <Trash2 size={12} />
                     </button>

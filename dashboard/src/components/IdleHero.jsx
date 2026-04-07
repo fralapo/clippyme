@@ -1,5 +1,5 @@
-import React from 'react';
-import { AlertCircle, Instagram, Key, Youtube } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertCircle, Cookie, Instagram, Key, X, Youtube } from 'lucide-react';
 import MediaInput from './MediaInput';
 
 const TikTokIcon = ({ size = 16, className = '' }) => (
@@ -31,6 +31,24 @@ export default function IdleHero({
   onProcess,
   onBatchProcess,
 }) {
+  const [dismissedWarnings, setDismissedWarnings] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('clippyme_dismissed_warnings') || '{}');
+    } catch {
+      return {};
+    }
+  });
+
+  const dismiss = (key) => {
+    const next = { ...dismissedWarnings, [key]: true };
+    setDismissedWarnings(next);
+    try {
+      localStorage.setItem('clippyme_dismissed_warnings', JSON.stringify(next));
+    } catch {
+      /* quota */
+    }
+  };
+
   return (
     <div className="flex flex-col items-center text-center space-y-8 pt-6 sm:pt-16">
       <div className="space-y-4">
@@ -65,21 +83,56 @@ export default function IdleHero({
         </button>
       )}
 
-      {!hfTokenSet && (
-        <button
-          onClick={onOpenSettings}
-          className="max-w-md w-full p-3 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center gap-3 text-left hover:bg-blue-500/15 transition-all"
-        >
+      {!hfTokenSet && !dismissedWarnings.hf && (
+        <div className="max-w-md w-full p-3 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-blue-500/20 flex items-center justify-center shrink-0">
             <AlertCircle size={18} className="text-blue-400" />
           </div>
-          <div>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="flex-1 text-left hover:opacity-80 transition-opacity"
+          >
             <p className="text-xs font-semibold text-blue-400">Hugging Face Token Not Set</p>
             <p className="text-[11px] text-zinc-400 mt-0.5">
-              Add a HF token in Settings for faster Whisper model downloads.
+              Optional. Speeds up Whisper model downloads.
             </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => dismiss('hf')}
+            aria-label="Dismiss"
+            className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {apiKey && !cookiesConfigured && !dismissedWarnings.cookies && (
+        <div className="max-w-md w-full p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0">
+            <Cookie size={18} className="text-amber-400" />
           </div>
-        </button>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="flex-1 text-left hover:opacity-80 transition-opacity"
+          >
+            <p className="text-xs font-semibold text-amber-400">YouTube Cookies Not Configured</p>
+            <p className="text-[11px] text-zinc-400 mt-0.5">
+              Recommended. Avoids rate limits on YouTube downloads.
+            </p>
+          </button>
+          <button
+            type="button"
+            onClick={() => dismiss('cookies')}
+            aria-label="Dismiss"
+            className="p-1.5 rounded-lg text-zinc-500 hover:text-white hover:bg-white/5 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
       )}
 
       <div className="max-w-xl w-full">

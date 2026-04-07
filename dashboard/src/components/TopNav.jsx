@@ -66,11 +66,19 @@ export default function TopNav({ activeTab, onTabChange, status, jobId, onReset,
                   ? 'bg-amber-400 animate-pulse'
                   : status === 'error'
                   ? 'bg-red-400'
-                  : 'bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.5)]'
+                  : status === 'complete'
+                  ? 'bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.5)]'
+                  : 'bg-zinc-500'
               }`}
             />
             <span className="hidden sm:inline font-medium">
-              {status === 'processing' ? 'Processing' : status === 'error' ? 'Error' : 'Ready'}
+              {status === 'processing'
+                ? 'Processing'
+                : status === 'error'
+                ? 'Error'
+                : status === 'complete'
+                ? 'Done'
+                : 'Idle'}
             </span>
           </div>
           {status === 'processing' && jobId && (
@@ -85,10 +93,11 @@ export default function TopNav({ activeTab, onTabChange, status, jobId, onReset,
           {status !== 'idle' && (
             <button
               onClick={onReset}
+              title="Start a fresh session (clear the current results)"
               className="flex items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20 transition-all"
             >
               <PlusCircle size={12} />
-              <span className="hidden sm:inline">New</span>
+              <span className="hidden sm:inline">Start over</span>
             </button>
           )}
         </div>
