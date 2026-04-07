@@ -1,14 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import {
-  Upload, FileVideo, Sparkles, Youtube, Instagram, Share2, LogOut,
-  ChevronDown, Check, Activity, LayoutDashboard, Settings, PlusCircle,
-  History, Menu, X, Terminal, Shield, LayoutGrid, Image, Globe,
-  RotateCcw, Cpu, Zap, Wand2, Github, AlertCircle, Key
-} from 'lucide-react';
-import KeyInput from './components/KeyInput';
-import MediaInput from './components/MediaInput';
-import ResultCard from './components/ResultCard';
-import ProcessingAnimation from './components/ProcessingAnimation';
 import HistoryTab from './components/HistoryTab';
 import SettingsTab from './components/SettingsTab';
 import PipelineSteps from './components/PipelineSteps';
@@ -18,6 +8,7 @@ import ResultsGrid from './components/ResultsGrid';
 import TopNav from './components/TopNav';
 import ApiKeyModal from './components/ApiKeyModal';
 import ProcessingView from './components/ProcessingView';
+import ConfettiOverlay from './components/ConfettiOverlay';
 import { getApiUrl } from './config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -201,24 +192,7 @@ function App() {
       {/* Background effects */}
       <div className="fixed inset-0 bg-gradient-mesh opacity-20 pointer-events-none -z-10" />
 
-      {/* Confetti celebration on completion */}
-      {showConfetti && (
-        <div className="fixed inset-0 z-[200] pointer-events-none overflow-hidden">
-          {Array.from({ length: 40 }).map((_, i) => (
-            <div
-              key={i}
-              className="absolute w-2 h-2 rounded-full animate-confetti"
-              style={{
-                left: `${Math.random() * 100}%`,
-                top: '-10px',
-                backgroundColor: ['#3b82f6', '#ec4899', '#a855f7', '#10b981', '#f59e0b'][i % 5],
-                animationDelay: `${Math.random() * 1}s`,
-                animationDuration: `${1.5 + Math.random() * 2}s`,
-              }}
-            />
-          ))}
-        </div>
-      )}
+      <ConfettiOverlay visible={showConfetti} />
 
       <TopNav
         activeTab={activeTab}
@@ -334,16 +308,6 @@ function App() {
         />
       )}
 
-      {/* Confetti animation styles */}
-      <style>{`
-        @keyframes confetti-fall {
-          0% { transform: translateY(0) rotate(0deg); opacity: 1; }
-          100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
-        }
-        .animate-confetti {
-          animation: confetti-fall 2s ease-out forwards;
-        }
-      `}</style>
       <Toaster position="bottom-right" richColors closeButton />
     </div>
   );
