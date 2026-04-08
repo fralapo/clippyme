@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Github, Globe, Shield, Send, Check, Circle } from 'lucide-react';
+import { Github, Shield, Send, Check, Circle } from 'lucide-react';
 import KeyInput from './KeyInput';
 import ZernioSettings from './ZernioSettings';
 import { getApiUrl } from '../config';
@@ -46,13 +46,6 @@ export default function SettingsTab({ onKeySet, onHfTokenSet, onCookiesChange })
   ];
   const missingRequired = setupItems.filter((s) => s.required && !s.ok).length;
   const totalOk = setupItems.filter((s) => s.ok).length;
-
-  const goToLanding = (e) => {
-    e.preventDefault();
-    localStorage.removeItem('clippyme_skip_landing');
-    window.location.hash = '';
-    window.location.reload();
-  };
 
   return (
     <div className="animate-fade-in space-y-8">
@@ -132,14 +125,6 @@ export default function SettingsTab({ onKeySet, onHfTokenSet, onCookiesChange })
       </div>
 
       <div className="flex items-center gap-4 pt-2">
-        <a
-          href="#"
-          onClick={goToLanding}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 text-sm text-zinc-400 hover:text-white transition-all"
-        >
-          <Globe size={16} />
-          Landing Page
-        </a>
         <a
           href="https://github.com/fralapo/clippyme"
           target="_blank"

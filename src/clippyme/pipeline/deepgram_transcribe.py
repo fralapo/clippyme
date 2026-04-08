@@ -366,7 +366,7 @@ def transcribe_with_deepgram(video_path: str) -> dict[str, Any]:
     headers = {
         "Authorization": f"Token {api_key}",
         "Content-Type": _guess_content_type(video_path),
-        "User-Agent": "ClippyMe/1.0 (+https://github.com/jacopolatrofa/clippyme)",
+        "User-Agent": "ClippyMe/1.0 (+https://github.com/fralapo/clippyme)",
     }
 
     size_mb = size_bytes / 1024 / 1024

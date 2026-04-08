@@ -9,7 +9,7 @@ const TikTokIcon = ({ size = 16, className = '' }) => (
 );
 
 /**
- * Landing / idle state of the Dashboard tab: hero headline, credential
+ * Idle state of the Dashboard tab: hero headline, credential
  * warnings, media input, and a platform footer.
  *
  * @param {{
