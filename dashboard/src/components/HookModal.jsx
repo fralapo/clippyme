@@ -1,15 +1,26 @@
-import React, { useState, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Sparkles, Loader2 } from 'lucide-react';
 import { scaleFontToPreview } from '@/lib/subtitlePresets';
 
-export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl, initialText }) {
-    const [text, setText] = useState(initialText || '');
-    const [size, setSize] = useState('S');
-    // Single vertical slider -50 (top) → +50 (bottom). Backend uses
-    // position='center' + offset_y so a single slider controls it all.
-    const [offsetY, setOffsetY] = useState(-35);  // default near top
+export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl, initialText, initialValues }) {
+    const iv = initialValues || {};
+    const [text, setText] = useState(iv.text || initialText || '');
+    const [size, setSize] = useState(iv.size || 'S');
+    // Single vertical slider -50 (top) → +50 (bottom).
+    const [offsetY, setOffsetY] = useState(iv.offset_y ?? -35);
     const position = 'center';
+
+    // Re-seed state when the modal opens so subsequent opens reflect the
+    // parent's latest hookParams (including pre-selection defaults).
+    useEffect(() => {
+        if (!isOpen) return;
+        const v = initialValues || {};
+        setText(v.text || initialText || '');
+        setSize(v.size || 'S');
+        setOffsetY(v.offset_y ?? -35);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     // Preview video ref — used to scale the hook font faithfully to the
     // backend `hooks.py:add_hook_to_video` math (font = video_width * 0.9 *

@@ -726,6 +726,7 @@ export default function ResultCard({
             <SubtitleModal
                 isOpen={showSubtitleModal}
                 onClose={() => setShowSubtitleModal(false)}
+                initialValues={subtitleParams}
                 onGenerate={(params) => {
                     // Normalize camelCase emitted by SubtitleModal into the
                     // snake_case shape the backend compose endpoint expects.
@@ -759,6 +760,7 @@ export default function ResultCard({
             <HookModal
                 isOpen={showHookModal}
                 onClose={() => setShowHookModal(false)}
+                initialValues={hookParams}
                 onGenerate={(params) => {
                     setHookParams(prev => ({ ...prev, ...params }));
                     setToggles(t => ({ ...t, hook: true }));

@@ -74,14 +74,14 @@ function NoticeBanner({ tone, icon: Icon, label, title, description, onClick, on
     </div>
   );
 
-  const baseClass = `relative max-w-md w-full p-4 rounded-[3px] border transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background`;
+  const baseClass = `relative w-full p-4 rounded-[3px] border transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background`;
   const baseStyle = {
     backgroundColor: palette.accentBg,
     borderColor: palette.accentBorder,
   };
 
   return (
-    <div className={`relative max-w-md w-full`}>
+    <div className="relative w-full">
       {onClick ? (
         <button
           type="button"
@@ -179,41 +179,6 @@ export default function IdleHero({
         </p>
       </div>
 
-      {!apiKey && (
-        <NoticeBanner
-          tone="critical"
-          icon={Key}
-          label="Required"
-          title="Gemini API key required"
-          description="Set your Gemini API key in Settings to start processing videos."
-          onClick={onOpenSettings}
-        />
-      )}
-
-      {!hfTokenSet && !dismissedWarnings.hf && (
-        <NoticeBanner
-          tone="info"
-          icon={AlertCircle}
-          label="Optional"
-          title="Hugging Face token not set"
-          description="Optional. Speeds up Whisper model downloads and removes rate limits."
-          onClick={onOpenSettings}
-          onDismiss={() => dismiss('hf')}
-        />
-      )}
-
-      {apiKey && !cookiesConfigured && !dismissedWarnings.cookies && (
-        <NoticeBanner
-          tone="warning"
-          icon={Cookie}
-          label="Recommended"
-          title="YouTube cookies not configured"
-          description="Recommended. Avoids rate limits and age-gate failures on YouTube downloads."
-          onClick={onOpenSettings}
-          onDismiss={() => dismiss('cookies')}
-        />
-      )}
-
       <div className="max-w-xl w-full">
         <MediaInput
           onProcess={onProcess}
@@ -222,6 +187,50 @@ export default function IdleHero({
           cookiesConfigured={cookiesConfigured}
         />
       </div>
+
+      {/* Setup notices — rendered below the create card so they don't
+          push the main workflow down the fold. Critical items still
+          visible, optional ones are dismissible. */}
+      {(!apiKey || (!hfTokenSet && !dismissedWarnings.hf) || (apiKey && !cookiesConfigured && !dismissedWarnings.cookies)) && (
+        <div className="w-full max-w-xl flex flex-col gap-3 pt-2">
+          <div className="flex items-center gap-3 type-label">
+            <span className="text-zinc-600">Setup</span>
+            <hr className="hairline flex-1" />
+          </div>
+          {!apiKey && (
+            <NoticeBanner
+              tone="critical"
+              icon={Key}
+              label="Required"
+              title="Gemini API key required"
+              description="Set your Gemini API key in Settings to start processing videos."
+              onClick={onOpenSettings}
+            />
+          )}
+          {apiKey && !cookiesConfigured && !dismissedWarnings.cookies && (
+            <NoticeBanner
+              tone="warning"
+              icon={Cookie}
+              label="Recommended"
+              title="YouTube cookies not configured"
+              description="Recommended. Avoids rate limits and age-gate failures on YouTube downloads."
+              onClick={onOpenSettings}
+              onDismiss={() => dismiss('cookies')}
+            />
+          )}
+          {!hfTokenSet && !dismissedWarnings.hf && (
+            <NoticeBanner
+              tone="info"
+              icon={AlertCircle}
+              label="Optional"
+              title="Hugging Face token not set"
+              description="Optional. Speeds up Whisper model downloads and removes rate limits."
+              onClick={onOpenSettings}
+              onDismiss={() => dismiss('hf')}
+            />
+          )}
+        </div>
+      )}
 
       <div className="flex items-center justify-center gap-5 pt-4 type-label">
         <span className="text-zinc-600">Ships&nbsp;to</span>

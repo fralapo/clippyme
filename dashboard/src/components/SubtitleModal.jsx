@@ -38,21 +38,28 @@ const HIGHLIGHT_COLORS = [
     { color: '#FFFFFF', label: 'White' },
 ];
 
-export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl }) {
-    const [mode, setMode] = useState('viral');
+export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessing, videoUrl, initialValues }) {
+    // Normalize initial values from the parent. The parent already stores
+    // subtitleParams in the backend snake_case shape (font, font_color,
+    // border_color, bg_opacity, …), so we map them 1:1 into the modal's
+    // local state when the modal opens.
+    const iv = initialValues || {};
+    const initialMode = iv.mode === 'classic' ? 'classic' : 'viral';
+
+    const [mode, setMode] = useState(initialMode);
     // Single vertical position slider: -50 = top, 0 = center, +50 = bottom.
-    // Backend always receives position='center' so MarginV is centered on the
-    // video and offset_y drives the actual Y in percentage of video height.
-    const [offsetY, setOffsetY] = useState(35);  // default slightly below center
+    const [offsetY, setOffsetY] = useState(iv.offset_y ?? 35);
     const position = 'center';
 
     // Viral mode state
-    const [selectedPreset, setSelectedPreset] = useState('classic_white');
-    const [karaokeMode, setKaraokeMode] = useState('word_group');
-    const [wordsPerGroup, setWordsPerGroup] = useState(3);
-    const [uppercase, setUppercase] = useState(true);
-    const [highlightColor, setHighlightColor] = useState('#FFFF00');
-    const [fontName, setFontName] = useState('Montserrat-Black');
+    const [selectedPreset, setSelectedPreset] = useState(iv.preset || 'classic_white');
+    const [karaokeMode, setKaraokeMode] = useState(iv.display_mode || 'word_group');
+    const [wordsPerGroup, setWordsPerGroup] = useState(iv.words_per_group ?? 3);
+    const [uppercase, setUppercase] = useState(iv.uppercase ?? true);
+    const [highlightColor, setHighlightColor] = useState(iv.highlight_color || '#FFFF00');
+    const [fontName, setFontName] = useState(
+        iv.mode === 'karaoke' || iv.mode === 'viral' ? (iv.font || 'Montserrat-Black') : 'Montserrat-Black'
+    );
 
     // Preview video ref + measured rendered height for faithful font scaling.
     // The backend burns subtitles at libass fontsize values (px @ 1920 video
@@ -82,17 +89,42 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
         };
     }, [isOpen]);
 
-    // Classic mode state
-    // Backend burn_subtitles reference: fontsize parameter @ 1920 px video,
-    // then multiplied by 0.85 inside the helper. We expose a slider that
-    // matches 1:1 what ends up on screen.
-    const [fontSize, setFontSize] = useState(42);
-    const [classicFontName, setClassicFontName] = useState('Verdana');
-    const [fontColor, setFontColor] = useState('#FFFFFF');
-    const [borderColor, setBorderColor] = useState('#000000');
-    const [borderWidth, setBorderWidth] = useState(2);
-    const [bgColor, setBgColor] = useState('#000000');
-    const [bgOpacity, setBgOpacity] = useState(0.0);
+    // Classic mode state — seeded from initialValues when the parent passes
+    // per-clip subtitleParams (from pre-selection or an earlier apply).
+    const [fontSize, setFontSize] = useState(iv.font_size ?? 42);
+    const [classicFontName, setClassicFontName] = useState(
+        iv.mode === 'classic' ? (iv.font || 'Verdana') : 'Verdana'
+    );
+    const [fontColor, setFontColor] = useState(iv.font_color || '#FFFFFF');
+    const [borderColor, setBorderColor] = useState(iv.border_color || '#000000');
+    const [borderWidth, setBorderWidth] = useState(iv.border_width ?? 2);
+    const [bgColor, setBgColor] = useState(iv.bg_color || '#000000');
+    const [bgOpacity, setBgOpacity] = useState(iv.bg_opacity ?? 0.0);
+
+    // Re-seed state every time the modal transitions closed → open so
+    // subsequent opens reflect the parent's latest subtitleParams.
+    useEffect(() => {
+        if (!isOpen) return;
+        const v = initialValues || {};
+        setMode(v.mode === 'classic' ? 'classic' : 'viral');
+        setOffsetY(v.offset_y ?? 35);
+        setSelectedPreset(v.preset || 'classic_white');
+        setKaraokeMode(v.display_mode || 'word_group');
+        setWordsPerGroup(v.words_per_group ?? 3);
+        setUppercase(v.uppercase ?? true);
+        setHighlightColor(v.highlight_color || '#FFFF00');
+        setFontName(
+            v.mode === 'karaoke' || v.mode === 'viral' ? (v.font || 'Montserrat-Black') : 'Montserrat-Black'
+        );
+        setFontSize(v.font_size ?? 42);
+        setClassicFontName(v.mode === 'classic' ? (v.font || 'Verdana') : 'Verdana');
+        setFontColor(v.font_color || '#FFFFFF');
+        setBorderColor(v.border_color || '#000000');
+        setBorderWidth(v.border_width ?? 2);
+        setBgColor(v.bg_color || '#000000');
+        setBgOpacity(v.bg_opacity ?? 0.0);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen]);
 
     useEffect(() => {
         Object.entries(FONT_FACE_MAP).forEach(([name, url]) => {
