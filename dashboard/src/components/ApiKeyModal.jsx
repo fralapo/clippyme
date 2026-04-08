@@ -68,7 +68,7 @@ export default function ApiKeyModal({ onClose, onGoToSettings }) {
             </button>
             <button
               onClick={onGoToSettings}
-              className="flex-1 px-4 py-3 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-sm font-semibold text-white hover:opacity-90 transition-all"
+              className="flex-1 px-4 h-11 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(14%_0.01_260)] text-[11px] font-mono uppercase tracking-[0.14em] font-semibold border border-[oklch(70%_0.18_62)] active:translate-y-px transition-all"
             >
               Go to Settings
             </button>

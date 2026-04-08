@@ -100,13 +100,13 @@ export default function ProcessingView({
   return (
     <div className="space-y-6">
       <div
-        className={`rounded-2xl p-[1px] ${
+        className={`rounded-[3px] p-[1px] ${
           status === 'processing'
-            ? 'bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 animate-pulse'
-            : 'bg-red-500/50'
+            ? 'bg-[oklch(74%_0.175_62)]/60 animate-pulse'
+            : 'bg-[oklch(62%_0.22_25)]/50'
         }`}
       >
-        <div className="rounded-2xl bg-[#0f0f13] p-6 space-y-6">
+        <div className="rounded-[3px] bg-[oklch(14%_0.009_260)] p-6 space-y-6">
           {status === 'processing' && <PipelineSteps currentStep={currentStep} />}
 
           {processingMedia && (
@@ -132,9 +132,9 @@ export default function ProcessingView({
                 {processingMedia && (
                   <button
                     onClick={() => onRetry(processingMedia)}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white text-sm font-semibold hover:opacity-90 transition-all"
+                    className="flex items-center gap-2 px-5 h-11 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(14%_0.01_260)] text-[11px] font-mono uppercase tracking-[0.16em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_1px_0_0_oklch(100%_0_0/0.3)_inset] active:translate-y-px transition-all"
                   >
-                    <RotateCcw size={14} /> Retry
+                    <RotateCcw size={13} strokeWidth={2.2} /> Retry
                   </button>
                 )}
                 <button

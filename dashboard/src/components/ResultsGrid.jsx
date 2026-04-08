@@ -100,75 +100,99 @@ export default function ResultsGrid({
   });
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-              <Sparkles size={22} className="text-purple-400" />
-              {clipCount > 0
-                ? `${clipCount} viral clip${clipCount === 1 ? '' : 's'} ready`
-                : 'Your clips'}
+    <div className="space-y-8">
+      {/* Editorial masthead — Fraunces serif headline + mono deck line */}
+      <header className="space-y-4">
+        <div className="flex items-baseline gap-3 text-zinc-600">
+          <span className="type-label">§ Reel</span>
+          <hr className="hairline flex-1" />
+          <span className="type-label tabular-nums">
+            {String(clipCount).padStart(2, '0')}&nbsp;clips
+          </span>
+        </div>
+
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-5">
+          <div className="space-y-3">
+            <h2 className="type-display text-[clamp(2.25rem,5vw,3.75rem)] text-white flex items-baseline gap-4">
+              <Sparkles size={28} className="text-[oklch(74%_0.175_62)] shrink-0 self-center" strokeWidth={1.4} />
+              <span>
+                {clipCount > 0 ? (
+                  <>
+                    <em className="not-italic text-white">Your cut,</em>{' '}
+                    <span className="italic text-zinc-400 font-light">ready to ship</span>
+                  </>
+                ) : (
+                  <span className="italic text-zinc-400 font-light">Waiting for rushes…</span>
+                )}
+              </span>
             </h2>
             {clipCount > 0 ? (
-              <p className="text-zinc-500 text-xs mt-1.5 flex items-center gap-2 flex-wrap">
-                <span>Sorted by {SORT_OPTIONS.find((s) => s.id === sortBy)?.label.toLowerCase()}</span>
+              <div className="flex items-center gap-3 flex-wrap text-[11px] font-mono uppercase tracking-[0.14em] text-zinc-500">
+                <span>
+                  <span className="text-zinc-600">Sort&nbsp;/&nbsp;</span>
+                  {SORT_OPTIONS.find((s) => s.id === sortBy)?.label}
+                </span>
                 {stats.published > 0 && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300">
-                    <Check size={9} /> {stats.published} published
+                  <span className="inline-flex items-center gap-1.5 px-2 py-1 border border-[oklch(68%_0.18_145)]/30 text-[oklch(78%_0.17_145)] bg-[oklch(68%_0.18_145)]/[0.06]">
+                    <Check size={10} strokeWidth={2.4} /> {String(stats.published).padStart(2, '0')}&nbsp;published
                   </span>
                 )}
                 {stats.disabled > 0 && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/[0.04] text-zinc-500">
-                    <EyeOff size={9} /> {stats.disabled} disabled
+                  <span className="inline-flex items-center gap-1.5 px-2 py-1 border border-white/10 text-zinc-500 bg-white/[0.02]">
+                    <EyeOff size={10} strokeWidth={2.2} /> {String(stats.disabled).padStart(2, '0')}&nbsp;muted
                   </span>
                 )}
                 {results?.cost_analysis && (
                   <span
-                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/[0.04] font-mono text-emerald-400/80"
+                    className="inline-flex items-center gap-1.5 px-2 py-1 border border-white/10 text-zinc-400 bg-white/[0.02] tabular-nums"
                     title={`Tokens: ${results.cost_analysis.input_tokens}i / ${results.cost_analysis.output_tokens}o`}
                   >
-                    ${results.cost_analysis.total_cost.toFixed(4)} Gemini
+                    ${results.cost_analysis.total_cost.toFixed(4)}&nbsp;Gemini
                   </span>
                 )}
-              </p>
+              </div>
             ) : (
-              <p className="text-zinc-500 text-sm mt-1">AI-curated high-engagement segments</p>
+              <p className="type-label !normal-case !tracking-normal !text-sm !font-sans text-zinc-500 max-w-lg">
+                High-engagement segments, curated by Gemini against a 5-axis rubric.
+              </p>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+
+          {/* Control rail */}
+          <div className="flex items-stretch gap-2 flex-wrap">
             {clipCount > 1 && (
               <div className="relative">
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value)}
-                  className="appearance-none bg-white/[0.04] border border-white/5 text-zinc-300 text-xs font-medium px-3 py-2 pr-8 rounded-xl hover:bg-white/[0.06] cursor-pointer focus:outline-none focus:ring-2 focus:ring-accent-pink/30"
+                  className="appearance-none bg-white/[0.02] border border-white/10 hover:border-white/25 text-zinc-200 text-[11px] font-mono uppercase tracking-[0.12em] px-3.5 pr-9 h-11 rounded-[3px] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
                   title="Sort clips"
                 >
                   {SORT_OPTIONS.map((opt) => (
-                    <option key={opt.id} value={opt.id} className="bg-[#0f0f13]">
+                    <option key={opt.id} value={opt.id} className="bg-background text-white">
                       {opt.label}
                     </option>
                   ))}
                 </select>
-                <ArrowUpDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                <ArrowUpDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
               </div>
             )}
             {publishableClips.length > 0 && (
               <button
                 onClick={() => setBatchPublishOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-pink to-accent-purple text-white text-xs font-semibold shadow-glow-pink hover:opacity-90 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f13] min-h-[44px]"
+                className="group flex items-center gap-2.5 h-11 px-4 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(12%_0.01_260)] text-[11px] font-mono uppercase tracking-[0.16em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_1px_0_0_oklch(100%_0_0/0.3)_inset,0_10px_24px_-14px_oklch(74%_0.175_62/0.55)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 title={`Publish ${publishableClips.length} active clips (ignores disabled and already-published)`}
               >
-                <Send size={13} />
-                {publishableClips.length === 1
-                  ? 'Publish 1 selected clip'
-                  : `Publish ${publishableClips.length} selected clips`}
+                <Send size={13} strokeWidth={2.2} />
+                Ship&nbsp;
+                <span className="tabular-nums">
+                  {String(publishableClips.length).padStart(2, '0')}
+                </span>
               </button>
             )}
           </div>
         </div>
-      </div>
+      </header>
 
       {processingMedia && (
         <div className="rounded-2xl bg-[#0f0f13] border border-white/5 p-4">
@@ -188,9 +212,9 @@ export default function ResultsGrid({
         // Tiers inspired by the NotebookLM brainstorm recommendation.
         (() => {
           const tiers = [
-            { id: 'top', label: 'Top viral', hint: 'Score 80+ \u2014 publish these first', min: 80, max: 101 },
-            { id: 'mid', label: 'Strong candidates', hint: 'Score 50\u201379 \u2014 improve with Smart Cut and hooks', min: 50, max: 80 },
-            { id: 'low', label: 'Honorable mentions', hint: 'Score <50 \u2014 consider skipping', min: 0, max: 50 },
+            { id: 'top', numeral: 'I', label: 'Headliners', hint: 'Score 80+ \u2014 ship these first', min: 80, max: 101 },
+            { id: 'mid', numeral: 'II', label: 'Strong candidates', hint: 'Score 50\u201379 \u2014 improve with Smart Cut + hooks', min: 50, max: 80 },
+            { id: 'low', numeral: 'III', label: 'B-reel', hint: 'Score <50 \u2014 consider skipping', min: 0, max: 50 },
           ];
           const groups = tiers
             .map((tier) => ({
@@ -203,36 +227,59 @@ export default function ResultsGrid({
             .filter((g) => g.entries.length > 0);
 
           return (
-            <div className="space-y-8">
+            <div className="space-y-12">
               {groups.map((group) => (
                 <section key={group.id} aria-labelledby={`tier-${group.id}`}>
-                  <header className="flex items-baseline justify-between mb-3 pb-2 border-b border-white/5">
-                    <h3
-                      id={`tier-${group.id}`}
-                      className="text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-400"
-                    >
-                      {group.label}
-                      <span className="ml-2 text-zinc-600 font-normal normal-case tracking-normal">
-                        ({group.entries.length})
-                      </span>
-                    </h3>
-                    <p className="text-[10px] text-zinc-600 hidden sm:block">{group.hint}</p>
+                  {/* Editorial chapter header — Roman numeral + Fraunces italic +
+                      mono deckline. Full-width rule underneath. */}
+                  <header className="mb-6">
+                    <div className="flex items-baseline justify-between gap-4 mb-2">
+                      <div className="flex items-baseline gap-4 min-w-0">
+                        <span
+                          className="type-display text-[34px] sm:text-[42px] text-[oklch(74%_0.175_62)] leading-none shrink-0"
+                          aria-hidden
+                        >
+                          {group.numeral}.
+                        </span>
+                        <h3
+                          id={`tier-${group.id}`}
+                          className="type-display text-[22px] sm:text-[26px] text-white font-normal italic truncate"
+                        >
+                          {group.label}
+                          <span className="ml-3 not-italic type-mono text-[11px] align-middle text-zinc-600 tabular-nums">
+                            {String(group.entries.length).padStart(2, '0')}
+                          </span>
+                        </h3>
+                      </div>
+                      <p className="type-label hidden md:block shrink-0 text-right max-w-xs">
+                        {group.hint}
+                      </p>
+                    </div>
+                    <div
+                      aria-hidden
+                      className="h-px bg-gradient-to-r from-[oklch(74%_0.175_62)]/60 via-white/10 to-transparent"
+                    />
                   </header>
-                  <div className="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {group.entries.map(({ clip, originalIndex, rank }) => (
-                      <ResultCard
+                  <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+                    {group.entries.map(({ clip, originalIndex, rank }, i) => (
+                      <div
                         key={originalIndex}
-                        clip={clip}
-                        index={originalIndex}
-                        rank={rank}
-                        totalClips={visibleClips.length}
-                        jobId={jobId}
-                        preselections={preselections}
-                        onPlay={(time) => onClipPlay(time)}
-                        onPause={onClipPause}
-                        clipState={clipStates[originalIndex] || {}}
-                        onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
-                      />
+                        className="animate-rise-in"
+                        style={{ animationDelay: `${i * 60}ms` }}
+                      >
+                        <ResultCard
+                          clip={clip}
+                          index={originalIndex}
+                          rank={rank}
+                          totalClips={visibleClips.length}
+                          jobId={jobId}
+                          preselections={preselections}
+                          onPlay={(time) => onClipPlay(time)}
+                          onPause={onClipPause}
+                          clipState={clipStates[originalIndex] || {}}
+                          onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
+                        />
+                      </div>
                     ))}
                   </div>
                 </section>
@@ -242,21 +289,26 @@ export default function ResultsGrid({
         })()
       ) : (
         clipCount > 0 && (
-          <div className="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-            {visibleClips.map(({ clip, originalIndex, rank }) => (
-              <ResultCard
+          <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+            {visibleClips.map(({ clip, originalIndex, rank }, i) => (
+              <div
                 key={originalIndex}
-                clip={clip}
-                index={originalIndex}
-                rank={rank}
-                totalClips={visibleClips.length}
-                jobId={jobId}
-                preselections={preselections}
-                onPlay={(time) => onClipPlay(time)}
-                onPause={onClipPause}
-                clipState={clipStates[originalIndex] || {}}
-                onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
-              />
+                className="animate-rise-in"
+                style={{ animationDelay: `${i * 60}ms` }}
+              >
+                <ResultCard
+                  clip={clip}
+                  index={originalIndex}
+                  rank={rank}
+                  totalClips={visibleClips.length}
+                  jobId={jobId}
+                  preselections={preselections}
+                  onPlay={(time) => onClipPlay(time)}
+                  onPause={onClipPause}
+                  clipState={clipStates[originalIndex] || {}}
+                  onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
+                />
+              </div>
             ))}
           </div>
         )
@@ -281,9 +333,9 @@ export default function ResultsGrid({
           {processingMedia && (
             <button
               onClick={() => onRetry(processingMedia)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white text-xs font-semibold hover:opacity-90 transition-all shrink-0 ml-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/60 min-h-[40px]"
+              className="flex items-center gap-2 px-4 h-10 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(14%_0.01_260)] text-[11px] font-mono uppercase tracking-[0.16em] font-semibold border border-[oklch(70%_0.18_62)] transition-all shrink-0 ml-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60"
             >
-              <RotateCcw size={12} /> Retry
+              <RotateCcw size={12} strokeWidth={2.2} /> Retry
             </button>
           )}
         </div>

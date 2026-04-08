@@ -3,9 +3,9 @@ import { History, PlusCircle, Settings, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 const TABS = [
-  { id: 'dashboard', label: 'Create', icon: PlusCircle },
-  { id: 'history', label: 'History', icon: History },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'dashboard', label: 'Create', numeral: 'I', icon: PlusCircle },
+  { id: 'history', label: 'History', numeral: 'II', icon: History },
+  { id: 'settings', label: 'Settings', numeral: 'III', icon: Settings },
 ];
 
 /**
@@ -32,61 +32,80 @@ export default function TopNav({ activeTab, onTabChange, status, jobId, onReset,
   };
 
   return (
-    <nav className="sticky top-0 z-50 w-full backdrop-blur-xl bg-[#050507]/80 border-b border-white/5">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-        <div className="flex items-center gap-2.5 shrink-0">
-          <img src="/logo.svg" alt="ClippyMe" height={32} className="h-8 w-8" />
-          <span className="text-lg font-bold text-white tracking-tight hidden sm:block">
-            ClippyMe
-          </span>
-        </div>
-
-        <div className="flex items-center gap-1 bg-white/5 rounded-full p-1">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => onTabChange(tab.id)}
-              className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
-                activeTab === tab.id
-                  ? 'bg-white/10 text-white shadow-sm'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
+    <nav className="sticky top-0 z-50 w-full backdrop-blur-xl bg-background/85 border-b border-white/[0.07]">
+      <div className="max-w-6xl mx-auto px-5 sm:px-8 h-16 flex items-center justify-between gap-6">
+        {/* Logotype — Fraunces display italic paired with a mono subtitle */}
+        <div className="flex items-center gap-3 shrink-0">
+          <img src="/logo.svg" alt="" aria-hidden height={30} className="h-[30px] w-[30px] opacity-90" />
+          <div className="hidden sm:flex items-baseline gap-2.5">
+            <span
+              className="type-display text-[22px] text-white"
+              style={{ fontStyle: 'italic', fontWeight: 400 }}
             >
-              <tab.icon size={15} />
-              <span className="hidden sm:inline">{tab.label}</span>
-            </button>
-          ))}
+              ClippyMe
+            </span>
+            <span className="type-label hidden md:inline">Cutting&nbsp;Room</span>
+          </div>
         </div>
 
+        {/* Tab strip — mono labels, numbered I / II / III like chapters */}
+        <div
+          className="flex items-center gap-0 border border-white/[0.08] rounded-[3px] p-0.5 bg-white/[0.02]"
+          role="tablist"
+          aria-label="Primary"
+        >
+          {TABS.map((tab) => {
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => onTabChange(tab.id)}
+                role="tab"
+                aria-selected={active}
+                className={`relative flex items-center gap-2 px-3.5 sm:px-4 h-9 text-[11px] font-mono uppercase tracking-[0.14em] transition-colors duration-150 ${
+                  active
+                    ? 'text-background bg-[oklch(74%_0.175_62)]'
+                    : 'text-zinc-500 hover:text-zinc-200'
+                }`}
+              >
+                <span className={`type-mono text-[10px] ${active ? 'text-background/75' : 'text-zinc-600'}`}>
+                  {tab.numeral}
+                </span>
+                <tab.icon size={13} strokeWidth={active ? 2.2 : 1.8} />
+                <span className="hidden sm:inline">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Status block — looks like an editor's take-log */}
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
-            <div
-              className={`w-2 h-2 rounded-full ${
+          <div
+            className="hidden md:flex items-center gap-2.5 px-3 h-9 border border-white/[0.08] rounded-[3px] bg-white/[0.02]"
+            aria-live="polite"
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
                 status === 'processing'
-                  ? 'bg-amber-400 animate-pulse'
+                  ? 'bg-[oklch(74%_0.175_62)] animate-pulse shadow-[0_0_6px_oklch(74%_0.175_62/0.8)]'
                   : status === 'error'
-                  ? 'bg-red-400'
+                  ? 'bg-[oklch(62%_0.22_25)]'
                   : status === 'complete'
-                  ? 'bg-emerald-400 shadow-[0_0_6px_rgba(16,185,129,0.5)]'
-                  : 'bg-zinc-500'
+                  ? 'bg-[oklch(68%_0.18_145)] shadow-[0_0_6px_oklch(68%_0.18_145/0.7)]'
+                  : 'bg-zinc-600'
               }`}
             />
-            <span className="hidden sm:inline font-medium">
-              {status === 'processing'
-                ? 'Processing'
-                : status === 'error'
-                ? 'Error'
-                : status === 'complete'
-                ? 'Done'
-                : 'Idle'}
+            <span className="type-label !text-zinc-400">
+              {status === 'processing' ? 'Rec' : status === 'error' ? 'Err' : status === 'complete' ? 'Cut' : 'Idle'}
             </span>
           </div>
+
           {status === 'processing' && jobId && (
             <button
               onClick={cancelJob}
-              className="flex items-center gap-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/10 px-3 py-1.5 rounded-lg border border-red-500/20 transition-all"
+              className="flex items-center gap-1.5 h-9 px-3 text-[11px] font-mono uppercase tracking-[0.14em] text-[oklch(62%_0.22_25)] hover:text-[oklch(70%_0.22_25)] border border-[oklch(62%_0.22_25)]/30 hover:border-[oklch(62%_0.22_25)]/60 bg-[oklch(62%_0.22_25)]/[0.08] rounded-[3px]"
             >
-              <X size={12} />
+              <X size={12} strokeWidth={2.4} />
               Stop
             </button>
           )}
@@ -94,10 +113,10 @@ export default function TopNav({ activeTab, onTabChange, status, jobId, onReset,
             <button
               onClick={onReset}
               title="Start a fresh session (clear the current results)"
-              className="flex items-center gap-1.5 text-xs font-medium text-blue-400 hover:text-blue-300 bg-blue-500/10 px-3 py-1.5 rounded-lg border border-blue-500/20 transition-all"
+              className="flex items-center gap-1.5 h-9 px-3 text-[11px] font-mono uppercase tracking-[0.14em] text-zinc-300 hover:text-white border border-white/10 hover:border-white/25 bg-white/[0.02] rounded-[3px]"
             >
-              <PlusCircle size={12} />
-              <span className="hidden sm:inline">Start over</span>
+              <PlusCircle size={12} strokeWidth={2.2} />
+              <span className="hidden sm:inline">New&nbsp;Take</span>
             </button>
           )}
         </div>

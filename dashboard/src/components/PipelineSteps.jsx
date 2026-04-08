@@ -38,19 +38,30 @@ export default function PipelineSteps({ currentStep }) {
         return (
           <React.Fragment key={step.key}>
             <div
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`flex items-center gap-2 px-3 h-8 rounded-[2px] border font-mono text-[11px] uppercase tracking-[0.12em] transition-all ${
                 isDone
-                  ? 'text-emerald-400 bg-emerald-500/10'
+                  ? 'text-[oklch(78%_0.17_145)] border-[oklch(68%_0.18_145)]/35 bg-[oklch(68%_0.18_145)]/[0.08]'
                   : isActive
-                  ? 'text-blue-400 bg-blue-500/10 border border-blue-500/20'
-                  : 'text-zinc-600'
+                  ? 'text-[oklch(82%_0.16_68)] border-[oklch(74%_0.175_62)]/50 bg-[oklch(74%_0.175_62)]/[0.1] shadow-[0_0_12px_-4px_oklch(74%_0.175_62/0.6)]'
+                  : 'text-zinc-600 border-white/[0.06] bg-transparent'
               }`}
             >
-              {isDone ? <Check size={12} /> : isActive ? <Zap size={12} className="animate-pulse" /> : null}
-              {step.label}
+              <span className="type-mono text-[9px] tabular-nums opacity-70">
+                {String(i + 1).padStart(2, '0')}
+              </span>
+              {isDone ? (
+                <Check size={11} strokeWidth={2.4} />
+              ) : isActive ? (
+                <Zap size={11} strokeWidth={2.2} className="animate-pulse" />
+              ) : null}
+              <span>{step.label}</span>
             </div>
             {i < STEPS.length - 1 && (
-              <div className={`w-6 h-px ${isDone ? 'bg-emerald-500/50' : 'bg-zinc-800'}`} />
+              <div
+                className={`w-6 h-px ${
+                  isDone ? 'bg-[oklch(68%_0.18_145)]/60' : isActive ? 'bg-[oklch(74%_0.175_62)]/40' : 'bg-zinc-800'
+                }`}
+              />
             )}
           </React.Fragment>
         );

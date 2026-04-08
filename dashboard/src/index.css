@@ -1,44 +1,62 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@700;800&family=JetBrains+Mono&family=Geist:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* ─── Custom theme tokens (migrated from tailwind.config.js) ─── */
+/*
+ * ClippyMe — "Cutting Room" design system
+ *
+ * Aesthetic direction: editorial-brutalist dark, inspired by film editing
+ * suites and cinema grading tools. Single accent color (amber),
+ * hairline borders, tabular mono for every timecode/number,
+ * Fraunces display serif paired with Inter Tight + JetBrains Mono.
+ *
+ * Legacy class names (.glass-panel, .btn-primary, .accent-pink, …) are
+ * preserved so existing components keep working — but their visual
+ * weight has been remapped to the new system. Where a literal
+ * pink→purple→blue gradient appears in a component, it's been
+ * overridden locally via !important fallbacks or direct edits.
+ */
+
 @theme {
-  /* Fonts */
-  --font-sans: 'Inter', system-ui, sans-serif;
-  --font-display: 'Plus Jakarta Sans', 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  /* ── Fonts ─────────────────────────────────────────────────── */
+  --font-sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces', ui-serif, Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
-  /* Brand colors */
-  --color-background: #050507;
-  --color-surface: #0f0f13;
-  --color-surface-lighter: #1e1e28;
-  --color-surface-mid: #16161d;
-  --color-surface-darker: #0a0a0e;
+  /* ── Foundation ────────────────────────────────────────────── */
+  --color-background: oklch(11% 0.008 260);
+  --color-surface: oklch(15% 0.01 260);
+  --color-surface-lighter: oklch(19% 0.012 260);
+  --color-surface-mid: oklch(17% 0.011 260);
+  --color-surface-darker: oklch(9% 0.006 260);
 
-  --color-primary: #0a81d9;
-  --color-primary-light: #3d9ee6;
-  --color-primary-dark: #0768b3;
+  /* ── Single accent: amber marker ───────────────────────────── */
+  --color-primary: oklch(74% 0.175 62);
+  --color-primary-light: oklch(82% 0.16 68);
+  --color-primary-dark: oklch(62% 0.18 55);
 
-  --color-accent: #9850c3;
-  --color-accent-light: #b374d9;
-  --color-accent-dark: #7c3aad;
-  --color-accent-pink: #e6428d;
-  --color-accent-purple: #9850c3;
-  --color-accent-indigo: #675add;
+  /* Legacy pink/purple/indigo names REMAPPED to the amber family.
+     This lets utilities like `bg-accent-pink` or `text-accent-purple`
+     keep compiling while adopting the new palette without touching
+     every consumer site. */
+  --color-accent: oklch(74% 0.175 62);
+  --color-accent-light: oklch(82% 0.16 68);
+  --color-accent-dark: oklch(62% 0.18 55);
+  --color-accent-pink: oklch(74% 0.175 62);
+  --color-accent-purple: oklch(68% 0.16 55);
+  --color-accent-indigo: oklch(62% 0.14 50);
 
-  --color-brand-gold: #f7bc59;
-  --color-brand-pink: #e6428d;
-  --color-brand-purple: #9850c3;
-  --color-brand-indigo: #675add;
-  --color-brand-blue: #0a81d9;
-  --color-brand-teal: #02c5bf;
+  --color-brand-gold: oklch(80% 0.17 75);
+  --color-brand-pink: oklch(74% 0.175 62);
+  --color-brand-purple: oklch(68% 0.16 55);
+  --color-brand-indigo: oklch(62% 0.14 50);
+  --color-brand-blue: oklch(68% 0.1 230);
+  --color-brand-teal: oklch(72% 0.12 180);
 
-  --color-success: #10b981;
-  --color-warning: #f7bc59;
-  --color-error: #ef4444;
+  --color-success: oklch(68% 0.18 145);
+  --color-warning: oklch(80% 0.17 75);
+  --color-error: oklch(62% 0.22 25);
 
-  /* shadcn CSS variable colors */
+  /* ── shadcn bridge ─────────────────────────────────────────── */
   --color-foreground: var(--foreground);
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
@@ -53,232 +71,315 @@
   --color-destructive: var(--destructive);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-border: var(--border-color, rgba(255,255,255,0.06));
+  --color-border: var(--border-color, oklch(100% 0 0 / 0.08));
 
-  /* Shadows */
-  --shadow-glow-primary: 0 0 20px -5px rgba(10, 129, 217, 0.5);
-  --shadow-glow-accent: 0 0 20px -5px rgba(152, 80, 195, 0.5);
-  --shadow-glow-pink: 0 0 20px -5px rgba(230, 66, 141, 0.4);
-  --shadow-glass: inset 0 1px 1px 0 rgba(255, 255, 255, 0.05);
-  --shadow-elevated: 0 8px 32px -8px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.03);
+  /* ── Shadows (restrained, editorial) ───────────────────────── */
+  --shadow-glow-primary: 0 0 0 1px oklch(74% 0.175 62 / 0.25), 0 8px 24px -12px oklch(74% 0.175 62 / 0.35);
+  --shadow-glow-accent: 0 0 0 1px oklch(74% 0.175 62 / 0.25), 0 8px 24px -12px oklch(74% 0.175 62 / 0.35);
+  --shadow-glow-pink: 0 0 0 1px oklch(74% 0.175 62 / 0.3), 0 10px 30px -10px oklch(74% 0.175 62 / 0.4);
+  --shadow-glass: inset 0 1px 0 0 oklch(100% 0 0 / 0.06);
+  --shadow-elevated: 0 1px 0 0 oklch(100% 0 0 / 0.04), 0 20px 50px -30px oklch(0% 0 0 / 0.8);
 
-  /* Animations */
+  /* ── Motion ────────────────────────────────────────────────── */
   --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-float: float 6s ease-in-out infinite;
   --animate-shimmer: shimmer 2s linear infinite;
-  --animate-gradient-shift: gradientShift 8s ease infinite;
+  --animate-gradient-shift: gradientShift 12s ease infinite;
 }
 
-/* ─── shadcn color variables (always dark — app has no light mode) ─── */
+/* ─── shadcn color variables (always dark) ─── */
 @layer base {
   :root {
     color-scheme: dark;
-    --background: oklch(0.09 0.003 264);
-    --foreground: oklch(0.88 0 0);
-    --card: oklch(0.13 0.005 264);
-    --card-foreground: oklch(0.88 0 0);
-    --popover: oklch(0.15 0.006 264);
-    --popover-foreground: oklch(0.88 0 0);
-    --primary: oklch(0.58 0.15 242);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.19 0.005 264);
-    --secondary-foreground: oklch(0.88 0 0);
-    --muted: oklch(0.19 0.005 264);
-    --muted-foreground: oklch(0.55 0 0);
-    --accent: oklch(0.55 0.19 320);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.63 0.22 25);
-    --border-color: oklch(1 0 0 / 6%);
-    --input: oklch(1 0 0 / 4%);
-    --ring: oklch(0.58 0.15 242);
-    --chart-1: oklch(0.61 0.22 332);
-    --chart-2: oklch(0.55 0.19 301);
-    --chart-3: oklch(0.58 0.15 242);
-    --chart-4: oklch(0.58 0.16 270);
-    --chart-5: oklch(0.72 0.17 162);
-    --radius: 0.625rem;
-    --sidebar: oklch(0.13 0.005 264);
-    --sidebar-foreground: oklch(0.88 0 0);
-    --sidebar-primary: oklch(0.58 0.15 242);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.19 0.005 264);
-    --sidebar-accent-foreground: oklch(0.88 0 0);
-    --sidebar-border: oklch(1 0 0 / 6%);
-    --sidebar-ring: oklch(0.58 0.15 242);
+    --background: oklch(11% 0.008 260);
+    --foreground: oklch(94% 0.01 90);
+    --card: oklch(15% 0.01 260);
+    --card-foreground: oklch(94% 0.01 90);
+    --popover: oklch(17% 0.011 260);
+    --popover-foreground: oklch(94% 0.01 90);
+    --primary: oklch(74% 0.175 62);
+    --primary-foreground: oklch(12% 0.01 260);
+    --secondary: oklch(19% 0.012 260);
+    --secondary-foreground: oklch(94% 0.01 90);
+    --muted: oklch(19% 0.012 260);
+    --muted-foreground: oklch(58% 0.01 260);
+    --accent: oklch(74% 0.175 62);
+    --accent-foreground: oklch(12% 0.01 260);
+    --destructive: oklch(62% 0.22 25);
+    --border-color: oklch(100% 0 0 / 0.08);
+    --input: oklch(100% 0 0 / 0.04);
+    --ring: oklch(74% 0.175 62);
+    --chart-1: oklch(74% 0.175 62);
+    --chart-2: oklch(68% 0.18 145);
+    --chart-3: oklch(68% 0.1 230);
+    --chart-4: oklch(80% 0.17 75);
+    --chart-5: oklch(62% 0.22 25);
+    --radius: 0.25rem;
+    --sidebar: oklch(15% 0.01 260);
+    --sidebar-foreground: oklch(94% 0.01 90);
+    --sidebar-primary: oklch(74% 0.175 62);
+    --sidebar-primary-foreground: oklch(12% 0.01 260);
+    --sidebar-accent: oklch(19% 0.012 260);
+    --sidebar-accent-foreground: oklch(94% 0.01 90);
+    --sidebar-border: oklch(100% 0 0 / 0.08);
+    --sidebar-ring: oklch(74% 0.175 62);
   }
 
   body {
-    background-color: #050507;
-    color: oklch(0.88 0 0);
+    background-color: oklch(11% 0.008 260);
+    color: oklch(94% 0.01 90);
     font-family: var(--font-sans);
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-feature-settings: "ss01", "cv11", "tnum";
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.005em;
   }
 
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
-    color: white;
-    letter-spacing: -0.025em;
+    color: oklch(96% 0.015 85);
+    letter-spacing: -0.022em;
+    font-weight: 500;
+    font-optical-sizing: auto;
+  }
+
+  h1 { font-weight: 400; letter-spacing: -0.035em; }
+  h2 { font-weight: 500; letter-spacing: -0.028em; }
+
+  /* Mono is used everywhere a number, a timecode or a technical label
+     appears. Tabular numerals are enabled globally so columns align. */
+  code, kbd, samp, pre, .font-mono {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum", "zero", "ss01";
   }
 
   ::selection {
-    background-color: rgba(10, 129, 217, 0.3);
-    color: white;
+    background-color: oklch(74% 0.175 62 / 0.35);
+    color: oklch(98% 0.01 90);
   }
 }
 
-/* ─── Component utilities ─── */
+/* ─── Component utilities (Cutting Room edition) ─── */
 @layer components {
+  /* Glass panels are flatter now — less blur, more hairline, so the UI
+     reads as a piece of editorial print rather than frosted glass. */
   .glass-panel {
-    backdrop-filter: blur(24px);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 1rem;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid oklch(100% 0 0 / 0.08);
+    border-radius: 4px;
     box-shadow: var(--shadow-elevated);
-    background: linear-gradient(135deg, rgba(15,15,19,0.7) 0%, rgba(22,22,29,0.5) 100%);
+    background:
+      linear-gradient(180deg, oklch(15% 0.01 260 / 0.8) 0%, oklch(13% 0.009 260 / 0.65) 100%);
   }
 
   .glass-card {
-    backdrop-filter: blur(16px);
-    border: 1px solid rgba(255,255,255,0.04);
-    border-radius: 0.75rem;
-    transition: all 300ms;
-    background: linear-gradient(180deg, rgba(30,30,40,0.4) 0%, rgba(15,15,19,0.3) 100%);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid oklch(100% 0 0 / 0.07);
+    border-radius: 4px;
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+    background:
+      linear-gradient(180deg, oklch(16% 0.011 260 / 0.75) 0%, oklch(13% 0.009 260 / 0.55) 100%);
   }
 
   .glass-card:hover {
-    border-color: rgba(255,255,255,0.1);
-    box-shadow: var(--shadow-elevated);
+    border-color: oklch(74% 0.175 62 / 0.35);
+    box-shadow: var(--shadow-elevated), 0 0 0 1px oklch(74% 0.175 62 / 0.2);
   }
 
+  /* Was a flashy gradient border. Now a quiet hairline that lights up
+     to amber on hover — much more "serious tool". */
   .gradient-border {
     position: relative;
-    border-radius: 0.75rem;
+    border-radius: 4px;
     overflow: hidden;
+    border: 1px solid oklch(100% 0 0 / 0.09);
+    transition: border-color 250ms ease;
   }
 
-  .gradient-border::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    padding: 1px;
-    border-radius: inherit;
-    background: linear-gradient(135deg, #e6428d, #9850c3, #675add, #0a81d9);
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
-    opacity: 0.5;
-    transition: opacity 0.3s ease;
-  }
-
-  .gradient-border:hover::before {
-    opacity: 1;
+  .gradient-border:hover {
+    border-color: oklch(74% 0.175 62 / 0.5);
   }
 
   .input-field {
     width: 100%;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 0.75rem;
-    padding: 0.75rem 1rem;
+    background: oklch(100% 0 0 / 0.03);
+    border: 1px solid oklch(100% 0 0 / 0.09);
+    border-radius: 4px;
+    padding: 0.85rem 1rem;
     outline: none;
     font-size: 0.875rem;
-    color: white;
-    transition: all 0.2s;
+    font-family: var(--font-sans);
+    color: oklch(94% 0.01 90);
+    transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
   }
 
-  .input-field::placeholder { color: #52525b; }
-  .input-field:focus { border-color: rgba(10,129,217,0.5); box-shadow: 0 0 0 4px rgba(10,129,217,0.1); }
+  .input-field::placeholder {
+    color: oklch(50% 0.005 260);
+    font-style: italic;
+  }
+  .input-field:focus {
+    border-color: oklch(74% 0.175 62 / 0.6);
+    background: oklch(100% 0 0 / 0.05);
+    box-shadow: 0 0 0 3px oklch(74% 0.175 62 / 0.12);
+  }
 
   .btn-modern {
     position: relative;
     overflow: hidden;
-    padding: 0.75rem 1.5rem;
-    border-radius: 0.75rem;
+    padding: 0.8rem 1.5rem;
+    border-radius: 3px;
     font-weight: 600;
-    transition: all 0.2s;
+    font-family: var(--font-sans);
+    letter-spacing: 0.01em;
+    transition: transform 120ms ease, background-color 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
   }
 
-  .btn-modern:active { transform: scale(0.98); }
-  .btn-modern:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-modern:active { transform: translateY(1px); }
+  .btn-modern:disabled { opacity: 0.4; cursor: not-allowed; }
 
+  /* Primary CTA: flat amber slab, no gradient. Hover lifts it. */
   .btn-primary {
-    color: white;
-    background: linear-gradient(135deg, #e6428d, #9850c3, #675add);
-    background-size: 200% 200%;
-    box-shadow: 0 0 24px -6px rgba(152, 80, 195, 0.4);
+    color: oklch(14% 0.015 260);
+    background: oklch(74% 0.175 62);
+    border: 1px solid oklch(70% 0.18 62);
+    box-shadow:
+      0 1px 0 0 oklch(100% 0 0 / 0.25) inset,
+      0 8px 24px -12px oklch(74% 0.175 62 / 0.4);
   }
 
   .btn-primary:hover {
-    background-position: 100% 0;
-    box-shadow: 0 0 32px -4px rgba(230, 66, 141, 0.5);
+    background: oklch(78% 0.175 65);
+    box-shadow:
+      0 1px 0 0 oklch(100% 0 0 / 0.3) inset,
+      0 14px 30px -12px oklch(74% 0.175 62 / 0.55);
+    transform: translateY(-1px);
   }
 
   .btn-ghost {
     background: transparent;
-    border: 1px solid rgba(255,255,255,0.08);
-    color: #d4d4d8;
+    border: 1px solid oklch(100% 0 0 / 0.1);
+    color: oklch(82% 0.01 260);
   }
 
   .btn-ghost:hover {
-    background: rgba(255,255,255,0.05);
-    color: white;
-    border-color: rgba(255,255,255,0.15);
+    background: oklch(100% 0 0 / 0.04);
+    color: oklch(96% 0.01 90);
+    border-color: oklch(100% 0 0 / 0.18);
   }
 
   .btn-secondary {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.1);
-    color: white;
+    background: oklch(100% 0 0 / 0.04);
+    border: 1px solid oklch(100% 0 0 / 0.1);
+    color: oklch(94% 0.01 90);
   }
 
-  .btn-secondary:hover { background: rgba(255,255,255,0.1); }
+  .btn-secondary:hover { background: oklch(100% 0 0 / 0.08); }
 
+  /* Headline text: a clean warm-white wash instead of gradient vomit. */
   .gradient-text {
-    background: linear-gradient(to right, white, rgba(255,255,255,0.9), rgba(255,255,255,0.6));
+    background: linear-gradient(180deg, oklch(98% 0.015 85) 0%, oklch(84% 0.02 82) 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .brand-gradient-text {
-    background: linear-gradient(135deg, #e6428d, #9850c3, #675add, #0a81d9);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: oklch(74% 0.175 62);
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-style: italic;
+  }
+
+  /* Editorial typographic helpers — use liberally. */
+  .type-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: oklch(58% 0.01 260);
+  }
+
+  .type-display {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    font-weight: 400;
+    letter-spacing: -0.03em;
+    line-height: 0.95;
+  }
+
+  .type-mono {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum", "zero";
+  }
+
+  .hairline {
+    border: 0;
+    border-top: 1px solid oklch(100% 0 0 / 0.08);
+    width: 100%;
+  }
+
+  /* Viral-score VU meter segment. Used in ResultCard via inline usage. */
+  .vu-segment {
+    width: 3px;
+    border-radius: 1px;
+    background: oklch(100% 0 0 / 0.08);
+    transition: background-color 250ms ease, transform 250ms ease;
+  }
+  .vu-segment.is-lit {
+    background: oklch(74% 0.175 62);
+    box-shadow: 0 0 6px oklch(74% 0.175 62 / 0.6);
   }
 }
 
 /* ─── Scrollbar ─── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 9999px; border: 2px solid transparent; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+::-webkit-scrollbar-thumb {
+  background: oklch(100% 0 0 / 0.08);
+  border-radius: 0;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: oklch(74% 0.175 62 / 0.5); background-clip: padding-box; border: 2px solid transparent; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* ─── Background grain texture ─── */
+/* ─── Background grain + scanline texture ─── */
 body::after {
   content: '';
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 9999;
-  opacity: 0.015;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
-  background-repeat: repeat;
-  background-size: 256px 256px;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0px,
+      transparent 2px,
+      oklch(100% 0 0 / 0.04) 3px,
+      transparent 4px
+    );
+  background-repeat: repeat, repeat;
+  background-size: 256px 256px, auto;
 }
 
-/* ─── Background ambient glow ─── */
+/* ─── Ambient background: single warm glow, no rainbow ─── */
 .bg-ambient {
   background:
-    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(10,129,217,0.08) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 40% at 80% 50%, rgba(152,80,195,0.05) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 50% at 10% 90%, rgba(103,90,221,0.04) 0%, transparent 50%);
+    radial-gradient(ellipse 70% 50% at 50% -5%, oklch(74% 0.175 62 / 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 35% at 90% 100%, oklch(68% 0.1 230 / 0.05) 0%, transparent 55%);
 }
 
 /* ─── Interactive transitions ─── */
@@ -288,9 +389,9 @@ a, button, [role="button"] {
 
 /* ─── Keyboard focus rings (a11y) ─── */
 :focus-visible {
-  outline: 2px solid rgba(10, 129, 217, 0.7);
+  outline: 2px solid oklch(74% 0.175 62 / 0.75);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: 3px;
 }
 
 /* ─── Reduced motion (a11y) ─── */
@@ -303,22 +404,22 @@ a, button, [role="button"] {
   }
 }
 
-/* ─── Custom keyframes ─── */
+/* ─── Keyframes ─── */
 @keyframes shimmer { 100% { transform: translateX(100%); } }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slideUpFade {
-  from { opacity: 0; transform: translateY(20px); }
+  from { opacity: 0; transform: translateY(16px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0px) scale(1); }
-  50%       { transform: translateY(-18px) scale(1.02); }
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(-10px); }
 }
 
 @keyframes gradientShift {
@@ -327,9 +428,18 @@ a, button, [role="button"] {
   100% { background-position: 0% 50%; }
 }
 
+/* Pulse ring: now a single amber halo instead of purple. */
 @keyframes pulseRing {
-  0%, 100% { box-shadow: 0 0 0 2px rgba(152,80,195,0.15), 0 0 20px -5px rgba(152,80,195,0.1); }
-  50%       { box-shadow: 0 0 0 3px rgba(152,80,195,0.35), 0 0 30px -5px rgba(152,80,195,0.2); }
+  0%, 100% { box-shadow: 0 0 0 1px oklch(74% 0.175 62 / 0.25), 0 0 18px -6px oklch(74% 0.175 62 / 0.2); }
+  50%      { box-shadow: 0 0 0 2px oklch(74% 0.175 62 / 0.45), 0 0 28px -6px oklch(74% 0.175 62 / 0.35); }
+}
+
+/* REC LED blink for "Published" pill — 2 pulses then stop, so it's
+   celebratory without being distracting. Use via animation: recBlink 1.4s 2; */
+@keyframes recBlink {
+  0%, 60% { opacity: 1; }
+  30% { opacity: 0.25; }
+  100% { opacity: 1; }
 }
 
 @keyframes scanLine {
@@ -339,13 +449,21 @@ a, button, [role="button"] {
   100% { transform: translateY(500%);  opacity: 0; }
 }
 
+/* Staggered reveal — used in ResultsGrid so cards appear one-by-one. */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 /* ─── Animation utility classes ─── */
-.animate-fade-in    { animation: fadeIn 0.5s ease-out forwards; }
-.animate-slide-up   { animation: slideUpFade 0.6s ease-out forwards; }
+.animate-fade-in    { animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-slide-up   { animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 .animate-float      { animation: float 6s ease-in-out infinite; }
-.animate-gradient-shift { background-size: 200% 200%; animation: gradientShift 8s ease infinite; }
+.animate-gradient-shift { background-size: 200% 200%; animation: gradientShift 12s ease infinite; }
+.animate-rise-in    { animation: riseIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .pulse-ring-active  { animation: pulseRing 2.5s ease-in-out infinite; }
 .scan-line          { animation: scanLine 2.5s ease-in-out infinite; }
+.rec-blink          { animation: recBlink 1.4s ease-in-out 2; }
 .shimmer {
   position: relative;
   overflow: hidden;
@@ -356,5 +474,5 @@ a, button, [role="button"] {
   inset: 0;
   transform: translateX(-100%);
   animation: shimmer 2s linear infinite;
-  background: linear-gradient(to right, transparent, rgba(255,255,255,0.05), transparent);
+  background: linear-gradient(to right, transparent, oklch(100% 0 0 / 0.05), transparent);
 }

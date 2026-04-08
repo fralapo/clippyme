@@ -216,11 +216,17 @@ export default function ResultCard({
         subtitleDrift;
 
     const scoreLevel = clip.viral_score >= 80 ? 'high' : clip.viral_score >= 50 ? 'mid' : 'low';
-    const viralScoreGradient = {
-        high: 'linear-gradient(135deg, #10b981, #059669)',
-        mid: 'linear-gradient(135deg, #f59e0b, #d97706)',
-        low: 'linear-gradient(135deg, #f97316, #ea580c)',
+    // Cutting Room: single accent color for everything. The VU-meter
+    // encodes severity via *how many segments light up*, not via hue
+    // swings, which reads more like a studio meter and less like a
+    // candy badge.
+    const viralScoreAccent = {
+        high: 'oklch(74% 0.175 62)',
+        mid: 'oklch(78% 0.16 75)',
+        low: 'oklch(58% 0.12 55)',
     }[scoreLevel];
+    // 8-segment VU: light up ceil(score/12.5) segments (so 100 = 8 lit).
+    const vuLit = Math.min(8, Math.ceil((clip.viral_score || 0) / 12.5));
 
     // Non-destructive delete with undo toast. The clip file stays on
     // disk — we only hide it from the grid, so undo is free. The toast
@@ -301,15 +307,28 @@ export default function ResultCard({
 
     return (
         <div
-            className={`bg-[#0f0f13] border rounded-2xl overflow-hidden animate-fade-in transition-opacity ${
-                isDisabled ? 'border-white/5 opacity-50' : 'border-white/5'
+            className={`group relative bg-[oklch(14%_0.009_260)] border rounded-[3px] overflow-hidden transition-all duration-300 ${
+                isDisabled
+                    ? 'border-white/5 opacity-45 grayscale'
+                    : 'border-white/[0.08] hover:border-[oklch(74%_0.175_62)]/40 hover:shadow-[0_24px_60px_-30px_oklch(0%_0_0/0.9),0_0_0_1px_oklch(74%_0.175_62/0.2)]'
             }`}
-            style={{ animationDelay: `${index * 0.1}s` }}
         >
+            {/* Slate strip — the little "CLIP #003" header that frames the
+                whole card, like a clapperboard slate. */}
+            <div className="flex items-center justify-between px-3 h-7 border-b border-white/[0.06] bg-white/[0.015]">
+                <div className="flex items-center gap-2 type-mono text-[10px] text-zinc-500 tabular-nums">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[oklch(74%_0.175_62)] shadow-[0_0_6px_oklch(74%_0.175_62/0.6)]" />
+                    CLIP&nbsp;#{String(index + 1).padStart(3, '0')}
+                </div>
+                <div className="type-label !text-[9px] !tracking-[0.2em] text-zinc-600 tabular-nums">
+                    {startTs}<span className="text-zinc-700 mx-1">→</span>{endTs}
+                </div>
+            </div>
+
             {/* Video player - 9:16 container */}
-            <div className="relative w-full aspect-[9/16] bg-black rounded-t-2xl overflow-hidden">
-                {/* Card action row (top-left) — disable/delete grouped in a translucent pill */}
-                <div className="absolute top-2 left-2 z-20 flex items-center gap-0.5 bg-black/60 backdrop-blur-sm rounded-full p-0.5 border border-white/10 shadow-lg">
+            <div className="relative w-full aspect-[9/16] bg-black overflow-hidden">
+                {/* Card action row (top-left) — flat editorial toolbar */}
+                <div className="absolute top-2 left-2 z-20 flex items-center bg-black/75 backdrop-blur-sm rounded-[2px] border border-white/[0.12] shadow-lg">
                     {/* Larger target areas (min 32x32, touch-friendly).
                         Full 44x44 isn't practical inside a 9:16 thumbnail but
                         32x32 is already ~2.6x the previous hit area. */}
@@ -317,7 +336,7 @@ export default function ResultCard({
                         onClick={handleToggleDisabled}
                         aria-label={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
                         title={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
-                        className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-zinc-300 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/70"
+                        className="w-8 h-8 flex items-center justify-center rounded-none hover:bg-white/10 text-zinc-300 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/70"
                     >
                         {isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
@@ -338,9 +357,9 @@ export default function ResultCard({
                                     ? 'Auto reframe (face tracking) \u2014 click to disable'
                                     : 'Reframe disabled (4:3 + black bars) \u2014 click to re-enable'
                         }
-                        className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/70 ${
+                        className={`w-8 h-8 flex items-center justify-center rounded-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/70 ${
                             reframeMode === 'auto'
-                                ? 'text-accent-pink hover:bg-accent-pink/20'
+                                ? 'text-[oklch(78%_0.175_65)] hover:bg-[oklch(74%_0.175_62)]/20'
                                 : 'text-zinc-300 hover:text-white hover:bg-white/10'
                         } disabled:opacity-60 disabled:cursor-wait`}
                     >
@@ -352,12 +371,12 @@ export default function ResultCard({
                             <Square size={14} />
                         )}
                     </button>
-                    <div className="w-px h-3 bg-white/10" />
+                    <div className="w-px h-5 bg-white/[0.12]" />
                     <button
                         onClick={handleDelete}
                         aria-label="Remove clip from grid"
                         title="Remove clip from grid"
-                        className="w-8 h-8 flex items-center justify-center rounded-full text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/70"
+                        className="w-8 h-8 flex items-center justify-center rounded-none text-[oklch(70%_0.2_25)] hover:text-[oklch(78%_0.2_25)] hover:bg-[oklch(62%_0.22_25)]/15 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/70"
                     >
                         <Trash2 size={14} />
                     </button>
@@ -367,22 +386,22 @@ export default function ResultCard({
                 <div className="absolute top-2 right-2 z-20 flex flex-col items-end gap-1.5">
                     {rank && totalClips > 1 && (
                         <div
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold shadow-lg backdrop-blur-sm ${
+                            className={`flex items-center gap-1 px-2 py-1 rounded-[2px] type-mono text-[10px] font-semibold tabular-nums shadow-lg backdrop-blur-sm ${
                                 rank === 1
-                                    ? 'bg-gradient-to-r from-yellow-400 to-amber-500 text-black'
-                                    : 'bg-black/60 text-white border border-white/10'
+                                    ? 'bg-[oklch(74%_0.175_62)] text-[oklch(14%_0.01_260)] border border-[oklch(74%_0.175_62)]'
+                                    : 'bg-black/75 text-white border border-white/[0.14]'
                             }`}
                             title={rank === 1 ? 'Top clip (highest viral score)' : `Rank ${rank}/${totalClips}`}
                         >
-                            {rank === 1 && <Trophy size={9} />}
-                            #{rank}
-                            <span className="opacity-60 font-normal">/{totalClips}</span>
+                            {rank === 1 && <Trophy size={9} strokeWidth={2.4} />}
+                            <span>RK&nbsp;{String(rank).padStart(2, '0')}</span>
+                            <span className="opacity-60 font-normal">/{String(totalClips).padStart(2, '0')}</span>
                         </div>
                     )}
                     {publishedAt && (
-                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/90 text-white text-[10px] font-semibold shadow-lg">
-                            <Check size={10} />
-                            Published
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-[2px] bg-[oklch(20%_0.04_145)] border border-[oklch(68%_0.18_145)]/50 text-[oklch(82%_0.15_145)] type-mono text-[10px] font-semibold uppercase tracking-[0.14em] shadow-lg rec-blink">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[oklch(68%_0.18_145)] shadow-[0_0_6px_oklch(68%_0.18_145/0.9)]" />
+                            Shipped
                         </div>
                     )}
                 </div>
@@ -390,9 +409,9 @@ export default function ResultCard({
                 {/* Disabled overlay banner */}
                 {isDisabled && (
                     <div className="absolute bottom-16 left-0 right-0 z-10 text-center pointer-events-none">
-                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/80 backdrop-blur-sm border border-white/20 text-[10px] font-semibold text-zinc-300 uppercase tracking-wider shadow-xl">
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-[2px] bg-black/85 backdrop-blur-sm border border-white/20 type-mono text-[10px] font-semibold text-zinc-300 uppercase tracking-[0.14em] shadow-xl">
                             <EyeOff size={10} />
-                            Disabled — not published in batch
+                            Muted — held from batch
                         </span>
                     </div>
                 )}
@@ -418,62 +437,81 @@ export default function ResultCard({
             </div>
 
             {/* Content area */}
-            <div className="p-4 space-y-3">
-                {/* Header — title, viral score, timestamp */}
-                <div className="space-y-2">
-                    <div className="flex items-start gap-2">
-                        {clip.viral_score != null && (
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <div
-                                        className="flex flex-col items-center justify-center rounded-xl px-2.5 py-1.5 shrink-0 cursor-help select-none shadow-md"
-                                        style={{ background: viralScoreGradient }}
-                                    >
-                                        <span className="text-base font-black text-white leading-none font-mono tabular-nums">{clip.viral_score}</span>
-                                        <span className="text-[8px] font-semibold text-white/70 uppercase tracking-wider leading-none mt-0.5">score</span>
-                                    </div>
-                                </TooltipTrigger>
-                                <TooltipContent side="top" className="max-w-[220px] text-center">
-                                    {clip.viral_reason || 'AI viral potential score'}
-                                </TooltipContent>
-                            </Tooltip>
-                        )}
-                        <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 mb-0.5">
-                                <h3
-                                    className="text-[14px] font-semibold text-white leading-snug line-clamp-2"
-                                    title={clip.video_title_for_youtube_short}
+            <div className="p-4 space-y-3.5">
+                {/* Header — VU-meter score, title, mono duration */}
+                <div className="flex items-start gap-3.5">
+                    {clip.viral_score != null && (
+                        <Tooltip>
+                            <TooltipTrigger asChild>
+                                <div
+                                    className="flex flex-col items-center gap-1.5 shrink-0 cursor-help select-none"
+                                    aria-label={`Viral score ${clip.viral_score} of 100`}
                                 >
-                                    {clip.video_title_for_youtube_short || 'Viral Clip Generated'}
-                                </h3>
-                                {isCustomized && (
-                                    <span
-                                        className="w-1.5 h-1.5 rounded-full bg-accent-pink shrink-0 mt-1"
-                                        title="Customized — toggles or params differ from defaults"
-                                    />
-                                )}
-                            </div>
-                            <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono tabular-nums">
-                                <span className="flex items-center gap-1">
-                                    <Clock size={9} />
-                                    {startTs} → {endTs}
-                                </span>
-                                <span className="text-zinc-700">·</span>
-                                <span>{duration}s</span>
-                            </div>
+                                    <div className="flex items-end gap-[3px] h-10" aria-hidden>
+                                        {Array.from({ length: 8 }, (_, i) => (
+                                            <div
+                                                key={i}
+                                                className={`vu-segment ${i < vuLit ? 'is-lit' : ''}`}
+                                                style={{
+                                                    height: `${38 + i * 2}%`,
+                                                    backgroundColor: i < vuLit ? viralScoreAccent : undefined,
+                                                    boxShadow: i < vuLit ? `0 0 6px ${viralScoreAccent}99` : undefined,
+                                                }}
+                                            />
+                                        ))}
+                                    </div>
+                                    <div className="flex flex-col items-center leading-none">
+                                        <span
+                                            className="type-mono text-[15px] font-semibold tabular-nums"
+                                            style={{ color: viralScoreAccent }}
+                                        >
+                                            {String(clip.viral_score).padStart(2, '0')}
+                                        </span>
+                                        <span className="type-label !text-[8px] !tracking-[0.22em] mt-0.5">Score</span>
+                                    </div>
+                                </div>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[240px] text-center">
+                                {clip.viral_reason || 'AI viral potential score'}
+                            </TooltipContent>
+                        </Tooltip>
+                    )}
+                    <div className="flex-1 min-w-0 pt-0.5">
+                        <div className="flex items-start gap-2 mb-1.5">
+                            <h3
+                                className="type-display text-[17px] sm:text-[18px] text-white leading-[1.15] line-clamp-2 font-normal"
+                                title={clip.video_title_for_youtube_short}
+                                style={{ letterSpacing: '-0.015em' }}
+                            >
+                                {clip.video_title_for_youtube_short || 'Untitled clip'}
+                            </h3>
+                            {isCustomized && (
+                                <span
+                                    className="w-1.5 h-1.5 rounded-full bg-[oklch(74%_0.175_62)] shrink-0 mt-2 shadow-[0_0_6px_oklch(74%_0.175_62/0.7)]"
+                                    title="Customized — toggles or params differ from defaults"
+                                />
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2 type-label !text-[10px] !tracking-[0.14em] tabular-nums">
+                            <Clock size={9} strokeWidth={1.8} />
+                            <span>{duration}s&nbsp;take</span>
+                            <span className="text-zinc-700">/</span>
+                            <span className="text-zinc-600">
+                                {clip.viral_score >= 80 ? 'Headliner' : clip.viral_score >= 50 ? 'Strong' : 'B-reel'}
+                            </span>
                         </div>
                     </div>
-
-                    {/* Viral reason quote — below the header, subtle */}
-                    {clip.viral_reason && (
-                        <div className="flex items-start gap-1.5 px-2 py-1.5 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-                            <Quote size={10} className="text-zinc-600 mt-0.5 shrink-0" />
-                            <p className="text-[11px] text-zinc-500 italic leading-relaxed line-clamp-2">
-                                {clip.viral_reason}
-                            </p>
-                        </div>
-                    )}
                 </div>
+
+                {/* Viral reason — pull quote, Fraunces italic */}
+                {clip.viral_reason && (
+                    <div className="relative pl-4 pr-2 py-0.5 border-l-2 border-[oklch(74%_0.175_62)]/40">
+                        <Quote size={11} className="absolute -left-[1px] -top-1 text-[oklch(74%_0.175_62)]/60" strokeWidth={1.6} />
+                        <p className="type-display italic text-[13px] text-zinc-400 leading-snug line-clamp-2">
+                            {clip.viral_reason}
+                        </p>
+                    </div>
+                )}
 
                 {/* Compact toggles — single horizontal row, 3 slim pills */}
                 <div className="grid grid-cols-3 gap-1.5">

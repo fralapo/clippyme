@@ -50,19 +50,30 @@ export default function IdleHero({
   };
 
   return (
-    <div className="flex flex-col items-center text-center space-y-8 pt-6 sm:pt-16">
-      <div className="space-y-4">
-        <div className="relative inline-block">
-          <div className="absolute -inset-6 bg-gradient-to-r from-pink-500/20 to-purple-500/20 blur-3xl rounded-full" />
-          <h1 className="text-5xl sm:text-6xl md:text-7xl font-extrabold text-white tracking-tight relative">
-            Go{' '}
-            <span className="bg-gradient-to-r from-pink-500 to-purple-500 bg-clip-text text-transparent">
-              Viral
-            </span>
-          </h1>
+    <div className="flex flex-col items-center text-center pt-6 sm:pt-14 w-full space-y-6">
+      {/* Editorial masthead */}
+      <div className="w-full max-w-3xl space-y-5 mb-10">
+        <div className="flex items-center gap-3 justify-center type-label">
+          <span aria-hidden className="inline-block w-6 h-px bg-[oklch(74%_0.175_62)]" />
+          <span>§&nbsp;Issue&nbsp;N°&nbsp;001</span>
+          <span aria-hidden className="inline-block w-6 h-px bg-[oklch(74%_0.175_62)]" />
         </div>
-        <p className="text-zinc-500 text-base sm:text-lg max-w-md mx-auto leading-relaxed">
-          Drop a URL or upload a file to generate viral short clips with AI.
+        <h1 className="type-display text-[clamp(3rem,9vw,6.5rem)] text-white leading-[0.92] relative">
+          <span className="block">Cut the</span>
+          <span className="block italic text-[oklch(74%_0.175_62)] relative">
+            noise.
+            <span
+              aria-hidden
+              className="absolute left-1/2 -translate-x-1/2 -bottom-2 w-[55%] h-px bg-[oklch(74%_0.175_62)]/50"
+            />
+          </span>
+          <span className="block italic font-light text-zinc-400 text-[0.55em] mt-4 tracking-normal">
+            Find the take.
+          </span>
+        </h1>
+        <p className="type-label !normal-case !tracking-[0.02em] !text-zinc-400 !text-[14px] !font-sans max-w-md mx-auto leading-relaxed">
+          Drop a URL or a file. Gemini scores every beat on a five-axis viral rubric.
+          You keep only the takes worth shipping.
         </p>
       </div>
 
@@ -144,18 +155,21 @@ export default function IdleHero({
         />
       </div>
 
-      <div className="flex items-center justify-center gap-8 pt-2">
-        <div className="flex items-center gap-2 text-zinc-600 hover:text-white transition-all duration-300">
-          <Youtube size={18} />
-          <span className="text-xs font-medium">YouTube</span>
+      <div className="flex items-center justify-center gap-5 pt-4 type-label">
+        <span className="text-zinc-600">Ships&nbsp;to</span>
+        <div className="flex items-center gap-1.5 text-zinc-500 hover:text-[oklch(74%_0.175_62)] transition-colors duration-300">
+          <Youtube size={14} strokeWidth={1.6} />
+          <span>YouTube</span>
         </div>
-        <div className="flex items-center gap-2 text-zinc-600 hover:text-white transition-all duration-300">
-          <Instagram size={18} />
-          <span className="text-xs font-medium">Instagram</span>
+        <span aria-hidden className="w-3 h-px bg-white/10" />
+        <div className="flex items-center gap-1.5 text-zinc-500 hover:text-[oklch(74%_0.175_62)] transition-colors duration-300">
+          <Instagram size={14} strokeWidth={1.6} />
+          <span>Instagram</span>
         </div>
-        <div className="flex items-center gap-2 text-zinc-600 hover:text-white transition-all duration-300">
-          <TikTokIcon size={18} />
-          <span className="text-xs font-medium">TikTok</span>
+        <span aria-hidden className="w-3 h-px bg-white/10" />
+        <div className="flex items-center gap-1.5 text-zinc-500 hover:text-[oklch(74%_0.175_62)] transition-colors duration-300">
+          <TikTokIcon size={13} />
+          <span>TikTok</span>
         </div>
       </div>
     </div>

@@ -745,10 +745,10 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                     <button
                         type="submit"
                         disabled={isDisabled}
-                        className={`w-full py-4 rounded-xl font-semibold text-[15px] tracking-wide transition-all duration-300 flex items-center justify-center gap-2.5 min-h-[52px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f13] ${
+                        className={`group relative w-full min-h-[56px] rounded-[3px] font-mono text-[11px] uppercase tracking-[0.2em] font-semibold flex items-center justify-center gap-3 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)] focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                             isDisabled
-                                ? 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed'
-                                : 'bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 active:scale-[0.98]'
+                                ? 'bg-white/[0.04] text-zinc-600 border border-white/[0.08] cursor-not-allowed'
+                                : 'bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(12%_0.01_260)] border border-[oklch(70%_0.18_62)] shadow-[0_1px_0_0_oklch(100%_0_0/0.3)_inset,0_14px_30px_-14px_oklch(74%_0.175_62/0.55)] active:translate-y-px'
                         }`}
                     >
                         {isProcessing ? (
