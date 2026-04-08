@@ -148,7 +148,6 @@ dashboard/
 
 tests/                Unit + integration tests (pytest)
 fonts/                Bundled TTF fonts served via /fonts (subtitle + hook rendering)
-scripts/              Standalone helpers (parse_path_stats.py, …)
 data/                 Persisted config, cookies, transcript cache (git-ignored)
 ```
 
