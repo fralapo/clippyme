@@ -3,9 +3,9 @@ import { History, PlusCircle, Settings, X } from 'lucide-react';
 import { getApiUrl } from '../config';
 
 const TABS = [
-  { id: 'dashboard', label: 'Create', icon: PlusCircle },
-  { id: 'history', label: 'History', icon: History },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'dashboard', label: 'Crea', icon: PlusCircle },
+  { id: 'history', label: 'Cronologia', icon: History },
+  { id: 'settings', label: 'Impostazioni', icon: Settings },
 ];
 
 /**

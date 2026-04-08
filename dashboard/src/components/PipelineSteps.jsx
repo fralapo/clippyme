@@ -1,11 +1,14 @@
 import React from 'react';
 import { Check, Zap } from 'lucide-react';
 
+// Human-friendly labels inspired by the NotebookLM UX brainstorm
+// (Idleness Aversion / Operational Transparency): describe WHAT the
+// system is doing, not its technical function names.
 const STEPS = [
-  { key: 'downloading', label: 'Download' },
-  { key: 'transcribing', label: 'Transcribe' },
-  { key: 'analyzing', label: 'AI Analysis' },
-  { key: 'processing', label: 'Render' },
+  { key: 'downloading', label: 'Scarico il video' },
+  { key: 'transcribing', label: 'Ascolto l\u2019audio' },
+  { key: 'analyzing', label: 'Cerco i momenti virali' },
+  { key: 'processing', label: 'Monto le clip' },
 ];
 
 const STEP_KEYS = STEPS.map((s) => s.key);
@@ -18,8 +21,17 @@ const STEP_KEYS = STEPS.map((s) => s.key);
  */
 export default function PipelineSteps({ currentStep }) {
   const currentIdx = STEP_KEYS.indexOf(currentStep);
+  const currentLabel = currentIdx >= 0 ? STEPS[currentIdx].label : '';
   return (
-    <div className="flex items-center gap-2 flex-wrap">
+    <div
+      className="flex items-center gap-2 flex-wrap"
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={STEPS.length}
+      aria-valuenow={Math.max(0, currentIdx + 1)}
+      aria-valuetext={currentLabel ? `Fase ${currentIdx + 1} di ${STEPS.length}: ${currentLabel}` : 'In attesa'}
+      aria-live="polite"
+    >
       {STEPS.map((step, i) => {
         const isDone = i < currentIdx;
         const isActive = i === currentIdx;

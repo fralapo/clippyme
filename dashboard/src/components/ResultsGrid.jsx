@@ -6,10 +6,10 @@ import LogsPanel from './LogsPanel';
 import BatchPublishModal from './BatchPublishModal';
 
 const SORT_OPTIONS = [
-  { id: 'viral_desc', label: 'Highest viral score' },
-  { id: 'order', label: 'Original order' },
-  { id: 'duration_asc', label: 'Shortest first' },
-  { id: 'duration_desc', label: 'Longest first' },
+  { id: 'viral_desc', label: 'Per viral score' },
+  { id: 'order', label: 'Ordine originale' },
+  { id: 'duration_asc', label: 'Più corte prima' },
+  { id: 'duration_desc', label: 'Più lunghe prima' },
 ];
 
 /**
@@ -106,19 +106,21 @@ export default function ResultsGrid({
           <div>
             <h2 className="text-2xl font-bold text-white flex items-center gap-2">
               <Sparkles size={22} className="text-purple-400" />
-              {clipCount > 0 ? `${clipCount} viral clip${clipCount === 1 ? '' : 's'} ready` : 'Your clips'}
+              {clipCount > 0
+                ? `${clipCount} clip pronte${clipCount === 1 ? '' : ''}`
+                : 'Le tue clip'}
             </h2>
             {clipCount > 0 ? (
               <p className="text-zinc-500 text-xs mt-1.5 flex items-center gap-2 flex-wrap">
-                <span>Sorted by {SORT_OPTIONS.find((s) => s.id === sortBy)?.label.toLowerCase()}</span>
+                <span>Ordinate: {SORT_OPTIONS.find((s) => s.id === sortBy)?.label.toLowerCase()}</span>
                 {stats.published > 0 && (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300">
-                    <Check size={9} /> {stats.published} published
+                    <Check size={9} /> {stats.published} pubblicate
                   </span>
                 )}
                 {stats.disabled > 0 && (
                   <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/[0.04] text-zinc-500">
-                    <EyeOff size={9} /> {stats.disabled} disabled
+                    <EyeOff size={9} /> {stats.disabled} disattivate
                   </span>
                 )}
                 {results?.cost_analysis && (
@@ -131,7 +133,7 @@ export default function ResultsGrid({
                 )}
               </p>
             ) : (
-              <p className="text-zinc-500 text-sm mt-1">AI-curated high-engagement segments</p>
+              <p className="text-zinc-500 text-sm mt-1">Momenti ad alto potenziale virale individuati dall&apos;AI</p>
             )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -155,11 +157,13 @@ export default function ResultsGrid({
             {publishableClips.length > 0 && (
               <button
                 onClick={() => setBatchPublishOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-pink to-accent-purple text-white text-xs font-semibold shadow-glow-pink hover:opacity-90 transition-all"
-                title="Publish all active, not-yet-published clips to social platforms via Zernio"
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-accent-pink to-accent-purple text-white text-xs font-semibold shadow-glow-pink hover:opacity-90 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f13] min-h-[44px]"
+                title={`Pubblica ${publishableClips.length} clip attive (ignora disattivate e già pubblicate)`}
               >
                 <Send size={13} />
-                Publish all ({publishableClips.length})
+                {publishableClips.length === 1
+                  ? 'Pubblica 1 clip selezionata'
+                  : `Pubblica ${publishableClips.length} clip selezionate`}
               </button>
             )}
           </div>
@@ -178,24 +182,84 @@ export default function ResultsGrid({
         </div>
       )}
 
-      {clipCount > 0 && (
-        <div className="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-          {visibleClips.map(({ clip, originalIndex, rank }) => (
-            <ResultCard
-              key={originalIndex}
-              clip={clip}
-              index={originalIndex}
-              rank={rank}
-              totalClips={visibleClips.length}
-              jobId={jobId}
-              preselections={preselections}
-              onPlay={(time) => onClipPlay(time)}
-              onPause={onClipPause}
-              clipState={clipStates[originalIndex] || {}}
-              onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
-            />
-          ))}
-        </div>
+      {clipCount > 0 && sortBy === 'viral_desc' ? (
+        // Chunked view: group clips by viral_score tier so the grid is
+        // scannable even with 15+ clips (Law of Miller — chunking).
+        // Tiers inspired by the NotebookLM brainstorm recommendation.
+        (() => {
+          const tiers = [
+            { id: 'top', label: 'Top virali', hint: 'Score 80+ \u2014 pubblica questi per primi', min: 80, max: 101 },
+            { id: 'mid', label: 'Buone candidate', hint: 'Score 50\u201379 \u2014 ottimizzabili con Smart Cut e hook', min: 50, max: 80 },
+            { id: 'low', label: 'Menzioni', hint: 'Score <50 \u2014 valuta se scartarle', min: 0, max: 50 },
+          ];
+          const groups = tiers
+            .map((tier) => ({
+              ...tier,
+              entries: visibleClips.filter(({ clip }) => {
+                const s = clip.viral_score || 0;
+                return s >= tier.min && s < tier.max;
+              }),
+            }))
+            .filter((g) => g.entries.length > 0);
+
+          return (
+            <div className="space-y-8">
+              {groups.map((group) => (
+                <section key={group.id} aria-labelledby={`tier-${group.id}`}>
+                  <header className="flex items-baseline justify-between mb-3 pb-2 border-b border-white/5">
+                    <h3
+                      id={`tier-${group.id}`}
+                      className="text-[11px] font-semibold uppercase tracking-[0.15em] text-zinc-400"
+                    >
+                      {group.label}
+                      <span className="ml-2 text-zinc-600 font-normal normal-case tracking-normal">
+                        ({group.entries.length})
+                      </span>
+                    </h3>
+                    <p className="text-[10px] text-zinc-600 hidden sm:block">{group.hint}</p>
+                  </header>
+                  <div className="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+                    {group.entries.map(({ clip, originalIndex, rank }) => (
+                      <ResultCard
+                        key={originalIndex}
+                        clip={clip}
+                        index={originalIndex}
+                        rank={rank}
+                        totalClips={visibleClips.length}
+                        jobId={jobId}
+                        preselections={preselections}
+                        onPlay={(time) => onClipPlay(time)}
+                        onPause={onClipPause}
+                        clipState={clipStates[originalIndex] || {}}
+                        onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          );
+        })()
+      ) : (
+        clipCount > 0 && (
+          <div className="grid gap-5 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+            {visibleClips.map(({ clip, originalIndex, rank }) => (
+              <ResultCard
+                key={originalIndex}
+                clip={clip}
+                index={originalIndex}
+                rank={rank}
+                totalClips={visibleClips.length}
+                jobId={jobId}
+                preselections={preselections}
+                onPlay={(time) => onClipPlay(time)}
+                onPause={onClipPause}
+                clipState={clipStates[originalIndex] || {}}
+                onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
+              />
+            ))}
+          </div>
+        )
       )}
 
       <BatchPublishModal
@@ -211,15 +275,15 @@ export default function ResultsGrid({
           <div className="flex items-center gap-3">
             <AlertCircle size={18} className="text-red-400 shrink-0" />
             <p className="text-sm text-red-400">
-              Processing encountered an error. Some clips may be incomplete.
+              Qualcosa è andato storto durante l&apos;elaborazione. Alcune clip potrebbero essere incomplete.
             </p>
           </div>
           {processingMedia && (
             <button
               onClick={() => onRetry(processingMedia)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white text-xs font-semibold hover:opacity-90 transition-all shrink-0 ml-3"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-500 text-white text-xs font-semibold hover:opacity-90 transition-all shrink-0 ml-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/60 min-h-[40px]"
             >
-              <RotateCcw size={12} /> Retry
+              <RotateCcw size={12} /> Riprova
             </button>
           )}
         </div>

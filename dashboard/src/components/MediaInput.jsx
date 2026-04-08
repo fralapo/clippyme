@@ -745,7 +745,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                     <button
                         type="submit"
                         disabled={isDisabled}
-                        className={`w-full py-4 rounded-xl font-semibold text-[15px] tracking-wide transition-all duration-300 flex items-center justify-center gap-2.5 ${
+                        className={`w-full py-4 rounded-xl font-semibold text-[15px] tracking-wide transition-all duration-300 flex items-center justify-center gap-2.5 min-h-[52px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f0f13] ${
                             isDisabled
                                 ? 'bg-zinc-800/50 text-zinc-600 cursor-not-allowed'
                                 : 'bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-400 hover:to-purple-500 text-white shadow-lg shadow-purple-500/20 hover:shadow-purple-500/30 active:scale-[0.98]'
@@ -754,10 +754,16 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                         {isProcessing ? (
                             <>
                                 <Loader2 size={20} className="animate-spin" />
-                                <span>Processing...</span>
+                                <span>Elaborazione in corso…</span>
                             </>
                         ) : (
-                            <span>{mode === 'batch' ? `Launch batch (${batchTotal})` : 'Generate viral clips'}</span>
+                            <span>
+                                {mode === 'batch'
+                                    ? batchTotal > 0
+                                        ? `Genera clip da ${batchTotal} video`
+                                        : 'Aggiungi video al batch'
+                                    : 'Genera i miei shorts'}
+                            </span>
                         )}
                     </button>
                 </form>

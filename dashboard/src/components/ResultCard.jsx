@@ -163,11 +163,11 @@ export default function ResultCard({
                 setTimeout(() => window.URL.revokeObjectURL(url), 60000);
                 document.body.removeChild(a);
             } else {
-                toast.error(data.detail || 'Compose returned no video URL');
+                toast.error(data.detail || 'La composizione non ha restituito un URL video');
             }
         } catch (err) {
             console.error('Compose failed:', err);
-            toast.error('Compose failed — check console for details');
+            toast.error('Composizione fallita — controlla la console per i dettagli');
         } finally {
             setIsComposing(false);
         }
@@ -222,9 +222,39 @@ export default function ResultCard({
         low: 'linear-gradient(135deg, #f97316, #ea580c)',
     }[scoreLevel];
 
+    // Non-destructive delete with undo toast. The clip file stays on
+    // disk — we only hide it from the grid, so undo is free. The toast
+    // stays visible for 6 seconds, giving the user plenty of time to
+    // correct an accidental click (Forgiveness / Error Recovery
+    // principle from the UX brainstorm).
     const handleDelete = () => {
-        if (window.confirm(`Delete clip #${index + 1} permanently? This only hides it from the grid — the file stays on disk.`)) {
-            onUpdateState({ deleted: true });
+        onUpdateState({ deleted: true });
+        toast(`Clip #${index + 1} rimossa dalla griglia`, {
+            description: 'Il file resta su disco. Hai 6 secondi per annullare.',
+            duration: 6000,
+            action: {
+                label: 'Annulla',
+                onClick: () => onUpdateState({ deleted: false }),
+            },
+        });
+    };
+
+    // Toggle visibility (disable/enable) with the same undo affordance.
+    // Batch-publish excludes disabled clips, so an accidental click can
+    // silently drop a clip from the publish run — the toast with undo
+    // fixes that.
+    const handleToggleDisabled = () => {
+        const nextDisabled = !isDisabled;
+        onUpdateState({ disabled: nextDisabled });
+        if (nextDisabled) {
+            toast(`Clip #${index + 1} esclusa dalla pubblicazione`, {
+                description: 'Non verrà inclusa in "Pubblica tutte". Hai 6 secondi per annullare.',
+                duration: 6000,
+                action: {
+                    label: 'Annulla',
+                    onClick: () => onUpdateState({ disabled: false }),
+                },
+            });
         }
     };
 
@@ -242,9 +272,9 @@ export default function ResultCard({
                 const errText = await res.text();
                 // 409 = source slice missing (legacy jobs)
                 if (res.status === 409) {
-                    toast.error('Source slice not preserved for this clip — reprocess the video to enable reframe switching.');
+                    toast.error('Source slice non conservata per questa clip. Rielabora il video per poter cambiare il reframe.');
                 } else {
-                    toast.error(`Reframe failed: ${errText.slice(0, 200)}`);
+                    toast.error(`Reframe fallito: ${errText.slice(0, 200)}`);
                 }
                 onUpdateState({ reframing: false });
                 return;
@@ -255,16 +285,16 @@ export default function ResultCard({
                 onUpdateState({ reframeMode: nextMode, reframing: false });
                 toast.success(
                     nextMode === 'disabled'
-                        ? 'Reframe disabled — clip now shows the full 4:3 frame with black bars.'
-                        : 'Auto reframe enabled — face tracking is back on.',
+                        ? 'Reframe disattivato — ora la clip mostra il frame 4:3 completo con bande nere.'
+                        : 'Auto reframe attivato — face tracking di nuovo attivo.',
                 );
             } else {
                 onUpdateState({ reframing: false });
-                toast.error('Reframe returned no video URL');
+                toast.error('Il reframe non ha restituito un URL video');
             }
         } catch (err) {
             console.error('Reframe error:', err);
-            toast.error('Reframe failed — check console for details');
+            toast.error('Reframe fallito — controlla la console per i dettagli');
             onUpdateState({ reframing: false });
         }
     };
@@ -279,45 +309,57 @@ export default function ResultCard({
             {/* Video player - 9:16 container */}
             <div className="relative w-full aspect-[9/16] bg-black rounded-t-2xl overflow-hidden">
                 {/* Card action row (top-left) — disable/delete grouped in a translucent pill */}
-                <div className="absolute top-2 left-2 z-20 flex items-center gap-1 bg-black/60 backdrop-blur-sm rounded-full p-1 border border-white/10 shadow-lg">
+                <div className="absolute top-2 left-2 z-20 flex items-center gap-0.5 bg-black/60 backdrop-blur-sm rounded-full p-0.5 border border-white/10 shadow-lg">
+                    {/* Larger target areas (min 32x32, touch-friendly).
+                        Full 44x44 isn't practical inside a 9:16 thumbnail but
+                        32x32 is already ~2.6x the previous hit area. */}
                     <button
-                        onClick={() => onUpdateState({ disabled: !isDisabled })}
-                        title={isDisabled ? 'Enable clip' : 'Disable clip (excluded from Publish all)'}
-                        className="p-1 rounded-full hover:bg-white/10 text-zinc-300 hover:text-white transition-colors"
+                        onClick={handleToggleDisabled}
+                        aria-label={isDisabled ? 'Abilita clip' : 'Disabilita clip (esclusa da Pubblica tutti)'}
+                        title={isDisabled ? 'Abilita clip' : 'Disabilita clip (esclusa da Pubblica tutti)'}
+                        className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-zinc-300 hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/70"
                     >
-                        {isDisabled ? <EyeOff size={12} /> : <Eye size={12} />}
+                        {isDisabled ? <EyeOff size={14} /> : <Eye size={14} />}
                     </button>
                     <button
                         onClick={handleToggleReframe}
                         disabled={isReframing}
+                        aria-label={
+                            isReframing
+                                ? 'Reframe in corso'
+                                : reframeMode === 'auto'
+                                    ? 'Reframe automatico attivo — clicca per disabilitare'
+                                    : 'Reframe disabilitato (4:3) — clicca per riattivare'
+                        }
                         title={
                             isReframing
-                                ? 'Reframing…'
+                                ? 'Reframe in corso\u2026'
                                 : reframeMode === 'auto'
-                                    ? 'Reframe: Auto (face tracking) — click to disable'
-                                    : 'Reframe: Disabled (4:3 + black bars) — click to enable auto'
+                                    ? 'Reframe automatico (face tracking) \u2014 clicca per disabilitare'
+                                    : 'Reframe disabilitato (4:3 + bande nere) \u2014 clicca per riattivare'
                         }
-                        className={`p-1 rounded-full transition-colors ${
+                        className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-pink/70 ${
                             reframeMode === 'auto'
                                 ? 'text-accent-pink hover:bg-accent-pink/20'
                                 : 'text-zinc-300 hover:text-white hover:bg-white/10'
                         } disabled:opacity-60 disabled:cursor-wait`}
                     >
                         {isReframing ? (
-                            <Loader2 size={12} className="animate-spin" />
+                            <Loader2 size={14} className="animate-spin" />
                         ) : reframeMode === 'auto' ? (
-                            <Crop size={12} />
+                            <Crop size={14} />
                         ) : (
-                            <Square size={12} />
+                            <Square size={14} />
                         )}
                     </button>
                     <div className="w-px h-3 bg-white/10" />
                     <button
                         onClick={handleDelete}
-                        title="Remove clip from grid"
-                        className="p-1 rounded-full text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
+                        aria-label="Rimuovi clip dalla griglia"
+                        title="Rimuovi clip dalla griglia"
+                        className="w-8 h-8 flex items-center justify-center rounded-full text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/70"
                     >
-                        <Trash2 size={12} />
+                        <Trash2 size={14} />
                     </button>
                 </div>
 
@@ -387,7 +429,7 @@ export default function ResultCard({
                                         className="flex flex-col items-center justify-center rounded-xl px-2.5 py-1.5 shrink-0 cursor-help select-none shadow-md"
                                         style={{ background: viralScoreGradient }}
                                     >
-                                        <span className="text-base font-black text-white leading-none">{clip.viral_score}</span>
+                                        <span className="text-base font-black text-white leading-none font-mono tabular-nums">{clip.viral_score}</span>
                                         <span className="text-[8px] font-semibold text-white/70 uppercase tracking-wider leading-none mt-0.5">score</span>
                                     </div>
                                 </TooltipTrigger>
@@ -411,7 +453,7 @@ export default function ResultCard({
                                     />
                                 )}
                             </div>
-                            <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
+                            <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono tabular-nums">
                                 <span className="flex items-center gap-1">
                                     <Clock size={9} />
                                     {startTs} → {endTs}
