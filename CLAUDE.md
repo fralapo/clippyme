@@ -12,7 +12,7 @@ All Python backend code lives under `src/clippyme/` (src-layout, installed via `
 
 - `src/clippyme/api/` — FastAPI app (`app.py`), `schemas.py`, `security.py`
 - `src/clippyme/pipeline/` — `main.py` orchestrator, `deepgram_transcribe.py`, `gemini_parser.py`, `gemini_service.py`
-- `src/clippyme/domain/` — `compose.py`, `subtitle_pipeline.py`, `clip_endpoints.py`, `job_results.py`, `job_artifacts.py`, `job_worker.py`, `history_service.py`, `subtitles.py`, `smartcut.py`, `hooks.py`
+- `src/clippyme/domain/` — `compose.py`, `clip_endpoints.py`, `job_results.py`, `job_artifacts.py`, `job_worker.py`, `history_service.py`, `subtitles.py`, `smartcut.py`, `hooks.py`
 - `src/clippyme/integrations/` — `social_publisher.py`, `auto_editor_updater.py`
 - `src/clippyme/storage/` — `config_store.py`
 
@@ -23,7 +23,6 @@ Run with `uvicorn clippyme.api.app:app` and the pipeline CLI as `python -m clipp
 - **Backend** (`clippyme.api.app`): Thin FastAPI layer — endpoint handlers + job queue + worker loop. Heavy logic lives in dedicated modules listed below. Config persistence, async job queue, batch processing.
 - **Backend modules** (extracted from `app.py` during 8-round refactor):
   - `compose.py` — `compose_layers()` runs the Smart Cut → Hook → Subtitles pipeline for `/api/compose`. Owns intermediate-file cleanup.
-  - `subtitle_pipeline.py` — `run_subtitle_pipeline()` + `resolve_clip_filename()` for `/api/subtitle` and `/api/hook`.
   - `clip_endpoints.py` — `run_smart_cut()` (for `/api/smartcut`) and `restore_job_from_disk()` (for `/api/history/restore`).
   - `job_results.py` — `load_partial_result()` / `load_final_result()` (used by the worker loop) and `build_main_cmd()` (shared between `/api/process` and `/api/batch`).
   - `security.py` — `is_valid_job_id()`, trusted-origin checks.
@@ -184,7 +183,7 @@ Activates the pre-commit hook that blocks sensitive data (API keys, cookies, tok
 ## Key Patterns
 
 - **Job queue**: In-memory async queue in `app.py`. Jobs submitted via `POST /api/process`, polled via `GET /api/status/{job_id}`.
-- **Batch processing**: `POST /api/batch` accepts up to 20 URLs, creates one job per URL, returns `batch_id`. Polled via `GET /api/batch/{batch_id}`. Supports `reframe_mode` parameter.
+- **Batch processing**: `POST /api/batch` accepts up to 20 URLs, creates one job per URL, and returns the list of `job_id`s. The frontend polls each job individually via `GET /api/status/{job_id}` and aggregates progress client-side. Supports `reframe_mode` parameter.
 - **Mixed batch (URLs + files)**: The frontend `useJobSubmission.handleBatchProcess` supports both. URLs are submitted in one shot to `/api/batch`; each file is submitted individually to `/api/process`. The hook then unifies polling across all returned `job_id`s using `/api/status/{job_id}`, aggregating progress until every job reaches a terminal state. No backend change is needed for mixed batches.
 - **Compose endpoint**: `POST /api/compose/{job_id}/{clip_index}` accepts `toggles` (smartcut/hook/subtitles booleans), `hook_params`, `subtitle_params`. Composes layers in order: Smart Cut → Hook → Subtitles. Returns `composed_url`. Cleans up intermediate files.
 - **Transcription cache**: `data/cache/` stores transcripts keyed by SHA256(url)[:16]. TTL 7 days, pruned by the background cleanup task.
@@ -211,13 +210,9 @@ python -m clippyme.pipeline.main <url_or_path> [options]
 | POST | `/api/process` | Process single video (accepts `reframe_mode`) |
 | POST | `/api/batch` | Submit multiple URLs (accepts `reframe_mode`) |
 | GET | `/api/status/{job_id}` | Poll job progress |
-| GET | `/api/batch/{batch_id}` | Aggregated batch status |
 | POST | `/api/compose/{job_id}/{clip_index}` | Compose final video from active toggles |
 | POST | `/api/smartcut/{job_id}/{clip_index}` | Generate smart-cut version of a clip |
 | POST | `/api/reframe/{job_id}/{clip_index}` | Switch a clip between `auto` / `disabled` reframe mode (requires preserved source slice) |
-| POST | `/api/subtitle` | Generate and burn subtitles |
-| POST | `/api/hook` | Add hook text overlay |
-| GET | `/api/subtitle/presets` | List available subtitle preset names |
 | POST | `/api/config/cookies` | Upload persistent cookies file |
 | GET | `/api/config/cookies/status` | Check if cookies are configured |
 | DELETE | `/api/config/cookies` | Remove cookies file |

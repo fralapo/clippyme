@@ -27,18 +27,15 @@ from pydantic import BaseModel, Field
 
 from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd
 from clippyme.domain.compose import compose_layers
-from clippyme.domain.subtitle_pipeline import resolve_clip_filename, run_subtitle_pipeline
 from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
 from clippyme.domain.url_utils import filename_from_video_url
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
     ConfigUpdateRequest,
-    HookRequest,
     ProcessRequest,
     PublishRequest,
     ReframeRequest,
-    SubtitleRequest,
     ZernioConfigRequest,
 )
 from clippyme.api.security import (
@@ -88,7 +85,6 @@ JOB_RETENTION_SECONDS = 3600  # 1 hour retention
 # Application State
 job_queue = asyncio.Queue(maxsize=50)
 jobs: Dict[str, Dict] = {}
-batches: Dict[str, Dict] = {}  # batch_id -> {job_ids: [...], created: timestamp}
 # Semaphore to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
@@ -97,7 +93,6 @@ async def lifespan(app: FastAPI):
     # run_job is defined later in this module, so we bind workers here.
     cleanup_jobs, process_queue, _run_job_wrapper = make_workers(
         jobs=jobs,
-        batches=batches,
         job_queue=job_queue,
         concurrency_semaphore=concurrency_semaphore,
         run_job=run_job,
@@ -302,7 +297,6 @@ async def batch_process(req: BatchRequest, request: Request):
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
 
-    batch_id = str(uuid.uuid4())
     batch_jobs = []
 
     for url in req.urls:
@@ -326,7 +320,7 @@ async def batch_process(req: BatchRequest, request: Request):
 
         jobs[job_id] = {
             'status': 'queued',
-            'logs': [f"Job {job_id} queued (batch {batch_id})."],
+            'logs': [f"Job {job_id} queued (batch)."],
             'cmd': cmd,
             'env': env,
             'output_dir': job_output_dir
@@ -344,42 +338,7 @@ async def batch_process(req: BatchRequest, request: Request):
     if not batch_jobs:
         raise HTTPException(status_code=400, detail="No valid URLs provided or queue is full.")
 
-    batches[batch_id] = {
-        "job_ids": [j["job_id"] for j in batch_jobs],
-        "created": time.time()
-    }
-
-    return {"batch_id": batch_id, "jobs": batch_jobs, "total": len(batch_jobs)}
-
-
-@app.get("/api/batch/{batch_id}")
-async def get_batch_status(batch_id: str):
-    """Return aggregated status of all jobs in a batch."""
-    if batch_id not in batches:
-        raise HTTPException(status_code=404, detail="Batch not found")
-
-    batch = batches[batch_id]
-    job_statuses = []
-    for jid in batch["job_ids"]:
-        job = jobs.get(jid, {})
-        status_entry = {
-            "job_id": jid,
-            "status": job.get("status", "unknown"),
-        }
-        if job.get("result"):
-            status_entry["clip_count"] = len(job["result"].get("clips", []))
-        job_statuses.append(status_entry)
-
-    completed = sum(1 for j in job_statuses if j["status"] == "completed")
-    failed = sum(1 for j in job_statuses if j["status"] == "failed")
-
-    return {
-        "batch_id": batch_id,
-        "total": len(job_statuses),
-        "completed": completed,
-        "failed": failed,
-        "jobs": job_statuses
-    }
+    return {"jobs": batch_jobs, "total": len(batch_jobs)}
 
 
 @app.get("/api/status/{job_id}")
@@ -500,74 +459,7 @@ async def delete_cookies(request: Request):
         os.remove(cookies_path)
     return {"status": "ok", "message": "Cookies removed"}
 
-from clippyme.domain.subtitles import generate_srt, burn_subtitles, generate_srt_from_video, generate_ass_karaoke, SUBTITLE_PRESETS
 from clippyme.domain.smartcut import smart_cut
-from clippyme.domain.hooks import add_hook_to_video
-
-@app.post("/api/subtitle")
-async def add_subtitles(req: SubtitleRequest):
-    if req.job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs[req.job_id]
-    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
-    try:
-        metadata_path, data = load_job_metadata(req.job_id, OUTPUT_DIR)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Metadata not found")
-
-    transcript = data.get('transcript')
-    if not transcript:
-        raise HTTPException(status_code=400, detail="Transcript not found in metadata.")
-        
-    clips = data.get('shorts', [])
-    if req.clip_index >= len(clips):
-        raise HTTPException(status_code=404, detail="Clip not found")
-        
-    clip_data = clips[req.clip_index]
-    
-    filename = resolve_clip_filename(req, clip_data, metadata_path)
-    input_path = os.path.join(output_dir, filename)
-    if not os.path.exists(input_path):
-        raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
-
-    output_filename = f"subtitled_{filename}"
-    try:
-        await run_subtitle_pipeline(
-            req=req,
-            output_dir=output_dir,
-            transcript=transcript,
-            clip_data=clip_data,
-            input_path=input_path,
-            output_filename=output_filename,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Subtitle error: %s", e)
-        raise HTTPException(status_code=500, detail="Subtitle generation failed")
-        
-    if req.clip_index < len(job['result']['clips']):
-         job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-    
-    try:
-        if req.clip_index < len(clips):
-            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-            data['shorts'] = clips
-            save_job_metadata(metadata_path, data)
-    except Exception as e:
-        logger.warning("Failed to update metadata.json: %s", e)
-
-    return {
-        "success": True,
-        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
-    }
-
-@app.get("/api/subtitle/presets")
-async def get_subtitle_presets():
-    """Return available subtitle style presets."""
-    return {name: {k: v for k, v in preset.items() if k != "margin_v"}
-            for name, preset in SUBTITLE_PRESETS.items()}
 
 @app.post("/api/smartcut/{job_id}/{clip_index}")
 async def smart_cut_clip(job_id: str, clip_index: int):
@@ -709,62 +601,6 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
         "success": True,
         "new_video_url": new_video_url,
         "reframe_mode": mode,
-    }
-
-
-@app.post("/api/hook")
-async def add_hook(req: HookRequest):
-    if req.job_id not in jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    job = jobs[req.job_id]
-    output_dir = os.path.join(OUTPUT_DIR, req.job_id)
-    try:
-        metadata_path, data = load_job_metadata(req.job_id, OUTPUT_DIR)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Metadata not found")
-
-    clips = data.get('shorts', [])
-    if req.clip_index >= len(clips):
-        raise HTTPException(status_code=404, detail="Clip not found")
-
-    clip_data = clips[req.clip_index]
-
-    filename = resolve_clip_filename(req, clip_data, metadata_path)
-    input_path = os.path.join(output_dir, filename)
-    if not os.path.exists(input_path):
-        raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
-
-    output_filename = f"hook_{filename}"
-    output_path = os.path.join(output_dir, output_filename)
-    font_scale = {"S": 0.8, "M": 1.0, "L": 1.3}.get(req.size, 1.0)
-
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: add_hook_to_video(
-                input_path, req.text, output_path, position=req.position, font_scale=font_scale
-            ),
-        )
-    except Exception as e:
-        logger.error("Hook error: %s", e)
-        raise HTTPException(status_code=500, detail="Hook overlay failed")
-
-    if 'result' in job and 'clips' in job['result'] and req.clip_index < len(job['result']['clips']):
-        job['result']['clips'][req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-
-    try:
-        if req.clip_index < len(clips):
-            clips[req.clip_index]['video_url'] = f"/videos/{req.job_id}/{output_filename}"
-            data['shorts'] = clips
-            save_job_metadata(metadata_path, data)
-    except Exception as e:
-        logger.warning("Failed to update metadata.json: %s", e)
-
-    return {
-        "success": True,
-        "new_video_url": f"/videos/{req.job_id}/{output_filename}"
     }
 
 

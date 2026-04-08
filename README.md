@@ -120,7 +120,6 @@ src/clippyme/
     gemini_service.py List available Gemini models
   domain/             Endpoint-facing business logic
     compose.py        Smart Cut → Hook → Subtitles compose pipeline
-    subtitle_pipeline.py     Subtitle generation + ffmpeg burn
     clip_endpoints.py        Smart Cut + history restore helpers
     job_results.py    Worker loop result loaders + main.py command builder (whitelisted)
     job_artifacts.py  Filesystem helpers for job outputs
@@ -162,14 +161,10 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `POST` | `/api/process` | Single video (URL or upload). Accepts `reframe_mode`. |
 | `POST` | `/api/batch` | Up to 20 URLs in one shot. |
 | `GET` | `/api/status/{job_id}` | Live status + logs + result. |
-| `GET` | `/api/batch/{batch_id}` | Aggregated batch status. |
 | `POST` | `/api/cancel/{job_id}` | Kill the subprocess. |
 | `POST` | `/api/compose/{job_id}/{clip_index}` | Compose Smart Cut + Hook + Subtitles on demand. |
 | `POST` | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut a single clip. |
 | `POST` | `/api/reframe/{job_id}/{clip_index}` | Switch a clip's reframe mode. |
-| `POST` | `/api/subtitle` | Generate + burn subtitles. |
-| `POST` | `/api/hook` | Add hook overlay. |
-| `GET` | `/api/subtitle/presets` | List preset names. |
 | `GET` | `/api/history` | Past jobs from disk. |
 | `POST` | `/api/history/{job_id}/restore` | Reload a past job into memory. |
 | `DELETE` | `/api/history/{job_id}` | Delete from disk. |

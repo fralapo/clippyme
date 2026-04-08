@@ -1,7 +1,7 @@
 """Background job queue worker and cleanup loop.
 
-Uses a closure factory so shared state (``jobs``, ``batches``, queues,
-semaphores) stays owned by ``app.py`` — avoiding circular imports and
+Uses a closure factory so shared state (``jobs``, queues, semaphores)
+stays owned by ``app.py`` — avoiding circular imports and
 module-level globals.
 """
 import asyncio
@@ -35,7 +35,6 @@ def enqueue_output(out, job_id: str, jobs: Dict[str, Dict]) -> None:
 def make_workers(
     *,
     jobs: Dict[str, Dict],
-    batches: Dict[str, Dict],
     job_queue: asyncio.Queue,
     concurrency_semaphore: asyncio.Semaphore,
     run_job: Callable[[str, Dict], Awaitable[None]],
@@ -52,7 +51,7 @@ def make_workers(
     """
 
     async def cleanup_jobs() -> None:
-        """Background task to remove old jobs, uploads, cache entries and batches."""
+        """Background task to remove old jobs, uploads, and cache entries."""
         logger.info("Cleanup task started")
         while True:
             try:
@@ -87,11 +86,6 @@ def make_workers(
                                 os.remove(cache_path)
                         except Exception:
                             pass
-
-                # Stale batches
-                for bid in list(batches.keys()):
-                    if now - batches[bid].get("created", 0) > job_retention_seconds:
-                        del batches[bid]
 
             except Exception as e:
                 logger.warning("Cleanup error: %s", e)
