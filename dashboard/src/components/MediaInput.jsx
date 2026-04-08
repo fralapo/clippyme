@@ -1,5 +1,52 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Youtube, Upload, FileVideo, X, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard, Settings } from 'lucide-react';
+import { Youtube, Upload, FileVideo, X, Globe, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard, Settings } from 'lucide-react';
+
+/**
+ * Segmented button group — used for tabs (Single/Batch), source
+ * picker (URL/Upload), mode picker (Karaoke/Classic), size/position
+ * pickers. Single consistent style across the whole create box.
+ *
+ * @param {{
+ *   options: Array<{ id: string, label: string, icon?: React.ComponentType<{ size?: number }> }>,
+ *   value: string,
+ *   onChange: (id: string) => void,
+ *   size?: 'sm' | 'md',
+ *   fullWidth?: boolean,
+ * }} props
+ */
+function Segmented({ options, value, onChange, size = 'md', fullWidth = false }) {
+    const height = size === 'sm' ? 'h-8' : 'h-10';
+    const px = size === 'sm' ? 'px-3' : 'px-4';
+    return (
+        <div
+            className={`inline-flex border border-white/[0.08] rounded-[3px] bg-white/[0.02] p-0.5 ${
+                fullWidth ? 'w-full' : ''
+            }`}
+            role="tablist"
+        >
+            {options.map(({ id, label, icon: Icon }) => {
+                const active = value === id;
+                return (
+                    <button
+                        key={id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => onChange(id)}
+                        className={`${fullWidth ? 'flex-1' : ''} ${height} ${px} flex items-center justify-center gap-2 font-mono text-[11px] uppercase tracking-[0.12em] transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60 ${
+                            active
+                                ? 'bg-[oklch(74%_0.175_62)] text-[oklch(14%_0.01_260)] font-semibold'
+                                : 'text-zinc-500 hover:text-zinc-200'
+                        }`}
+                    >
+                        {Icon && <Icon size={13} strokeWidth={active ? 2.2 : 1.8} />}
+                        {label}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
 
 /**
  * Editorial-styled iOS-style toggle switch. Whole row is clickable,
@@ -294,26 +341,19 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
         || (mode === 'batch' && batchTotal === 0);
 
     return (
-        <div className="bg-[#0f0f13] border border-white/5 rounded-xl overflow-hidden animate-fade-in shadow-2xl shadow-black/40">
-            {/* Pill Tabs */}
-            <div className="px-6 pt-6 pb-2">
-                <div className="inline-flex bg-white/[0.04] rounded-full p-1 gap-0.5">
-                    {tabs.map(({ id, label, icon: Icon }) => (
-                        <button
-                            key={id}
-                            type="button"
-                            onClick={() => setMode(id)}
-                            className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-semibold tracking-wide transition-all duration-300 ${
-                                mode === id
-                                    ? 'bg-white/10 text-white shadow-sm'
-                                    : 'text-zinc-500 hover:text-zinc-300'
-                            }`}
-                        >
-                            <Icon size={14} />
-                            {label}
-                        </button>
-                    ))}
+        <div className="relative bg-[oklch(14%_0.009_260)] border border-white/[0.08] rounded-[3px] overflow-hidden animate-fade-in shadow-[0_32px_80px_-40px_oklch(0%_0_0/0.9),0_0_0_1px_oklch(100%_0_0/0.02)]">
+            {/* Slate header */}
+            <div className="flex items-center justify-between px-5 h-9 border-b border-white/[0.06] bg-white/[0.015]">
+                <div className="flex items-center gap-2 type-mono text-[10px] text-zinc-500 uppercase tracking-[0.16em]">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[oklch(74%_0.175_62)] shadow-[0_0_6px_oklch(74%_0.175_62/0.6)]" />
+                    New&nbsp;job
                 </div>
+                <Segmented
+                    options={tabs}
+                    value={mode}
+                    onChange={setMode}
+                    size="sm"
+                />
             </div>
 
             {/* Content */}
@@ -324,32 +364,15 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                     {mode === 'single' && (
                         <div className="space-y-4">
                             {/* Source toggle */}
-                            <div className="inline-flex bg-white/[0.04] rounded-full p-1 gap-0.5">
-                                <button
-                                    type="button"
-                                    onClick={() => setSingleSource('url')}
-                                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-semibold tracking-wide transition-all ${
-                                        singleSource === 'url'
-                                            ? 'bg-white/10 text-white shadow-sm'
-                                            : 'text-zinc-500 hover:text-zinc-300'
-                                    }`}
-                                >
-                                    <Globe size={12} />
-                                    URL
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setSingleSource('file')}
-                                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-full text-[11px] font-semibold tracking-wide transition-all ${
-                                        singleSource === 'file'
-                                            ? 'bg-white/10 text-white shadow-sm'
-                                            : 'text-zinc-500 hover:text-zinc-300'
-                                    }`}
-                                >
-                                    <FileUp size={12} />
-                                    Upload
-                                </button>
-                            </div>
+                            <Segmented
+                                options={[
+                                    { id: 'url', label: 'URL', icon: Globe },
+                                    { id: 'file', label: 'Upload', icon: FileUp },
+                                ]}
+                                value={singleSource}
+                                onChange={setSingleSource}
+                                size="sm"
+                            />
 
                             {singleSource === 'url' ? (
                                 <>
@@ -364,34 +387,34 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                             type="url"
                                             value={url}
                                             onChange={(e) => setUrl(e.target.value)}
-                                            placeholder="Paste a YouTube or video URL..."
-                                            className="w-full bg-white/[0.03] border border-white/5 rounded-xl pl-12 pr-24 py-4 text-[15px] text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent transition-all"
+                                            placeholder="Paste a YouTube or video URL…"
+                                            className="w-full bg-white/[0.03] border border-white/[0.09] rounded-[3px] pl-12 pr-24 py-4 text-[15px] text-white placeholder:text-zinc-600 placeholder:italic focus:outline-none focus:border-[oklch(74%_0.175_62)]/60 focus:ring-[3px] focus:ring-[oklch(74%_0.175_62)]/15 transition-all"
                                         />
                                         <button
                                             type="button"
                                             onClick={handlePaste}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/10 text-zinc-400 hover:text-white text-xs font-medium transition-all"
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5 px-3 h-8 rounded-[3px] bg-white/[0.04] border border-white/[0.08] hover:bg-white/[0.08] hover:border-white/[0.15] text-zinc-300 hover:text-white font-mono text-[10px] uppercase tracking-[0.12em] transition-all"
                                         >
-                                            <Clipboard size={13} />
+                                            <Clipboard size={12} strokeWidth={1.8} />
                                             Paste
                                         </button>
                                     </div>
 
                                     {!cookiesConfigured && (
-                                        <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
-                                            <span className="mt-0.5">⚠</span>
-                                            <span>Cookies not configured. Without cookies, downloads may fail or be slower. Configure cookies in <strong>Settings</strong>.</span>
+                                        <div className="flex items-start gap-2.5 px-4 py-3 rounded-[3px] bg-[oklch(80%_0.17_75)]/[0.08] border border-[oklch(80%_0.17_75)]/30 text-[oklch(85%_0.15_75)] text-xs">
+                                            <span className="mt-0.5 type-mono text-[10px]">!</span>
+                                            <span>Cookies not configured. Without cookies, downloads may fail or be slower. Configure cookies in <strong className="text-white">Settings</strong>.</span>
                                         </div>
                                     )}
                                 </>
                             ) : (
                                 <div
-                                    className={`border-2 border-dashed rounded-xl p-10 text-center transition-all duration-300 relative group cursor-pointer ${
+                                    className={`border-2 border-dashed rounded-[3px] p-10 text-center transition-all duration-300 relative group cursor-pointer ${
                                         file
-                                            ? 'border-emerald-500/30 bg-emerald-500/[0.03]'
+                                            ? 'border-[oklch(68%_0.18_145)]/40 bg-[oklch(68%_0.18_145)]/[0.05]'
                                             : isDragging
-                                                ? 'border-blue-500/50 bg-blue-500/[0.04] shadow-[0_0_30px_-5px_rgba(59,130,246,0.15)]'
-                                                : 'border-white/[0.06] hover:border-white/[0.12] hover:shadow-[0_0_30px_-5px_rgba(255,255,255,0.03)] bg-white/[0.01]'
+                                                ? 'border-[oklch(74%_0.175_62)]/60 bg-[oklch(74%_0.175_62)]/[0.06] shadow-[0_0_40px_-10px_oklch(74%_0.175_62/0.3)]'
+                                                : 'border-white/[0.1] hover:border-[oklch(74%_0.175_62)]/40 bg-white/[0.015]'
                                     }`}
                                     onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                                     onDragLeave={() => setIsDragging(false)}
@@ -399,20 +422,21 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                 >
                                     {file ? (
                                         <div className="flex flex-col items-center gap-3">
-                                            <div className="w-14 h-14 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
-                                                <FileVideo size={28} />
+                                            <div className="w-14 h-14 rounded-[3px] bg-[oklch(68%_0.18_145)]/[0.1] flex items-center justify-center text-[oklch(78%_0.17_145)] border border-[oklch(68%_0.18_145)]/30">
+                                                <FileVideo size={26} strokeWidth={1.6} />
                                             </div>
                                             <div className="text-center">
-                                                <p className="text-white font-semibold text-sm truncate max-w-[240px]">{file.name}</p>
-                                                <p className="text-[11px] text-zinc-500 mt-0.5">Ready to process</p>
+                                                <p className="text-white font-medium text-sm truncate max-w-[260px]">{file.name}</p>
+                                                <p className="type-label mt-1">Ready</p>
                                             </div>
                                             <button
                                                 type="button"
                                                 onClick={() => setFile(null)}
                                                 aria-label="Remove selected file"
-                                                className="mt-1 p-2.5 hover:bg-white/10 rounded-lg transition-all text-zinc-500 hover:text-white min-h-[44px] min-w-[44px] flex items-center justify-center"
+                                                className="mt-1 flex items-center gap-1.5 h-9 px-3 rounded-[3px] border border-white/[0.1] hover:border-white/[0.2] hover:bg-white/[0.04] text-zinc-400 hover:text-white font-mono text-[10px] uppercase tracking-[0.12em] transition-all"
                                             >
-                                                <X size={16} />
+                                                <X size={12} strokeWidth={2} />
+                                                Remove
                                             </button>
                                         </div>
                                     ) : (
@@ -423,12 +447,12 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                                 onChange={(e) => setFile(e.target.files?.[0] || null)}
                                                 className="hidden"
                                             />
-                                            <div className="w-14 h-14 rounded-xl bg-white/[0.03] flex items-center justify-center text-zinc-500 group-hover:text-white group-hover:bg-white/[0.06] border border-white/5 transition-all duration-300">
-                                                <Upload size={26} />
+                                            <div className="w-14 h-14 rounded-[3px] bg-white/[0.03] flex items-center justify-center text-zinc-500 group-hover:text-[oklch(82%_0.16_68)] group-hover:bg-[oklch(74%_0.175_62)]/[0.08] border border-white/[0.1] group-hover:border-[oklch(74%_0.175_62)]/40 transition-all duration-300">
+                                                <Upload size={24} strokeWidth={1.6} />
                                             </div>
                                             <div className="text-center">
-                                                <p className="text-zinc-300 font-medium text-sm">Drop your video here or click to browse</p>
-                                                <p className="text-[11px] text-zinc-600 mt-1">MP4, MOV, WEBM up to 2GB</p>
+                                                <p className="text-zinc-200 font-medium text-sm">Drop your video here or click to browse</p>
+                                                <p className="type-label mt-1.5">MP4 · MOV · WEBM · up to 2GB</p>
                                             </div>
                                         </label>
                                     )}
@@ -439,33 +463,33 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
 
                     {/* Batch Mode — URLs textarea + multi-file upload */}
                     {mode === 'batch' && (
-                        <div className="space-y-4">
+                        <div className="space-y-5">
                             {/* URLs textarea */}
                             <div className="space-y-2">
-                                <label htmlFor="batch-urls" className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
-                                    <Globe size={11} /> URLs
+                                <label htmlFor="batch-urls" className="type-label flex items-center gap-1.5">
+                                    <Globe size={10} strokeWidth={1.8} /> URLs
                                 </label>
                                 <textarea
                                     id="batch-urls"
                                     value={batchUrls}
                                     onChange={(e) => setBatchUrls(e.target.value)}
                                     placeholder={"https://youtube.com/watch?v=abc\nhttps://youtube.com/watch?v=def"}
-                                    className="w-full bg-white/[0.03] border border-white/5 rounded-xl px-4 py-3.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent resize-none h-24 font-mono leading-relaxed transition-all"
+                                    className="w-full bg-white/[0.03] border border-white/[0.09] rounded-[3px] px-4 py-3.5 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:border-[oklch(74%_0.175_62)]/60 focus:ring-[3px] focus:ring-[oklch(74%_0.175_62)]/15 resize-none h-24 font-mono leading-relaxed transition-all"
                                     maxLength={5000}
                                 />
-                                <p className="text-[11px] text-zinc-500 px-1">One URL per line</p>
+                                <p className="type-label !normal-case !tracking-normal !text-zinc-600 !font-sans px-1">One URL per line</p>
                             </div>
 
                             {/* File uploads */}
                             <div className="space-y-2">
-                                <label className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
-                                    <FileUp size={11} /> Files
+                                <label className="type-label flex items-center gap-1.5">
+                                    <FileUp size={10} strokeWidth={1.8} /> Files
                                 </label>
                                 <div
-                                    className={`border-2 border-dashed rounded-xl p-5 text-center transition-all duration-300 cursor-pointer ${
+                                    className={`border-2 border-dashed rounded-[3px] p-5 text-center transition-all duration-300 cursor-pointer ${
                                         isDragging
-                                            ? 'border-blue-500/50 bg-blue-500/[0.04]'
-                                            : 'border-white/[0.06] hover:border-white/[0.12] bg-white/[0.01]'
+                                            ? 'border-[oklch(74%_0.175_62)]/60 bg-[oklch(74%_0.175_62)]/[0.06]'
+                                            : 'border-white/[0.1] hover:border-[oklch(74%_0.175_62)]/40 bg-white/[0.015]'
                                     }`}
                                     onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                                     onDragLeave={() => setIsDragging(false)}
@@ -479,24 +503,24 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                             onChange={(e) => setBatchFiles((prev) => [...prev, ...Array.from(e.target.files || [])])}
                                             className="hidden"
                                         />
-                                        <Upload size={20} className="text-zinc-500" />
+                                        <Upload size={18} strokeWidth={1.6} className="text-zinc-500" />
                                         <p className="text-xs text-zinc-400">Drop videos or click to add (multiple)</p>
                                     </label>
                                 </div>
 
                                 {batchFiles.length > 0 && (
-                                    <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                    <ul className="space-y-1 max-h-40 overflow-y-auto pr-1">
                                         {batchFiles.map((f, i) => (
-                                            <li key={`${f.name}-${i}`} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/5">
-                                                <FileVideo size={13} className="text-emerald-400/70 flex-shrink-0" />
-                                                <span className="text-[11px] text-zinc-300 truncate flex-1">{f.name}</span>
+                                            <li key={`${f.name}-${i}`} className="flex items-center gap-2.5 px-3 h-9 rounded-[3px] bg-white/[0.025] border border-white/[0.06]">
+                                                <FileVideo size={12} strokeWidth={1.8} className="text-[oklch(78%_0.17_145)] flex-shrink-0" />
+                                                <span className="text-[11px] text-zinc-300 truncate flex-1 font-mono">{f.name}</span>
                                                 <button
                                                     type="button"
                                                     onClick={() => setBatchFiles((prev) => prev.filter((_, j) => j !== i))}
-                                                    className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-white transition-colors"
+                                                    className="w-6 h-6 flex items-center justify-center rounded-[2px] hover:bg-white/10 text-zinc-500 hover:text-white transition-colors"
                                                     aria-label={`Remove ${f.name}`}
                                                 >
-                                                    <X size={12} />
+                                                    <X size={11} strokeWidth={2} />
                                                 </button>
                                             </li>
                                         ))}
@@ -504,56 +528,62 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                 )}
                             </div>
 
-                            <div className="flex items-center justify-between px-1 pt-1 border-t border-white/5">
-                                <p className="text-[11px] text-zinc-500">
-                                    Total items
-                                </p>
-                                <p className={`text-[11px] font-medium ${batchTotal > 20 ? 'text-red-400' : batchTotal > 0 ? 'text-zinc-300' : 'text-zinc-600'}`}>
-                                    {batchTotal} / 20
-                                </p>
+                            <div className="flex items-center justify-between pt-2 border-t border-white/[0.06] type-label">
+                                <span>Total items</span>
+                                <span className={`tabular-nums ${batchTotal > 20 ? 'text-[oklch(70%_0.22_25)]' : batchTotal > 0 ? 'text-[oklch(82%_0.16_68)]' : 'text-zinc-600'}`}>
+                                    {String(batchTotal).padStart(2, '0')}&nbsp;/&nbsp;20
+                                </span>
                             </div>
                         </div>
                     )}
 
-                    {/* Advanced options — unified drawer containing AI Instructions + Clip Options */}
-                    <div className="rounded-xl border border-white/5 overflow-hidden">
+                    {/* Advanced options drawer — AI Instructions + Clip Options */}
+                    <div className="rounded-[3px] border border-white/[0.08] overflow-hidden">
                         <button
                             type="button"
                             onClick={() => setShowAdvanced(!showAdvanced)}
-                            className="w-full flex items-center justify-between px-4 py-3 hover:bg-white/[0.02] transition-colors"
+                            aria-expanded={showAdvanced}
+                            className="w-full flex items-center justify-between px-4 h-11 hover:bg-white/[0.025] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50 focus-visible:ring-inset"
                         >
-                            <span className="flex items-center gap-2 text-[11px] font-medium text-zinc-400">
-                                <Settings size={13} className="text-purple-400/70" />
-                                Advanced options
+                            <span className="flex items-center gap-2.5">
+                                <Settings size={12} strokeWidth={1.8} className="text-zinc-500" />
+                                <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-zinc-300">
+                                    Advanced options
+                                </span>
                                 {(instructions.trim() || preSmartCut || preSubtitles || preHook || reframeMode !== 'auto') && (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent-pink/20 text-accent-pink font-semibold uppercase tracking-wider">Custom</span>
+                                    <span className="inline-flex items-center gap-1 font-mono text-[9px] px-1.5 py-0.5 rounded-[2px] border border-[oklch(74%_0.175_62)]/40 text-[oklch(82%_0.16_68)] uppercase tracking-[0.14em]">
+                                        <span className="w-1 h-1 rounded-full bg-[oklch(74%_0.175_62)] shadow-[0_0_4px_oklch(74%_0.175_62/0.8)]" />
+                                        Custom
+                                    </span>
                                 )}
                             </span>
-                            <ChevronDown size={14} className={`text-zinc-600 transition-transform duration-200 ${showAdvanced ? 'rotate-180' : ''}`} />
+                            <ChevronDown size={14} strokeWidth={1.8} className={`text-zinc-500 transition-transform duration-200 ${showAdvanced ? 'rotate-180' : ''}`} />
                         </button>
                         {showAdvanced && (
-                            <div className="px-4 pb-4 space-y-5 animate-fade-in border-t border-white/5 pt-4">
+                            <div className="px-5 pb-5 space-y-6 animate-fade-in border-t border-white/[0.06] pt-5">
                                 {/* Section: AI Instructions */}
                                 <div className="space-y-2">
-                                    <p className="flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-                                        <Sparkles size={11} className="text-purple-400/70" />
+                                    <div className="flex items-center gap-2 type-label">
+                                        <Sparkles size={10} strokeWidth={1.8} className="text-[oklch(74%_0.175_62)]" />
                                         AI Instructions
-                                    </p>
+                                    </div>
                                     <textarea
                                         value={instructions}
                                         onChange={(e) => setInstructions(e.target.value)}
-                                        placeholder="Guide the AI... e.g. 'Find the funniest moments' or 'Focus on the cooking parts, skip the intro'"
-                                        className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-4 py-3 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-transparent resize-none h-20 transition-all"
+                                        placeholder="Guide the AI… e.g. 'Find the funniest moments' or 'Focus on the cooking parts, skip the intro'"
+                                        className="w-full bg-white/[0.03] border border-white/[0.09] rounded-[3px] px-4 py-3 text-sm text-white placeholder:text-zinc-600 placeholder:italic focus:outline-none focus:border-[oklch(74%_0.175_62)]/60 focus:ring-[3px] focus:ring-[oklch(74%_0.175_62)]/15 resize-none h-20 transition-all"
                                         maxLength={500}
                                     />
                                     <p className="text-[11px] text-zinc-600 px-0.5">Optional. Helps the AI find specific types of clips.</p>
                                 </div>
 
-                                {/* Divider */}
-                                <div className="border-t border-white/5" />
-
                                 {/* Section: Clip Options */}
-                                <div className="space-y-4">
+                                <div className="space-y-3">
+                                    <div className="flex items-center gap-3 type-label">
+                                        <span className="text-[oklch(74%_0.175_62)]">§</span>
+                                        Clip options
+                                        <hr className="hairline flex-1" />
+                                    </div>
 
                                 {/* Auto Reframe — single toggle (on = face tracking, off = 4:3 with black bars) */}
                                 <SwitchRow
@@ -587,33 +617,27 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                     />
 
                                     {preSubtitles && showSubConfig && (
-                                        <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-3 animate-fade-in">
+                                        <div className="bg-white/[0.02] border border-white/[0.07] rounded-[3px] p-4 space-y-4 animate-fade-in">
                                             {/* Mode (first — drives whether preset picker is shown) */}
-                                            <div className="space-y-1.5">
-                                                <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Mode</p>
-                                                <div className="flex gap-2">
-                                                    {['karaoke', 'classic'].map(m => (
-                                                        <button
-                                                            key={m}
-                                                            type="button"
-                                                            onClick={() => setPreSubMode(m)}
-                                                            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all ${
-                                                                preSubMode === m
-                                                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
-                                                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
-                                                            }`}
-                                                        >
-                                                            {m.charAt(0).toUpperCase() + m.slice(1)}
-                                                        </button>
-                                                    ))}
-                                                </div>
+                                            <div className="space-y-2">
+                                                <p className="type-label">Mode</p>
+                                                <Segmented
+                                                    options={[
+                                                        { id: 'karaoke', label: 'Karaoke' },
+                                                        { id: 'classic', label: 'Classic' },
+                                                    ]}
+                                                    value={preSubMode}
+                                                    onChange={setPreSubMode}
+                                                    size="sm"
+                                                    fullWidth
+                                                />
                                             </div>
 
-                                            {/* Preset — only meaningful in karaoke mode (classic uses font/color params) */}
+                                            {/* Preset — only meaningful in karaoke mode */}
                                             {preSubMode === 'karaoke' ? (
-                                                <div className="space-y-1.5">
-                                                    <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Karaoke Preset</p>
-                                                    <div className="grid grid-cols-2 gap-1.5">
+                                                <div className="space-y-2">
+                                                    <p className="type-label">Karaoke preset</p>
+                                                    <div className="grid grid-cols-2 gap-2">
                                                         {SUBTITLE_PRESETS.map((p) => {
                                                             const isActive = preSubPreset === p.id;
                                                             return (
@@ -621,10 +645,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                                                     key={p.id}
                                                                     type="button"
                                                                     onClick={() => setPreSubPreset(p.id)}
-                                                                    className={`relative rounded-lg border overflow-hidden transition-all ${
+                                                                    aria-pressed={isActive}
+                                                                    className={`relative rounded-[3px] border overflow-hidden transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60 ${
                                                                         isActive
-                                                                            ? 'border-accent-pink/50 bg-white/[0.06]'
-                                                                            : 'border-white/5 bg-white/[0.02] hover:border-white/10'
+                                                                            ? 'border-[oklch(74%_0.175_62)]/60 bg-[oklch(74%_0.175_62)]/[0.08] shadow-[0_0_0_1px_oklch(74%_0.175_62/0.25)_inset]'
+                                                                            : 'border-white/[0.08] bg-white/[0.02] hover:border-white/[0.18]'
                                                                     }`}
                                                                 >
                                                                     <div className="px-2 py-2.5 flex items-center justify-center min-h-[44px]">
@@ -632,8 +657,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                                                             WORD <span style={{ color: p.highlight }}>UP</span>
                                                                         </span>
                                                                     </div>
-                                                                    <div className="px-1.5 py-1 bg-black/40 border-t border-white/5">
-                                                                        <p className={`text-[9px] uppercase tracking-wider truncate ${isActive ? 'text-accent-pink' : 'text-zinc-500'}`}>{p.label}</p>
+                                                                    <div className="px-1.5 py-1 bg-black/50 border-t border-white/[0.06] flex items-center gap-1.5">
+                                                                        {isActive && (
+                                                                            <span className="w-1 h-1 rounded-full bg-[oklch(74%_0.175_62)] shadow-[0_0_4px_oklch(74%_0.175_62/0.8)]" />
+                                                                        )}
+                                                                        <p className={`type-mono text-[9px] uppercase tracking-[0.14em] truncate ${isActive ? 'text-[oklch(82%_0.16_68)]' : 'text-zinc-500'}`}>{p.label}</p>
                                                                     </div>
                                                                 </button>
                                                             );
@@ -641,63 +669,59 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <div className="space-y-2.5">
+                                                <div className="space-y-3">
                                                     {/* Font */}
-                                                    <div className="space-y-1.5">
-                                                        <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Font</p>
+                                                    <div className="space-y-2">
+                                                        <p className="type-label">Font</p>
                                                         <select
                                                             value={preSubClassicFont}
                                                             onChange={(e) => setPreSubClassicFont(e.target.value)}
-                                                            className="w-full bg-white/[0.04] border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                                                            className="w-full bg-white/[0.03] border border-white/[0.09] rounded-[3px] px-3 h-10 text-xs text-white font-mono uppercase tracking-[0.06em] focus:outline-none focus:border-[oklch(74%_0.175_62)]/60 focus:ring-[3px] focus:ring-[oklch(74%_0.175_62)]/15 transition-all"
                                                         >
                                                             {['Verdana', 'Montserrat-Black', 'Anton-Regular', 'Bangers-Regular', 'Poppins-Black', 'Poppins-Medium'].map(f => (
-                                                                <option key={f} value={f} className="bg-[#1e1e28]">{f.replace(/-/g, ' ')}</option>
+                                                                <option key={f} value={f} className="bg-[oklch(15%_0.01_260)]">{f.replace(/-/g, ' ')}</option>
                                                             ))}
                                                         </select>
                                                     </div>
                                                     {/* Font color */}
-                                                    <div className="space-y-1.5">
-                                                        <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Font color</p>
-                                                        <div className="flex flex-wrap gap-1.5">
+                                                    <div className="space-y-2">
+                                                        <p className="type-label">Font color</p>
+                                                        <div className="flex flex-wrap gap-2">
                                                             {['#FFFFFF', '#FFFF00', '#00FFFF', '#00FF00', '#FF4444', '#FF69B4'].map(c => (
                                                                 <button
                                                                     key={c}
                                                                     type="button"
                                                                     onClick={() => setPreSubClassicFontColor(c)}
-                                                                    className={`w-6 h-6 rounded-full border-2 transition-all ${
+                                                                    aria-label={`Color ${c}`}
+                                                                    aria-pressed={preSubClassicFontColor === c}
+                                                                    className={`w-8 h-8 rounded-[2px] border-2 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)] focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                                                                         preSubClassicFontColor === c
-                                                                            ? 'border-white scale-110'
-                                                                            : 'border-transparent hover:border-white/30'
+                                                                            ? 'border-[oklch(74%_0.175_62)] shadow-[0_0_0_2px_oklch(74%_0.175_62/0.3)]'
+                                                                            : 'border-white/20 hover:border-white/40'
                                                                     }`}
                                                                     style={{ backgroundColor: c }}
-                                                                    aria-label={`Color ${c}`}
                                                                 />
                                                             ))}
-                                                            <label className="w-6 h-6 rounded-full border-2 border-dashed border-white/20 cursor-pointer flex items-center justify-center hover:border-white/40 relative">
-                                                                <span className="text-[9px] text-zinc-500">+</span>
+                                                            <label className="w-8 h-8 rounded-[2px] border-2 border-dashed border-white/20 cursor-pointer flex items-center justify-center hover:border-[oklch(74%_0.175_62)]/50 relative transition-colors">
+                                                                <span className="text-[11px] text-zinc-500">+</span>
                                                                 <input type="color" value={preSubClassicFontColor} onChange={(e) => setPreSubClassicFontColor(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer" />
                                                             </label>
                                                         </div>
                                                     </div>
                                                     {/* Position */}
-                                                    <div className="space-y-1.5">
-                                                        <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Position</p>
-                                                        <div className="flex gap-2">
-                                                            {['top', 'middle', 'bottom'].map(pos => (
-                                                                <button
-                                                                    key={pos}
-                                                                    type="button"
-                                                                    onClick={() => setPreSubClassicPosition(pos)}
-                                                                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all ${
-                                                                        preSubClassicPosition === pos
-                                                                            ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
-                                                                            : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
-                                                                    }`}
-                                                                >
-                                                                    {pos.charAt(0).toUpperCase() + pos.slice(1)}
-                                                                </button>
-                                                            ))}
-                                                        </div>
+                                                    <div className="space-y-2">
+                                                        <p className="type-label">Position</p>
+                                                        <Segmented
+                                                            options={[
+                                                                { id: 'top', label: 'Top' },
+                                                                { id: 'middle', label: 'Middle' },
+                                                                { id: 'bottom', label: 'Bottom' },
+                                                            ]}
+                                                            value={preSubClassicPosition}
+                                                            onChange={setPreSubClassicPosition}
+                                                            size="sm"
+                                                            fullWidth
+                                                        />
                                                     </div>
                                                 </div>
                                             )}
@@ -717,46 +741,36 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                     />
 
                                     {preHook && showHookConfig && (
-                                        <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-3 animate-fade-in">
+                                        <div className="bg-white/[0.02] border border-white/[0.07] rounded-[3px] p-4 space-y-3 animate-fade-in">
                                             {/* Position */}
-                                            <div className="space-y-1.5">
-                                                <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Position</p>
-                                                <div className="flex gap-2">
-                                                    {['top', 'center', 'bottom'].map(pos => (
-                                                        <button
-                                                            key={pos}
-                                                            type="button"
-                                                            onClick={() => setPreHookPosition(pos)}
-                                                            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all ${
-                                                                preHookPosition === pos
-                                                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
-                                                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
-                                                            }`}
-                                                        >
-                                                            {pos.charAt(0).toUpperCase() + pos.slice(1)}
-                                                        </button>
-                                                    ))}
-                                                </div>
+                                            <div className="space-y-2">
+                                                <p className="type-label">Position</p>
+                                                <Segmented
+                                                    options={[
+                                                        { id: 'top', label: 'Top' },
+                                                        { id: 'center', label: 'Center' },
+                                                        { id: 'bottom', label: 'Bottom' },
+                                                    ]}
+                                                    value={preHookPosition}
+                                                    onChange={setPreHookPosition}
+                                                    size="sm"
+                                                    fullWidth
+                                                />
                                             </div>
                                             {/* Size */}
-                                            <div className="space-y-1.5">
-                                                <p className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Size</p>
-                                                <div className="flex gap-2">
-                                                    {['S', 'M', 'L'].map(sz => (
-                                                        <button
-                                                            key={sz}
-                                                            type="button"
-                                                            onClick={() => setPreHookSize(sz)}
-                                                            className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-medium border transition-all ${
-                                                                preHookSize === sz
-                                                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
-                                                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
-                                                            }`}
-                                                        >
-                                                            {sz}
-                                                        </button>
-                                                    ))}
-                                                </div>
+                                            <div className="space-y-2">
+                                                <p className="type-label">Size</p>
+                                                <Segmented
+                                                    options={[
+                                                        { id: 'S', label: 'S' },
+                                                        { id: 'M', label: 'M' },
+                                                        { id: 'L', label: 'L' },
+                                                    ]}
+                                                    value={preHookSize}
+                                                    onChange={setPreHookSize}
+                                                    size="sm"
+                                                    fullWidth
+                                                />
                                             </div>
                                         </div>
                                     )}
