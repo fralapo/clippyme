@@ -216,10 +216,8 @@ export default function ResultCard({
         subtitleDrift;
 
     const scoreLevel = clip.viral_score >= 80 ? 'high' : clip.viral_score >= 50 ? 'mid' : 'low';
-    // Cutting Room: single accent color for everything. The VU-meter
-    // encodes severity via *how many segments light up*, not via hue
-    // swings, which reads more like a studio meter and less like a
-    // candy badge.
+    // Single accent color for every tier. The VU-meter encodes
+    // severity via how many segments light up, not via hue swings.
     const viralScoreAccent = {
         high: 'oklch(74% 0.175 62)',
         mid: 'oklch(78% 0.16 75)',
@@ -394,14 +392,14 @@ export default function ResultCard({
                             title={rank === 1 ? 'Top clip (highest viral score)' : `Rank ${rank}/${totalClips}`}
                         >
                             {rank === 1 && <Trophy size={9} strokeWidth={2.4} />}
-                            <span>RK&nbsp;{String(rank).padStart(2, '0')}</span>
+                            <span>#{String(rank).padStart(2, '0')}</span>
                             <span className="opacity-60 font-normal">/{String(totalClips).padStart(2, '0')}</span>
                         </div>
                     )}
                     {publishedAt && (
                         <div className="flex items-center gap-1.5 px-2 py-1 rounded-[2px] bg-[oklch(20%_0.04_145)] border border-[oklch(68%_0.18_145)]/50 text-[oklch(82%_0.15_145)] type-mono text-[10px] font-semibold uppercase tracking-[0.14em] shadow-lg rec-blink">
                             <span className="w-1.5 h-1.5 rounded-full bg-[oklch(68%_0.18_145)] shadow-[0_0_6px_oklch(68%_0.18_145/0.9)]" />
-                            Shipped
+                            Published
                         </div>
                     )}
                 </div>
@@ -411,7 +409,7 @@ export default function ResultCard({
                     <div className="absolute bottom-16 left-0 right-0 z-10 text-center pointer-events-none">
                         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-[2px] bg-black/85 backdrop-blur-sm border border-white/20 type-mono text-[10px] font-semibold text-zinc-300 uppercase tracking-[0.14em] shadow-xl">
                             <EyeOff size={10} />
-                            Muted — held from batch
+                            Disabled — excluded from batch
                         </span>
                     </div>
                 )}
@@ -494,10 +492,10 @@ export default function ResultCard({
                         </div>
                         <div className="flex items-center gap-2 type-label !text-[10px] !tracking-[0.14em] tabular-nums">
                             <Clock size={9} strokeWidth={1.8} />
-                            <span>{duration}s&nbsp;take</span>
+                            <span>{duration}s&nbsp;clip</span>
                             <span className="text-zinc-700">/</span>
                             <span className="text-zinc-600">
-                                {clip.viral_score >= 80 ? 'Headliner' : clip.viral_score >= 50 ? 'Strong' : 'B-reel'}
+                                {clip.viral_score >= 80 ? 'High viral' : clip.viral_score >= 50 ? 'Good' : 'Low'}
                             </span>
                         </div>
                     </div>

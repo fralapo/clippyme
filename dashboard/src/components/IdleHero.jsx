@@ -51,29 +51,26 @@ export default function IdleHero({
 
   return (
     <div className="flex flex-col items-center text-center pt-6 sm:pt-14 w-full space-y-6">
-      {/* Editorial masthead */}
+      {/* Masthead */}
       <div className="w-full max-w-3xl space-y-5 mb-10">
         <div className="flex items-center gap-3 justify-center type-label">
           <span aria-hidden className="inline-block w-6 h-px bg-[oklch(74%_0.175_62)]" />
-          <span>§&nbsp;Issue&nbsp;N°&nbsp;001</span>
+          <span>AI&nbsp;viral&nbsp;clip&nbsp;generator</span>
           <span aria-hidden className="inline-block w-6 h-px bg-[oklch(74%_0.175_62)]" />
         </div>
         <h1 className="type-display text-[clamp(3rem,9vw,6.5rem)] text-white leading-[0.92] relative">
-          <span className="block">Cut the</span>
+          <span className="block">Long videos</span>
           <span className="block italic text-[oklch(74%_0.175_62)] relative">
-            noise.
+            into shorts.
             <span
               aria-hidden
               className="absolute left-1/2 -translate-x-1/2 -bottom-2 w-[55%] h-px bg-[oklch(74%_0.175_62)]/50"
             />
           </span>
-          <span className="block italic font-light text-zinc-400 text-[0.55em] mt-4 tracking-normal">
-            Find the take.
-          </span>
         </h1>
         <p className="type-label !normal-case !tracking-[0.02em] !text-zinc-400 !text-[14px] !font-sans max-w-md mx-auto leading-relaxed">
-          Drop a URL or a file. Gemini scores every beat on a five-axis viral rubric.
-          You keep only the takes worth shipping.
+          Paste a YouTube URL or drop a file. ClippyMe finds the viral moments,
+          reframes them 9:16, and burns subtitles — automatically.
         </p>
       </div>
 

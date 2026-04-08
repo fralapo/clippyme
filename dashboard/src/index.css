@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 
 /*
- * ClippyMe — "Cutting Room" design system
+ * ClippyMe — design system
  *
  * Aesthetic direction: editorial-brutalist dark, inspired by film editing
  * suites and cinema grading tools. Single accent color (amber),
@@ -159,7 +159,7 @@
   }
 }
 
-/* ─── Component utilities (Cutting Room edition) ─── */
+/* ─── Component utilities ─── */
 @layer components {
   /* Glass panels are flatter now — less blur, more hairline, so the UI
      reads as a piece of editorial print rather than frosted glass. */

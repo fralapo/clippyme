@@ -101,10 +101,10 @@ export default function ResultsGrid({
 
   return (
     <div className="space-y-8">
-      {/* Editorial masthead — Fraunces serif headline + mono deck line */}
+      {/* Results masthead — serif headline + mono deck line */}
       <header className="space-y-4">
         <div className="flex items-baseline gap-3 text-zinc-600">
-          <span className="type-label">§ Reel</span>
+          <span className="type-label">Results</span>
           <hr className="hairline flex-1" />
           <span className="type-label tabular-nums">
             {String(clipCount).padStart(2, '0')}&nbsp;clips
@@ -118,11 +118,11 @@ export default function ResultsGrid({
               <span>
                 {clipCount > 0 ? (
                   <>
-                    <em className="not-italic text-white">Your cut,</em>{' '}
-                    <span className="italic text-zinc-400 font-light">ready to ship</span>
+                    <em className="not-italic text-white">Your clips,</em>{' '}
+                    <span className="italic text-zinc-400 font-light">ready to publish</span>
                   </>
                 ) : (
-                  <span className="italic text-zinc-400 font-light">Waiting for rushes…</span>
+                  <span className="italic text-zinc-400 font-light">Waiting for clips…</span>
                 )}
               </span>
             </h2>
@@ -184,7 +184,7 @@ export default function ResultsGrid({
                 title={`Publish ${publishableClips.length} active clips (ignores disabled and already-published)`}
               >
                 <Send size={13} strokeWidth={2.2} />
-                Ship&nbsp;
+                Publish&nbsp;
                 <span className="tabular-nums">
                   {String(publishableClips.length).padStart(2, '0')}
                 </span>
@@ -212,9 +212,9 @@ export default function ResultsGrid({
         // Tiers inspired by the NotebookLM brainstorm recommendation.
         (() => {
           const tiers = [
-            { id: 'top', numeral: 'I', label: 'Headliners', hint: 'Score 80+ \u2014 ship these first', min: 80, max: 101 },
-            { id: 'mid', numeral: 'II', label: 'Strong candidates', hint: 'Score 50\u201379 \u2014 improve with Smart Cut + hooks', min: 50, max: 80 },
-            { id: 'low', numeral: 'III', label: 'B-reel', hint: 'Score <50 \u2014 consider skipping', min: 0, max: 50 },
+            { id: 'top', numeral: 'I', label: 'High viral score', hint: 'Score 80+ \u2014 publish these first', min: 80, max: 101 },
+            { id: 'mid', numeral: 'II', label: 'Good candidates', hint: 'Score 50\u201379 \u2014 improve with Smart Cut + hooks', min: 50, max: 80 },
+            { id: 'low', numeral: 'III', label: 'Lower score', hint: 'Score <50 \u2014 consider skipping', min: 0, max: 50 },
           ];
           const groups = tiers
             .map((tier) => ({

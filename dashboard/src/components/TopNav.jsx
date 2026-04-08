@@ -44,7 +44,6 @@ export default function TopNav({ activeTab, onTabChange, status, jobId, onReset,
             >
               ClippyMe
             </span>
-            <span className="type-label hidden md:inline">Cutting&nbsp;Room</span>
           </div>
         </div>
 
@@ -78,7 +77,7 @@ export default function TopNav({ activeTab, onTabChange, status, jobId, onReset,
           })}
         </div>
 
-        {/* Status block — looks like an editor's take-log */}
+        {/* Status indicator */}
         <div className="flex items-center gap-3">
           <div
             className="hidden md:flex items-center gap-2.5 px-3 h-9 border border-white/[0.08] rounded-[3px] bg-white/[0.02]"
@@ -96,7 +95,7 @@ export default function TopNav({ activeTab, onTabChange, status, jobId, onReset,
               }`}
             />
             <span className="type-label !text-zinc-400">
-              {status === 'processing' ? 'Rec' : status === 'error' ? 'Err' : status === 'complete' ? 'Cut' : 'Idle'}
+              {status === 'processing' ? 'Processing' : status === 'error' ? 'Error' : status === 'complete' ? 'Done' : 'Idle'}
             </span>
           </div>
 
@@ -116,7 +115,7 @@ export default function TopNav({ activeTab, onTabChange, status, jobId, onReset,
               className="flex items-center gap-1.5 h-9 px-3 text-[11px] font-mono uppercase tracking-[0.14em] text-zinc-300 hover:text-white border border-white/10 hover:border-white/25 bg-white/[0.02] rounded-[3px]"
             >
               <PlusCircle size={12} strokeWidth={2.2} />
-              <span className="hidden sm:inline">New&nbsp;Take</span>
+              <span className="hidden sm:inline">Start&nbsp;over</span>
             </button>
           )}
         </div>
