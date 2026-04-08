@@ -7,6 +7,73 @@ import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
+/**
+ * Segmented toggle cell used in the ResultCard action row.
+ * Has a clear ON/OFF state via LED indicator, mono uppercase label,
+ * and an optional gear affordance that only shows when the cell is
+ * active (avoids the "why is there a settings icon on an inactive
+ * thing" confusion the previous version had).
+ *
+ * @param {{
+ *   icon: React.ComponentType<{ size?: number, strokeWidth?: number }>,
+ *   label: string,
+ *   active: boolean,
+ *   onToggle: () => void,
+ *   onConfigure?: () => void,
+ *   title?: string,
+ * }} props
+ */
+function ToggleCell({ icon: Icon, label, active, onToggle, onConfigure, title }) {
+    return (
+        <div className="relative">
+            <button
+                type="button"
+                onClick={onToggle}
+                aria-pressed={active}
+                title={title}
+                className={`group w-full min-h-[52px] flex flex-col items-center justify-center gap-1 py-2 px-1.5 rounded-[3px] border transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60 focus-visible:ring-offset-1 focus-visible:ring-offset-[oklch(14%_0.009_260)] ${
+                    active
+                        ? 'bg-[oklch(74%_0.175_62)]/[0.12] border-[oklch(74%_0.175_62)]/55 text-[oklch(82%_0.16_68)] shadow-[0_0_0_1px_oklch(74%_0.175_62/0.2)_inset]'
+                        : 'bg-white/[0.02] border-white/[0.07] text-zinc-500 hover:text-zinc-200 hover:border-white/[0.14] hover:bg-white/[0.04]'
+                }`}
+            >
+                <div className="flex items-center gap-1.5 w-full justify-center">
+                    {/* LED indicator — lit amber when active */}
+                    <span
+                        aria-hidden
+                        className={`w-1.5 h-1.5 rounded-full transition-all ${
+                            active
+                                ? 'bg-[oklch(74%_0.175_62)] shadow-[0_0_6px_oklch(74%_0.175_62/0.85)]'
+                                : 'bg-zinc-700 group-hover:bg-zinc-500'
+                        }`}
+                    />
+                    <Icon size={13} strokeWidth={active ? 2.2 : 1.8} />
+                </div>
+                <span
+                    className="type-mono text-[9px] uppercase tracking-[0.14em] leading-none"
+                    style={{ letterSpacing: '0.13em' }}
+                >
+                    {label}
+                </span>
+            </button>
+            {onConfigure && active && (
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onConfigure();
+                    }}
+                    aria-label={`Configure ${label}`}
+                    title={`${label} settings`}
+                    className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded-[2px] text-[oklch(82%_0.16_68)]/70 hover:text-white hover:bg-[oklch(74%_0.175_62)]/25 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[oklch(74%_0.175_62)]"
+                >
+                    <Settings size={11} strokeWidth={2} />
+                </button>
+            )}
+        </div>
+    );
+}
+
 export default function ResultCard({
     clip,
     index,
@@ -511,87 +578,50 @@ export default function ResultCard({
                     </div>
                 )}
 
-                {/* Compact toggles — single horizontal row, 3 slim pills */}
+                {/* Toggle row — three segmented buttons with LED indicator,
+                    mono label, and a gear settings affordance that only
+                    shows when the toggle is ON. */}
                 <div className="grid grid-cols-3 gap-1.5">
-                    <button
-                        onClick={() => setToggles((t) => ({ ...t, smartcut: !t.smartcut }))}
+                    <ToggleCell
+                        icon={Scissors}
+                        label="Smart Cut"
+                        active={toggles.smartcut}
+                        onToggle={() => setToggles((t) => ({ ...t, smartcut: !t.smartcut }))}
                         title="Smart Cut — remove silences and filler words"
-                        className={`flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border text-[10px] font-semibold transition-all ${
-                            toggles.smartcut
-                                ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
-                                : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
-                        }`}
-                    >
-                        <Scissors size={13} />
-                        Smart Cut
-                    </button>
-
-                    <div className={`relative flex flex-col ${toggles.hook ? '' : ''}`}>
-                        <button
-                            onClick={() => setToggles((t) => ({ ...t, hook: !t.hook }))}
-                            title="Hook text overlay"
-                            className={`flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border text-[10px] font-semibold transition-all w-full ${
-                                toggles.hook
-                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
-                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
-                            }`}
-                        >
-                            <MessageSquare size={13} />
-                            Hook
-                        </button>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setShowHookModal(true);
-                            }}
-                            title="Hook settings"
-                            className="absolute top-1 right-1 p-0.5 rounded text-zinc-600 hover:text-white hover:bg-white/10 transition-colors"
-                        >
-                            <Settings size={10} />
-                        </button>
-                    </div>
-
-                    <div className="relative flex flex-col">
-                        <button
-                            onClick={() => setToggles((t) => ({ ...t, subtitles: !t.subtitles }))}
-                            title="Subtitles"
-                            className={`flex flex-col items-center justify-center gap-0.5 py-2 rounded-lg border text-[10px] font-semibold transition-all w-full ${
-                                toggles.subtitles
-                                    ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
-                                    : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300 hover:bg-white/[0.04]'
-                            }`}
-                        >
-                            <Type size={13} />
-                            Subtitles
-                        </button>
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                setShowSubtitleModal(true);
-                            }}
-                            title="Subtitle settings"
-                            className="absolute top-1 right-1 p-0.5 rounded text-zinc-600 hover:text-white hover:bg-white/10 transition-colors"
-                        >
-                            <Settings size={10} />
-                        </button>
-                    </div>
+                    />
+                    <ToggleCell
+                        icon={MessageSquare}
+                        label="Hook"
+                        active={toggles.hook}
+                        onToggle={() => setToggles((t) => ({ ...t, hook: !t.hook }))}
+                        onConfigure={() => setShowHookModal(true)}
+                        title="Hook — text overlay on top of the video"
+                    />
+                    <ToggleCell
+                        icon={Type}
+                        label="Subtitles"
+                        active={toggles.subtitles}
+                        onToggle={() => setToggles((t) => ({ ...t, subtitles: !t.subtitles }))}
+                        onConfigure={() => setShowSubtitleModal(true)}
+                        title="Subtitles — burn captions into the video"
+                    />
                 </div>
 
-                {/* Download + Publish row */}
+                {/* Download + Publish row — flat editorial buttons */}
                 <div className="flex gap-2">
                     <button
                         onClick={handleDownload}
                         disabled={isComposing}
-                        className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-60 disabled:pointer-events-none"
+                        className="flex-1 h-11 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(14%_0.01_260)] font-mono text-[11px] uppercase tracking-[0.16em] font-semibold border border-[oklch(70%_0.18_62)] flex items-center justify-center gap-2 shadow-[0_1px_0_0_oklch(100%_0_0/0.3)_inset,0_8px_20px_-14px_oklch(74%_0.175_62/0.5)] active:translate-y-px transition-all duration-150 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)] focus-visible:ring-offset-2 focus-visible:ring-offset-[oklch(14%_0.009_260)]"
                     >
                         {isComposing ? (
                             <>
-                                <Loader2 size={15} className="animate-spin" />
-                                Composing...
+                                <Loader2 size={14} className="animate-spin" strokeWidth={2.2} />
+                                Composing
                             </>
                         ) : (
                             <>
-                                <Download size={15} />
+                                <Download size={14} strokeWidth={2.2} />
                                 Download
                             </>
                         )}
@@ -606,13 +636,13 @@ export default function ResultCard({
                                     ? 'Already published — click to publish again'
                                     : 'Publish to TikTok / Instagram / YouTube via Zernio'
                         }
-                        className={`px-4 py-2.5 rounded-lg border text-sm font-semibold flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50 ${
+                        className={`h-11 px-4 rounded-[3px] border font-mono text-[11px] uppercase tracking-[0.16em] font-semibold flex items-center justify-center gap-2 transition-all duration-150 active:translate-y-px disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[oklch(14%_0.009_260)] ${
                             publishedAt
-                                ? 'bg-emerald-500/20 hover:bg-emerald-500/30 border-emerald-500/30 text-emerald-300'
-                                : 'bg-accent-pink/20 hover:bg-accent-pink/30 border-accent-pink/30 text-accent-pink'
+                                ? 'bg-[oklch(68%_0.18_145)]/[0.12] border-[oklch(68%_0.18_145)]/50 text-[oklch(80%_0.15_145)] hover:bg-[oklch(68%_0.18_145)]/[0.2] focus-visible:ring-[oklch(68%_0.18_145)]'
+                                : 'bg-transparent border-[oklch(74%_0.175_62)]/50 text-[oklch(82%_0.16_68)] hover:bg-[oklch(74%_0.175_62)]/[0.12] hover:border-[oklch(74%_0.175_62)]/80 focus-visible:ring-[oklch(74%_0.175_62)]'
                         }`}
                     >
-                        {publishedAt ? <Check size={15} /> : <Send size={15} />}
+                        {publishedAt ? <Check size={14} strokeWidth={2.4} /> : <Send size={14} strokeWidth={2.2} />}
                         {publishedAt ? 'Republish' : 'Publish'}
                     </button>
                 </div>

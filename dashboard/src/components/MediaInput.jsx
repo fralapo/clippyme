@@ -1,6 +1,85 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Youtube, Upload, FileVideo, X, Globe, Link2, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard, Settings } from 'lucide-react';
 
+/**
+ * Editorial-styled iOS-style toggle switch. Whole row is clickable,
+ * 44px minimum touch target, amber accent when on, aria-compliant.
+ *
+ * @param {{
+ *   label: string,
+ *   description?: string,
+ *   checked: boolean,
+ *   onChange: (next: boolean) => void,
+ *   onConfigure?: () => void,
+ *   configureActive?: boolean,
+ * }} props
+ */
+function SwitchRow({ label, description, checked, onChange, onConfigure, configureActive }) {
+    return (
+        <div className="flex items-center justify-between gap-3 min-h-[44px]">
+            <button
+                type="button"
+                onClick={() => onChange(!checked)}
+                role="switch"
+                aria-checked={checked}
+                className="flex-1 flex items-center gap-2.5 text-left rounded-[3px] py-1 px-1 -mx-1 hover:bg-white/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+            >
+                <span
+                    aria-hidden
+                    className={`w-1.5 h-1.5 rounded-full shrink-0 transition-all ${
+                        checked
+                            ? 'bg-[oklch(74%_0.175_62)] shadow-[0_0_6px_oklch(74%_0.175_62/0.85)]'
+                            : 'bg-zinc-700'
+                    }`}
+                />
+                <div className="flex flex-col min-w-0">
+                    <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-zinc-200 leading-tight">
+                        {label}
+                    </span>
+                    {description && (
+                        <span className="text-[10px] text-zinc-500 leading-tight mt-0.5 truncate">
+                            {description}
+                        </span>
+                    )}
+                </div>
+            </button>
+            {onConfigure && checked && (
+                <button
+                    type="button"
+                    onClick={onConfigure}
+                    aria-label={`Configure ${label}`}
+                    className={`w-9 h-9 flex items-center justify-center rounded-[3px] border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60 ${
+                        configureActive
+                            ? 'bg-[oklch(74%_0.175_62)]/[0.14] border-[oklch(74%_0.175_62)]/50 text-[oklch(82%_0.16_68)]'
+                            : 'bg-white/[0.02] border-white/[0.08] text-zinc-400 hover:text-white hover:border-white/[0.2]'
+                    }`}
+                >
+                    <Settings size={13} strokeWidth={1.8} />
+                </button>
+            )}
+            <button
+                type="button"
+                onClick={() => onChange(!checked)}
+                role="switch"
+                aria-checked={checked}
+                aria-label={label}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+                    checked
+                        ? 'bg-[oklch(74%_0.175_62)] shadow-[inset_0_1px_2px_oklch(60%_0.18_55/0.5),0_0_10px_-2px_oklch(74%_0.175_62/0.5)]'
+                        : 'bg-white/[0.08] border border-white/[0.06]'
+                }`}
+            >
+                <span
+                    aria-hidden
+                    className={`inline-block h-4 w-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.4)] transition-transform duration-200 ${
+                        checked ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                />
+            </button>
+        </div>
+    );
+}
+
 // Visual previews for subtitle preset selection. Each entry mimics the
 // rendered look of the corresponding preset in subtitles.py:SUBTITLE_PRESETS.
 const SUBTITLE_PRESETS = [
@@ -477,70 +556,35 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                 <div className="space-y-4">
 
                                 {/* Auto Reframe — single toggle (on = face tracking, off = 4:3 with black bars) */}
-                                <div className="flex items-center justify-between py-1">
-                                    <div className="flex flex-col">
-                                        <span className="text-[12px] font-medium text-zinc-300">Auto Reframe</span>
-                                        <span className="text-[10px] text-zinc-600">
-                                            {reframeMode === 'auto' ? 'Face tracking 9:16' : 'Disabled (4:3 + black bars)'}
-                                        </span>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => setReframeMode(reframeMode === 'auto' ? 'disabled' : 'auto')}
-                                        aria-checked={reframeMode === 'auto'}
-                                        role="switch"
-                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${
-                                            reframeMode === 'auto' ? 'bg-accent-pink/60' : 'bg-white/10'
-                                        }`}
-                                    >
-                                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${reframeMode === 'auto' ? 'translate-x-4' : 'translate-x-1'}`} />
-                                    </button>
-                                </div>
+                                <SwitchRow
+                                    label="Auto Reframe"
+                                    description={
+                                        reframeMode === 'auto'
+                                            ? 'Face tracking 9:16'
+                                            : 'Disabled — 4:3 + black bars'
+                                    }
+                                    checked={reframeMode === 'auto'}
+                                    onChange={(next) => setReframeMode(next ? 'auto' : 'disabled')}
+                                />
 
                                 {/* Smart Cut */}
-                                <div className="flex items-center justify-between py-1">
-                                    <span className="text-[12px] font-medium text-zinc-300">Smart Cut</span>
-                                    <button
-                                        type="button"
-                                        onClick={() => setPreSmartCut(!preSmartCut)}
-                                        aria-checked={preSmartCut}
-                                        role="switch"
-                                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${
-                                            preSmartCut ? 'bg-accent-pink/60' : 'bg-white/10'
-                                        }`}
-                                    >
-                                        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${preSmartCut ? 'translate-x-4' : 'translate-x-1'}`} />
-                                    </button>
-                                </div>
+                                <SwitchRow
+                                    label="Smart Cut"
+                                    description="Remove silences and filler words"
+                                    checked={preSmartCut}
+                                    onChange={setPreSmartCut}
+                                />
 
                                 {/* Subtitles */}
                                 <div className="space-y-2">
-                                    <div className="flex items-center justify-between py-1">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[12px] font-medium text-zinc-300">Subtitles</span>
-                                            {preSubtitles && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setShowSubConfig(!showSubConfig)}
-                                                    className={`p-1 rounded transition-colors ${showSubConfig ? 'text-accent-pink' : 'text-zinc-500 hover:text-zinc-300'}`}
-                                                    aria-label="Configure subtitles"
-                                                >
-                                                    <Settings size={12} />
-                                                </button>
-                                            )}
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => setPreSubtitles(!preSubtitles)}
-                                            aria-checked={preSubtitles}
-                                            role="switch"
-                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${
-                                                preSubtitles ? 'bg-accent-pink/60' : 'bg-white/10'
-                                            }`}
-                                        >
-                                            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${preSubtitles ? 'translate-x-4' : 'translate-x-1'}`} />
-                                        </button>
-                                    </div>
+                                    <SwitchRow
+                                        label="Subtitles"
+                                        description="Burn karaoke or classic captions"
+                                        checked={preSubtitles}
+                                        onChange={setPreSubtitles}
+                                        onConfigure={() => setShowSubConfig(!showSubConfig)}
+                                        configureActive={showSubConfig}
+                                    />
 
                                     {preSubtitles && showSubConfig && (
                                         <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-3 animate-fade-in">
@@ -663,32 +707,14 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
 
                                 {/* Hook */}
                                 <div className="space-y-2">
-                                    <div className="flex items-center justify-between py-1">
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-[12px] font-medium text-zinc-300">Hook</span>
-                                            {preHook && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setShowHookConfig(!showHookConfig)}
-                                                    className={`p-1 rounded transition-colors ${showHookConfig ? 'text-accent-pink' : 'text-zinc-500 hover:text-zinc-300'}`}
-                                                    aria-label="Configure hook"
-                                                >
-                                                    <Settings size={12} />
-                                                </button>
-                                            )}
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={() => setPreHook(!preHook)}
-                                            aria-checked={preHook}
-                                            role="switch"
-                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${
-                                                preHook ? 'bg-accent-pink/60' : 'bg-white/10'
-                                            }`}
-                                        >
-                                            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${preHook ? 'translate-x-4' : 'translate-x-1'}`} />
-                                        </button>
-                                    </div>
+                                    <SwitchRow
+                                        label="Hook"
+                                        description="Text overlay on top of the video"
+                                        checked={preHook}
+                                        onChange={setPreHook}
+                                        onConfigure={() => setShowHookConfig(!showHookConfig)}
+                                        configureActive={showHookConfig}
+                                    />
 
                                     {preHook && showHookConfig && (
                                         <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3 space-y-3 animate-fade-in">
