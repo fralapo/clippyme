@@ -363,6 +363,7 @@ async def batch_process(req: BatchRequest, request: Request):
                 output_dir=job_output_dir,
                 instructions=req.instructions,
                 reframe_mode=req.reframe_mode,
+                cookies_path=os.path.join("data", "cookies.txt"),
                 language=getattr(req, "language", None),
                 no_zoom=bool(getattr(req, "no_zoom", False)),
                 skip_analysis=bool(getattr(req, "skip_analysis", False)),
