@@ -235,9 +235,19 @@ Output schema:
 }}
 """
 
-# Load the YOLO model once (Keep for backup or scene analysis if needed)
-model = YOLO('yolov8n.pt')
-model.to(DEVICE)
+# YOLO is lazy-loaded on first use. Keeping the model at import time
+# forced every entry-point (including --reframe-only, which never calls
+# detect_person_yolo) to pay the load + GPU transfer cost on startup.
+_yolo_model = None
+
+
+def _get_yolo_model():
+    """Lazy-load YOLOv8n on first body-detection call."""
+    global _yolo_model
+    if _yolo_model is None:
+        _yolo_model = YOLO('yolov8n.pt')
+        _yolo_model.to(DEVICE)
+    return _yolo_model
 
 # --- MediaPipe Setup ---
 # Use standard Face Detection (BlazeFace) for speed
@@ -682,8 +692,7 @@ def detect_person_yolo(frame):
     Fallback: Detect largest person using YOLO when face detection fails.
     Returns [x, y, w, h] of the person's 'upper body' approximation.
     """
-    # Use the globally loaded model
-    results = model(frame, verbose=False, classes=[0]) # class 0 is person
+    results = _get_yolo_model()(frame, verbose=False, classes=[0])  # class 0 is person
     
     if not results:
         return None
