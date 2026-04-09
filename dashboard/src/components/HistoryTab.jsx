@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Activity, ChevronDown, History, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 
 /**
@@ -17,49 +18,85 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
 
+  const [loadError, setLoadError] = useState(null);
+
   useEffect(() => {
-    fetch(getApiUrl('/api/history'))
-      .then((r) => r.json())
-      .then((data) => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(getApiUrl('/api/history'));
+        if (!r.ok) throw new Error(`History request failed (${r.status})`);
+        const data = await r.json();
+        if (cancelled) return;
         setServerHistory(data.jobs || []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+        setLoadError(null);
+      } catch (e) {
+        if (cancelled) return;
+        console.error('Failed to load history:', e);
+        setLoadError(e.message || 'Failed to load history');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleDelete = async (jobId) => {
     if (!window.confirm('Delete this job and all its clip files?')) return;
     try {
-      await fetch(getApiUrl(`/api/history/${jobId}`), { method: 'DELETE' });
+      const res = await fetch(getApiUrl(`/api/history/${jobId}`), { method: 'DELETE' });
+      if (!res.ok) {
+        throw new Error(`Delete failed (${res.status})`);
+      }
       setServerHistory((prev) => prev.filter((j) => j.jobId !== jobId));
       onJobDeleted(jobId);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      console.error('Failed to delete job:', e);
+      toast.error(`Could not delete job: ${e.message || 'unknown error'}`);
     }
   };
 
   const handleOpen = async (entry) => {
     try {
       const res = await fetch(getApiUrl(`/api/history/${entry.jobId}/restore`), { method: 'POST' });
-      if (!res.ok) throw new Error('Restore failed');
+      if (!res.ok) throw new Error(`Restore failed (${res.status})`);
       const data = await res.json();
       onRestore(entry, data);
     } catch (e) {
       console.error('Failed to restore job:', e);
+      toast.error(`Could not open job: ${e.message || 'unknown error'}`);
     }
   };
 
   const handleDeleteAll = async () => {
     if (!window.confirm('Delete ALL jobs and files from disk?')) return;
+    const failures = [];
     for (const job of serverHistory) {
       try {
-        await fetch(getApiUrl(`/api/history/${job.jobId}`), { method: 'DELETE' });
+        const res = await fetch(getApiUrl(`/api/history/${job.jobId}`), { method: 'DELETE' });
+        if (!res.ok) failures.push(job.jobId);
+      } catch {
+        failures.push(job.jobId);
+      }
+    }
+    if (failures.length === 0) {
+      setServerHistory([]);
+      onAllCleared();
+    } else {
+      // Re-fetch to show the true state
+      try {
+        const r = await fetch(getApiUrl('/api/history'));
+        if (r.ok) {
+          const data = await r.json();
+          setServerHistory(data.jobs || []);
+        }
       } catch {
         /* ignore */
       }
+      toast.error(`Failed to delete ${failures.length} job(s). Refreshed from server.`);
     }
-    setServerHistory([]);
-    onAllCleared();
   };
 
   return (
@@ -81,7 +118,33 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <Activity size={24} className="text-blue-400 animate-pulse" />
+          <Activity size={24} className="text-[oklch(74%_0.175_62)] animate-pulse" />
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center py-20 text-center space-y-3 max-w-md mx-auto">
+          <div className="w-14 h-14 rounded-[3px] bg-[oklch(62%_0.22_25)]/10 border border-[oklch(62%_0.22_25)]/30 flex items-center justify-center">
+            <X size={24} className="text-[oklch(70%_0.2_25)]" />
+          </div>
+          <p className="text-sm font-medium text-[oklch(78%_0.2_25)]">Could not load history</p>
+          <p className="text-xs text-zinc-500 font-mono">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              setLoadError(null);
+              fetch(getApiUrl('/api/history'))
+                .then((r) => {
+                  if (!r.ok) throw new Error(`History request failed (${r.status})`);
+                  return r.json();
+                })
+                .then((data) => setServerHistory(data.jobs || []))
+                .catch((e) => setLoadError(e.message || 'Failed'))
+                .finally(() => setLoading(false));
+            }}
+            className="mt-2 px-4 h-9 rounded-[3px] border border-white/[0.1] hover:border-white/[0.2] bg-white/[0.02] text-[11px] font-mono uppercase tracking-[0.14em] text-zinc-300 hover:text-white transition-colors"
+          >
+            Retry
+          </button>
         </div>
       ) : serverHistory.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-zinc-600 space-y-4">

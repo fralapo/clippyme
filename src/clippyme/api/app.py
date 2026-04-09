@@ -464,6 +464,8 @@ from clippyme.domain.smartcut import smart_cut
 @app.post("/api/smartcut/{job_id}/{clip_index}")
 async def smart_cut_clip(job_id: str, clip_index: int):
     """Generate a smart-cut version of a clip (silences + filler words removed)."""
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
     output_dir = os.path.join(OUTPUT_DIR, job_id)
