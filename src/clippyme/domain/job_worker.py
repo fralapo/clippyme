@@ -58,23 +58,29 @@ def make_workers(
                 await asyncio.sleep(300)  # Check every 5 minutes
                 now = time.time()
 
-                # OUTPUT_DIR: purge stale job folders
-                for job_id in os.listdir(output_dir):
-                    job_path = os.path.join(output_dir, job_id)
-                    if os.path.isdir(job_path):
-                        if now - os.path.getmtime(job_path) > job_retention_seconds:
-                            logger.info("Purging old job: %s", job_id)
-                            shutil.rmtree(job_path, ignore_errors=True)
-                            jobs.pop(job_id, None)
+                # Retention <= 0 disables auto-purge entirely — the user
+                # is expected to delete clips explicitly from the
+                # History tab. Skip both OUTPUT_DIR and UPLOAD_DIR
+                # sweeps in that case so a stale mtime can't trigger
+                # a bulk delete behind the user's back.
+                if job_retention_seconds > 0:
+                    # OUTPUT_DIR: purge stale job folders
+                    for job_id in os.listdir(output_dir):
+                        job_path = os.path.join(output_dir, job_id)
+                        if os.path.isdir(job_path):
+                            if now - os.path.getmtime(job_path) > job_retention_seconds:
+                                logger.info("Purging old job: %s", job_id)
+                                shutil.rmtree(job_path, ignore_errors=True)
+                                jobs.pop(job_id, None)
 
-                # UPLOAD_DIR: purge stale uploads
-                for filename in os.listdir(upload_dir):
-                    file_path = os.path.join(upload_dir, filename)
-                    try:
-                        if now - os.path.getmtime(file_path) > job_retention_seconds:
-                            os.remove(file_path)
-                    except Exception:
-                        pass
+                    # UPLOAD_DIR: purge stale uploads
+                    for filename in os.listdir(upload_dir):
+                        file_path = os.path.join(upload_dir, filename)
+                        try:
+                            if now - os.path.getmtime(file_path) > job_retention_seconds:
+                                os.remove(file_path)
+                        except Exception:
+                            pass
 
                 # Transcript cache (older than 7 days)
                 cache_dir = os.path.join(data_dir, "cache")

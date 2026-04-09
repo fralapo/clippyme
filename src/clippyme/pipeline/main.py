@@ -1862,16 +1862,39 @@ if __name__ == '__main__':
             exit(2)
         reframe_start = time.time()
         print(f"🔁 Reframe-only mode ({args.reframe_mode}) on {os.path.basename(args.input)}")
-        success = process_video_to_vertical(args.input, args.output, reframe_mode=args.reframe_mode)
-        if not success:
-            print("❌ Reframe failed.")
+        # Atomic write: render into <output>.reframe.tmp.mp4 so a crash
+        # mid-rendering never leaves the user's existing clip truncated
+        # or deleted. Only on full success do we os.replace() the temp
+        # into the final output path. process_video_to_vertical has an
+        # unconditional os.remove(final_output_video) at the top which
+        # is what wiped clips on failure before this fix.
+        final_output = args.output
+        tmp_output = final_output + ".reframe.tmp.mp4"
+        try:
+            success = process_video_to_vertical(args.input, tmp_output, reframe_mode=args.reframe_mode)
+            if not success:
+                print("❌ Reframe failed.")
+                if os.path.exists(tmp_output):
+                    try:
+                        os.remove(tmp_output)
+                    except OSError:
+                        pass
+                exit(1)
+            if not args.no_zoom:
+                apply_subtle_zoom(tmp_output)
+            normalize_audio(tmp_output)
+            select_cover_frame(tmp_output)
+            os.replace(tmp_output, final_output)
+            print(f"✅ Reframe-only done in {time.time() - reframe_start:.1f}s → {final_output}")
+            exit(0)
+        except Exception as e:
+            print(f"❌ Reframe-only crashed: {e}")
+            if os.path.exists(tmp_output):
+                try:
+                    os.remove(tmp_output)
+                except OSError:
+                    pass
             exit(1)
-        if not args.no_zoom:
-            apply_subtle_zoom(args.output)
-        normalize_audio(args.output)
-        select_cover_frame(args.output)
-        print(f"✅ Reframe-only done in {time.time() - reframe_start:.1f}s → {args.output}")
-        exit(0)
     # -------------------------------------------------------------------------
 
 
