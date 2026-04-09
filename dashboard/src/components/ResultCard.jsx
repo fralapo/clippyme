@@ -266,12 +266,15 @@ export default function ResultCard({
         subtitleDrift;
 
     const scoreLevel = clip.viral_score >= 80 ? 'high' : clip.viral_score >= 50 ? 'mid' : 'low';
-    // Single accent color for every tier. The VU-meter encodes
-    // severity via how many segments light up, not via hue swings.
+    // Tiered accent — green / amber / red — so the viral score pops
+    // visually and the user can triage a 15-clip grid at a glance.
+    // Reserves the product amber (oklch 74 0.175 62) for primary CTAs
+    // only (Publish). High = confident green, mid = cautious amber-
+    // yellow, low = desaturated red.
     const viralScoreAccent = {
-        high: 'oklch(74% 0.175 62)',
-        mid: 'oklch(78% 0.16 75)',
-        low: 'oklch(58% 0.12 55)',
+        high: 'oklch(72% 0.18 145)',   // green
+        mid: 'oklch(82% 0.17 85)',     // yellow-amber (distinct from CTA orange)
+        low: 'oklch(64% 0.19 25)',     // red
     }[scoreLevel];
     // 8-segment VU: light up ceil(score/12.5) segments (so 100 = 8 lit).
     const vuLit = Math.min(8, Math.ceil((clip.viral_score || 0) / 12.5));
@@ -346,8 +349,8 @@ export default function ResultCard({
         <div
             className={`group relative bg-[oklch(14%_0.009_260)] border rounded-[3px] overflow-hidden transition-all duration-300 ${
                 isSelected
-                    ? 'border-[oklch(74%_0.175_62)]/60 shadow-[0_0_0_1px_oklch(74%_0.175_62/0.25),0_24px_60px_-30px_oklch(0%_0_0/0.9)]'
-                    : 'border-white/[0.08] opacity-75 hover:border-white/20 hover:opacity-100'
+                    ? 'border-[oklch(74%_0.175_62)]/45 shadow-[0_0_0_1px_oklch(74%_0.175_62/0.18),0_24px_60px_-30px_oklch(0%_0_0/0.9)]'
+                    : 'border-white/[0.08] opacity-80 hover:border-white/25 hover:opacity-100'
             }`}
         >
             {/* Slate strip — the little "CLIP #003" header that frames the
@@ -391,6 +394,12 @@ export default function ResultCard({
                 {/* Top-left selection checkbox — prominent, click target
                     is the whole pill. When selected, the card border
                     also glows amber (see root element className above). */}
+                {/* Selection pill: outline-only style. The product amber
+                    is reserved for the primary 'Publish' CTA in the
+                    sticky rail, so the selected state here uses an
+                    amber-tinted outline + check icon instead of a solid
+                    fill. This lets the Publish action stand out while
+                    selection stays visually quiet. */}
                 <button
                     type="button"
                     onClick={handleToggleSelected}
@@ -399,7 +408,7 @@ export default function ResultCard({
                     title={isSelected ? 'Click to exclude from bulk actions' : 'Click to include in bulk actions'}
                     className={`absolute top-2 left-2 z-20 flex items-center gap-1.5 px-2 py-1 rounded-[2px] type-mono text-[10px] uppercase tracking-[0.14em] font-semibold backdrop-blur-sm shadow-lg transition-colors ${
                         isSelected
-                            ? 'bg-[oklch(74%_0.175_62)] text-[oklch(12%_0.01_260)] border border-[oklch(70%_0.18_62)]'
+                            ? 'bg-[oklch(74%_0.175_62)]/15 text-[oklch(82%_0.16_68)] border border-[oklch(74%_0.175_62)]/70'
                             : 'bg-black/75 text-zinc-300 border border-white/15 hover:bg-black/90 hover:border-white/30'
                     }`}
                 >
@@ -407,11 +416,11 @@ export default function ResultCard({
                         aria-hidden
                         className={`w-3.5 h-3.5 rounded-[2px] border-[1.5px] flex items-center justify-center ${
                             isSelected
-                                ? 'border-[oklch(12%_0.01_260)] bg-[oklch(12%_0.01_260)]'
+                                ? 'border-[oklch(74%_0.175_62)] bg-[oklch(74%_0.175_62)]/20'
                                 : 'border-zinc-400 bg-transparent'
                         }`}
                     >
-                        {isSelected && <Check size={10} strokeWidth={3} className="text-[oklch(74%_0.175_62)]" />}
+                        {isSelected && <Check size={10} strokeWidth={3} className="text-[oklch(82%_0.16_68)]" />}
                     </span>
                     {isSelected ? 'Selected' : 'Select'}
                 </button>

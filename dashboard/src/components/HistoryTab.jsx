@@ -183,19 +183,22 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/* Actions — always visible (was hover-only which broke
+                      discoverability and was unusable on touch devices). */}
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       onClick={() => handleOpen(entry)}
-                      className="px-3 py-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-[3px] transition-all"
+                      className="px-3 h-8 flex items-center gap-1.5 rounded-[3px] bg-[oklch(74%_0.175_62)]/12 hover:bg-[oklch(74%_0.175_62)]/20 border border-[oklch(74%_0.175_62)]/30 text-[oklch(82%_0.16_68)] type-mono text-[10px] uppercase tracking-[0.14em] font-semibold transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                      title="Open this project and view the generated clips"
                     >
                       Open
                     </button>
                     <button
                       onClick={() => handleDelete(entry.jobId)}
-                      className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-[3px] transition-all"
-                      title="Delete job and files"
+                      className="w-8 h-8 flex items-center justify-center rounded-[3px] border border-white/8 text-zinc-500 hover:text-[oklch(82%_0.2_25)] hover:border-[oklch(62%_0.22_25)]/40 hover:bg-[oklch(62%_0.22_25)]/10 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/50"
+                      title="Delete this project and all its clip files"
                     >
-                      <X size={14} />
+                      <X size={14} strokeWidth={2} />
                     </button>
                   </div>
                 </div>
