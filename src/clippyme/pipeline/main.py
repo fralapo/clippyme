@@ -149,7 +149,9 @@ speaker or Whisper fallback path, score normally.
 - start on a complete sentence boundary; end on a natural beat
 - no cold-open ambiguity ("...and then she said" with no setup)
 - 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS
-- Only ABSOLUTE SECONDS with up to 3 decimals (e.g. 12.340)
+- start and end are FLOAT SECONDS with up to 3 decimals (e.g. 12.340, 1517.724).
+  NEVER emit "MM.SS.mmm" (e.g. 25.17.724), "MM:SS", "HH:MM:SS", or any two-dot / colon
+  time format. A value of 1517.724 is correct; "25.17.724" is a BUG.
 - Prefer starting 0.2–0.4s BEFORE the hook and ending 0.2–0.4s AFTER the payoff
 - Never cut in the middle of a word or phrase
 - viral_reason MUST be at least 20 characters and cite the specific hook, payoff or quote

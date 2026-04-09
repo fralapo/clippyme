@@ -198,6 +198,97 @@ def _viral_reason_is_generic(reason: str) -> bool:
     return (not has_digit) and (not has_quote) and len(lowered.split()) < 8
 
 
+def _coerce_timestamp(value: Any) -> Any:
+    """Normalize Gemini timestamp values to float seconds.
+
+    Gemini (especially ``gemini-2.5-flash``) occasionally emits
+    timestamps as *dotted* strings instead of floats. Seen in the wild:
+
+    * ``"25.17.724"``  → 25 min 17.724 s  (MM.SS.mmm)
+    * ``"1.25.17.724"`` → 1 h 25 min 17.724 s  (HH.MM.SS.mmm)
+    * ``"25:17.724"``  → 25 min 17.724 s  (MM:SS.mmm)
+    * ``"1:25:17"``    → 1 h 25 min 17 s   (HH:MM:SS)
+    * ``"1517.724"``   → already float seconds (passthrough)
+
+    A plain float string with **one** dot (``"1517.724"``) is left alone
+    because it's already a valid seconds value. Two-dot strings are the
+    tell-tale sign of minutes-first timestamps and are the main reason
+    Pydantic was rejecting the whole response.
+
+    Non-string values (already numeric) and unparseable strings are
+    returned unchanged so Pydantic can surface the real error.
+    """
+    if not isinstance(value, str):
+        return value
+    s = value.strip()
+    if not s:
+        return value
+    # Colon-separated (HH:MM:SS or MM:SS) possibly with decimal seconds.
+    if ":" in s:
+        try:
+            parts = s.split(":")
+            if len(parts) == 2:
+                mm, ss = parts
+                return float(mm) * 60.0 + float(ss)
+            if len(parts) == 3:
+                hh, mm, ss = parts
+                return float(hh) * 3600.0 + float(mm) * 60.0 + float(ss)
+        except ValueError:
+            return value
+        return value
+    # Dotted form. One dot = ordinary float. Two or more = MM.SS[.ms]
+    # or HH.MM.SS[.ms]. Rebuild as seconds.
+    dots = s.count(".")
+    if dots <= 1:
+        return value
+    parts = s.split(".")
+    try:
+        if dots == 2:
+            # MM.SS.ms — last chunk is milliseconds fraction
+            mm, ss, ms = parts
+            return float(mm) * 60.0 + float(ss) + float(f"0.{ms}")
+        if dots == 3:
+            # HH.MM.SS.ms
+            hh, mm, ss, ms = parts
+            return (
+                float(hh) * 3600.0
+                + float(mm) * 60.0
+                + float(ss)
+                + float(f"0.{ms}")
+            )
+    except ValueError:
+        return value
+    return value
+
+
+def _normalize_clip_timestamps(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Run ``_coerce_timestamp`` over every ``start``/``end`` in ``shorts``.
+
+    Mutates and returns ``data`` for convenience. Safe to call on
+    already-clean responses (no-op for numeric values).
+    """
+    shorts = data.get("shorts") if isinstance(data, dict) else None
+    if not isinstance(shorts, list):
+        return data
+    coerced = 0
+    for clip in shorts:
+        if not isinstance(clip, dict):
+            continue
+        for key in ("start", "end"):
+            if key in clip:
+                original = clip[key]
+                new = _coerce_timestamp(original)
+                if new is not original:
+                    clip[key] = new
+                    coerced += 1
+    if coerced:
+        logger.info(
+            "gemini_parser: coerced %d dotted/colon timestamp string(s) to seconds",
+            coerced,
+        )
+    return data
+
+
 def validate_and_dedupe(
     data: Dict[str, Any],
     video_duration: Optional[float] = None,
@@ -218,6 +309,7 @@ def validate_and_dedupe(
         or any individual clip fails its validators (duration out of
         range, missing viral_reason, etc.).
     """
+    data = _normalize_clip_timestamps(data)
     parsed = ViralClipsResponse.model_validate(data)
 
     candidates = list(parsed.shorts)
