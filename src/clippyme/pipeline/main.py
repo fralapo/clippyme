@@ -57,14 +57,21 @@ def _load_cached_transcript(url):
 
 
 def _save_transcript_cache(url, transcript):
-    """Save transcript to cache."""
+    """Save transcript to cache atomically (tmp + replace)."""
     os.makedirs(CACHE_DIR, exist_ok=True)
     cache_path = _get_cache_path(url)
+    tmp_path = cache_path + ".tmp"
     try:
-        with open(cache_path, 'w', encoding='utf-8') as f:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
             json.dump(transcript, f)
+        os.replace(tmp_path, cache_path)
         print(f"💾 Transcript cached ({os.path.basename(cache_path)})")
     except Exception as e:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
         print(f"⚠️  Failed to cache transcript: {e}")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
