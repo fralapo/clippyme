@@ -23,7 +23,13 @@ _SIZE_MAP = {"S": 0.8, "M": 1.0, "L": 1.3}
 async def _apply_smartcut(
     current_input: str, base_clip: str, metadata: dict, clip_info: dict
 ) -> str:
-    smartcut_path = base_clip.replace(".mp4", "_smartcut.mp4")
+    # Cache key must follow the ACTUAL input. The previous implementation
+    # keyed off `base_clip` unconditionally, which meant that if we'd
+    # smart-cut the raw clip before, we'd return the stale raw smart-cut
+    # even when the current call is operating on a subtitled/hooked
+    # variant. Use current_input instead so each input gets its own
+    # sidecar _smartcut.mp4.
+    smartcut_path = current_input.replace(".mp4", "_smartcut.mp4")
     if os.path.exists(smartcut_path):
         return smartcut_path
     transcript = metadata.get("transcript", {})
@@ -217,33 +223,26 @@ async def compose_layers(
     layers_applied: list[str] = []
 
     try:
-        if active.get("smartcut"):
-            current_input = await _apply_smartcut(
-                current_input, base_clip, metadata, clip_info
-            )
-            layers_applied.append("smartcut")
-            logger.info("compose_layers: ✓ smartcut → %s", os.path.basename(current_input))
-
-        # Defensive: strip whitespace from hook text and bail if empty
-        # (otherwise Pillow/drawtext renders an invisible overlay).
-        hook_text = (hook_params or {}).get("text", "")
-        if isinstance(hook_text, str):
-            hook_text = hook_text.strip()
-        if active.get("hook"):
-            if not hook_text:
-                logger.warning(
-                    "compose_layers: hook toggle ON but text is empty — skipping "
-                    "hook layer silently. Ensure PublishModal/ResultCard sends a "
-                    "non-empty hook_params.text.",
-                )
-            else:
-                hp_clean = {**hook_params, "text": hook_text}
-                current_input = await _apply_hook(
-                    current_input, job_dir, clip_index, hp_clean, intermediate_files
-                )
-                layers_applied.append("hook")
-                logger.info("compose_layers: ✓ hook → %s", os.path.basename(current_input))
-
+        # --- Ordering matters ---
+        # Earlier revisions ran Smart Cut FIRST, then burned subtitles on
+        # the resulting shorter clip. The subtitle timestamps are derived
+        # from the original transcript using absolute ``clip_start`` and
+        # ``clip_end`` seconds, so the subs expected a clip of length
+        # (clip_end - clip_start). After Smart Cut removed silences and
+        # filler words, the clip was strictly shorter than that, so the
+        # subs accumulated drift relative to the audio — very visible on
+        # fast speakers, where Smart Cut removes many micro-gaps and the
+        # error snowballs over the clip.
+        #
+        # Correct order: SUBTITLES → SMART CUT → HOOK.
+        #
+        # Step 1 burns the subs into the raw frames with perfect timing
+        # (since the base clip still has the original length). Step 2
+        # re-encodes to remove silence segments; because the subs are
+        # already pixels at that point, they travel with the frames and
+        # stay locked to the audio, no drift regardless of speech speed.
+        # Step 3 overlays the static Hook on top of everything so it
+        # remains visible for every surviving frame.
         if active.get("subtitles"):
             current_input = await _apply_subtitles(
                 current_input,
@@ -256,6 +255,33 @@ async def compose_layers(
             )
             layers_applied.append("subtitles")
             logger.info("compose_layers: ✓ subtitles → %s", os.path.basename(current_input))
+
+        if active.get("smartcut"):
+            current_input = await _apply_smartcut(
+                current_input, base_clip, metadata, clip_info
+            )
+            layers_applied.append("smartcut")
+            logger.info("compose_layers: ✓ smartcut → %s", os.path.basename(current_input))
+
+        # Hook last: it's a static overlay that should appear on every
+        # kept frame, regardless of how many silences Smart Cut removed.
+        hook_text = (hook_params or {}).get("text", "")
+        if isinstance(hook_text, str):
+            hook_text = hook_text.strip()
+        if active.get("hook"):
+            if not hook_text:
+                logger.warning(
+                    "compose_layers: hook toggle ON but text is empty — "
+                    "skipping hook layer. Ensure PublishModal / ResultCard "
+                    "sends a non-empty hook_params.text.",
+                )
+            else:
+                hp_clean = {**hook_params, "text": hook_text}
+                current_input = await _apply_hook(
+                    current_input, job_dir, clip_index, hp_clean, intermediate_files
+                )
+                layers_applied.append("hook")
+                logger.info("compose_layers: ✓ hook → %s", os.path.basename(current_input))
 
         if os.path.abspath(current_input) != os.path.abspath(composed_path):
             shutil.copy2(current_input, composed_path)
