@@ -2014,8 +2014,10 @@ if __name__ == '__main__':
             for _clip_entry in clips_data.get('shorts', []):
                 _clip_entry.setdefault('reframe_mode', args.reframe_mode)
             metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
-            with open(metadata_file, 'w') as f:
+            metadata_tmp = metadata_file + ".tmp"
+            with open(metadata_tmp, 'w') as f:
                 json.dump(clips_data, f, indent=2)
+            os.replace(metadata_tmp, metadata_file)
             print(f"   Saved metadata to {metadata_file}")
 
             # 5. Process each clip
