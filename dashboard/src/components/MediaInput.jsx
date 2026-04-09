@@ -224,7 +224,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     };
     const persisted = loadPersisted();
 
-    const [reframeMode, setReframeMode] = useState(persisted.reframeMode ?? 'auto');
+    const [reframeMode, setReframeMode] = useState(persisted.reframeMode ?? 'disabled');
     const [preSmartCut, setPreSmartCut] = useState(persisted.preSmartCut ?? false);
     const [preSubtitles, setPreSubtitles] = useState(persisted.preSubtitles ?? false);
     const [preSubPreset, setPreSubPreset] = useState(persisted.preSubPreset ?? 'classic_white');
@@ -568,7 +568,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
                                 <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-zinc-300">
                                     Advanced options
                                 </span>
-                                {(instructions.trim() || preSmartCut || preSubtitles || preHook || reframeMode !== 'auto') && (
+                                {(instructions.trim() || preSmartCut || preSubtitles || preHook || reframeMode !== 'disabled') && (
                                     <span className="inline-flex items-center gap-1 font-mono text-[9px] px-1.5 py-0.5 rounded-[2px] border border-[oklch(74%_0.175_62)]/40 text-[oklch(82%_0.16_68)] uppercase tracking-[0.14em]">
                                         <span className="w-1 h-1 rounded-full bg-[oklch(74%_0.175_62)] shadow-[0_0_4px_oklch(74%_0.175_62/0.8)]" />
                                         Custom

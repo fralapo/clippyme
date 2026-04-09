@@ -156,17 +156,16 @@ export default function HookModal({ isOpen, onClose, onGenerate, isProcessing, v
                         <button
                             onClick={() => onGenerate({ text, position, size, offset_y: offsetY })}
                             disabled={isProcessing || !text.trim()}
-                            className="w-full py-3 rounded-xl font-semibold text-sm text-white transition-all active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                            style={{ background: 'linear-gradient(135deg, #e6428d, #9850c3)' }}
+                            className="w-full h-12 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(14%_0.01_260)] font-mono text-[11px] uppercase tracking-[0.18em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_1px_0_0_oklch(100%_0_0/0.3)_inset,0_10px_24px_-14px_oklch(74%_0.175_62/0.55)] active:translate-y-px transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                         >
                             {isProcessing ? (
                                 <>
-                                    <Loader2 size={16} className="animate-spin" />
-                                    Rendering...
+                                    <Loader2 size={14} className="animate-spin" strokeWidth={2.2} />
+                                    Rendering…
                                 </>
                             ) : (
                                 <>
-                                    <Sparkles size={16} />
+                                    <Sparkles size={14} strokeWidth={2.2} />
                                     Apply Hook
                                 </>
                             )}

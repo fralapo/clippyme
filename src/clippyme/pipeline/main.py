@@ -1699,6 +1699,12 @@ if __name__ == '__main__':
             
             # Save metadata
             clips_data['transcript'] = transcript # Save full transcript for subtitles
+            # Annotate each clip with the reframe mode used for the initial
+            # render so the dashboard can render the correct per-clip state
+            # without guessing (the /api/reframe endpoint updates this
+            # field in place when the user flips the mode later on).
+            for _clip_entry in clips_data.get('shorts', []):
+                _clip_entry.setdefault('reframe_mode', args.reframe_mode)
             metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
             with open(metadata_file, 'w') as f:
                 json.dump(clips_data, f, indent=2)
