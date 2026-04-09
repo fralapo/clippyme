@@ -1678,7 +1678,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
 
     prompt = GEMINI_PROMPT_TEMPLATE.format(
         video_duration=video_duration,
-        transcript_text=json.dumps(transcript_result['text']),
+        transcript_text=json.dumps(transcript_result.get('text', '')),
         words_json=json.dumps(words),
         user_instructions_block=user_instructions_block
     )
