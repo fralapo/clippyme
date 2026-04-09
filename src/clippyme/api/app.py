@@ -23,7 +23,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Hea
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd
 from clippyme.domain.compose import compose_layers
@@ -218,23 +218,49 @@ async def process_endpoint(
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
     
-    # Handle JSON body manually for URL payload
+    # Handle JSON body via ProcessRequest for URL payloads. Pydantic
+    # enforces the reframe_mode regex and the instructions length cap
+    # before we hand anything to build_main_cmd. Multipart uploads keep
+    # the manual form extraction because the file streaming path is
+    # already using FastAPI's File/Form dependencies.
     instructions = None
     reframe_mode = None
     language = None
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
-        body = await request.json()
-        url = body.get("url")
-        instructions = body.get("instructions")
-        reframe_mode = body.get("reframe_mode")
-        language = body.get("language")
+        try:
+            body = await request.json()
+            validated = ProcessRequest.model_validate(body or {})
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        url = validated.url
+        instructions = validated.instructions
+        reframe_mode = validated.reframe_mode
+        language = validated.language
 
     # For multipart/form-data uploads, extract reframe_mode + language from form fields
     if "multipart/form-data" in content_type:
         form = await request.form()
         reframe_mode = form.get("reframe_mode", reframe_mode)
         language = form.get("language", language)
+        # Also honour the optional instructions field in multipart mode
+        # so drag-and-drop uploads can pass AI directives just like URL
+        # submissions (was previously ignored).
+        instructions = form.get("instructions", instructions)
+        # Validate the multipart values through the same schema for
+        # consistency — we drop the url requirement since we're using
+        # an uploaded file path.
+        try:
+            ProcessRequest.model_validate({
+                "url": "file://upload",
+                "reframe_mode": reframe_mode or None,
+                "language": language or None,
+                "instructions": instructions or None,
+            })
+        except ValidationError as exc:
+            raise HTTPException(status_code=400, detail=exc.errors())
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")

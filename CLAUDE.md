@@ -64,7 +64,7 @@ After a job completes, every clip can be flipped between **`auto`** (face tracki
 2. Re-runs `apply_subtle_zoom` (unless `--no-zoom`), `normalize_audio`, `select_cover_frame`
 3. Overwrites the same clip filename so all downstream references (subtitle/hook/compose) keep working
 
-The endpoint updates metadata.json (`clip.video_url` + `clip.reframe_mode`) and the in-memory `jobs[job_id]['result']['clips'][i]`, and returns a cache-busted `new_video_url` so the `<video>` element reloads.
+The endpoint updates metadata.json (`clip.video_url` + `clip.reframe_mode`) and the in-memory `jobs[job_id]['result']['clips'][i]`, and returns a cache-busted `new_video_url` (with a `?v=<timestamp>` query string appended) so the browser `<video>` element re-fetches instead of serving the stale reframed clip from the HTTP cache.
 
 **Frontend**: `ResultCard.jsx` has a new toolbar button (top-left, next to the eye/trash icons). It cycles between `auto` (pink Crop icon) and `disabled` (zinc Square icon) with a Loader2 spinner while the subprocess runs. State is persisted per-clip via `useClipStates.reframeMode`. Legacy jobs (created before this feature landed and therefore missing the `source_*.mp4` slice) return HTTP 409 and the frontend shows a toast explaining the clip must be reprocessed.
 
