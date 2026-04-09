@@ -106,6 +106,12 @@ function App() {
       setStatus('complete');
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3000);
+      // Auto-switch to History tab once the job is done — Create is only
+      // for launching, History hosts both the list AND the viewer for
+      // completed jobs. This also matches the "delete from history while
+      // looking at Create" bug: Create never shows results anymore, so
+      // there's no stale view to worry about.
+      setActiveTab('history');
       // Auto-apply smartcut pre-selection: fire-and-forget so files are ready at download time
       if (preselections?.smartcut && data.result?.clips) {
         data.result.clips.forEach((clip, i) => {
@@ -170,6 +176,10 @@ function App() {
     setLogs([]);
     setProcessingMedia(null);
     setCurrentStep(null);
+    // Always land on Create when the user asks to start over —
+    // otherwise a reset from the history viewer leaves them staring
+    // at an empty history entry.
+    setActiveTab('dashboard');
     try { localStorage.removeItem('clippyme_session'); } catch { /* silent */ }
   };
 
@@ -208,36 +218,108 @@ function App() {
           />
         )}
 
-        {/* ============ HISTORY TAB ============ */}
+        {/* ============ HISTORY TAB ============
+             History now hosts BOTH the list and the per-job viewer. When
+             `status === 'complete'` and a jobId is loaded (either just
+             finished from Create or restored from the list), we render
+             the ResultsGrid for that job. Otherwise we show the list. */}
         {activeTab === 'history' && (
           <div className="animate-fade-in">
-            <HistoryTab
-              onRestore={(entry, data) => {
-                setJobId(entry.jobId);
-                setResults(data.result);
-                setStatus('complete');
-                setProcessingMedia({ type: 'url', payload: entry.source });
-                setActiveTab('dashboard');
-                // Rehydrate the clip preselections for THIS job id. The
-                // per-job snapshot was written at submission time into
-                // localStorage via setPreselections(). Without this
-                // explicit read, a lingering `preselections` state from
-                // the previous session would leak into the restored
-                // job's ResultCards (wrong defaults for subs/hook/etc).
-                try {
-                  const saved = localStorage.getItem(`clippyme_preselections_job_${entry.jobId}`);
-                  setPreselectionsRaw(saved ? JSON.parse(saved) : null);
-                } catch {
-                  setPreselectionsRaw(null);
-                }
-              }}
-              onJobDeleted={deleteFromHistory}
-              onAllCleared={clearHistory}
-            />
+            {status === 'complete' && jobId && results?.clips?.length > 0 ? (
+              <div className="space-y-5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Release the currently viewed job and fall back to
+                    // the list. State is wiped so reopening the Create
+                    // tab gives a clean IdleHero.
+                    setStatus('idle');
+                    setJobId(null);
+                    setResults(null);
+                    setLogs([]);
+                    setProcessingMedia(null);
+                    setCurrentStep(null);
+                    setPreselectionsRaw(null);
+                    try { localStorage.removeItem('clippyme_session'); } catch { /* silent */ }
+                  }}
+                  className="flex items-center gap-2 h-9 px-3 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-400 hover:text-white type-mono text-[10px] uppercase tracking-[0.14em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                >
+                  ← Back&nbsp;to&nbsp;history
+                </button>
+                <ResultsGrid
+                  results={results}
+                  status={status}
+                  jobId={jobId}
+                  preselections={preselections}
+                  processingMedia={processingMedia}
+                  syncedTime={syncedTime}
+                  isSyncedPlaying={isSyncedPlaying}
+                  syncTrigger={syncTrigger}
+                  logs={logs}
+                  logsVisible={logsVisible}
+                  onLogsToggle={() => setLogsVisible(!logsVisible)}
+                  onClipPlay={handleClipPlay}
+                  onClipPause={handleClipPause}
+                  onRetry={handleProcess}
+                  clipStates={clipStates}
+                  onUpdateClipState={updateClipState}
+                />
+              </div>
+            ) : (
+              <HistoryTab
+                onRestore={(entry, data) => {
+                  setJobId(entry.jobId);
+                  setResults(data.result);
+                  setStatus('complete');
+                  setProcessingMedia({ type: 'url', payload: entry.source });
+                  // Stay on the History tab — the viewer renders inline
+                  // thanks to the conditional above.
+                  // Rehydrate the clip preselections for THIS job id.
+                  try {
+                    const saved = localStorage.getItem(`clippyme_preselections_job_${entry.jobId}`);
+                    setPreselectionsRaw(saved ? JSON.parse(saved) : null);
+                  } catch {
+                    setPreselectionsRaw(null);
+                  }
+                }}
+                onJobDeleted={(deletedJobId) => {
+                  deleteFromHistory(deletedJobId);
+                  // If the user deletes the job they are currently
+                  // viewing, wipe the inline viewer so they don't stare
+                  // at a stale ResultsGrid pointing at missing files.
+                  if (jobId === deletedJobId) {
+                    setStatus('idle');
+                    setJobId(null);
+                    setResults(null);
+                    setLogs([]);
+                    setProcessingMedia(null);
+                    setCurrentStep(null);
+                  }
+                }}
+                onAllCleared={() => {
+                  clearHistory();
+                  // Same wipe: if we were viewing a clip grid, drop it.
+                  if (jobId) {
+                    setStatus('idle');
+                    setJobId(null);
+                    setResults(null);
+                    setLogs([]);
+                    setProcessingMedia(null);
+                    setCurrentStep(null);
+                  }
+                }}
+              />
+            )}
           </div>
         )}
 
-        {/* ============ CREATE TAB ============ */}
+        {/* ============ CREATE TAB ============
+             Create is ONLY for launching jobs and monitoring the live
+             pipeline. As soon as a job completes, the polling callback
+             auto-switches to the History tab where the viewer lives.
+             Never renders a ResultsGrid here — results always live in
+             the History tab so a delete-from-history action can never
+             leave a stale grid rendered in Create. */}
         {activeTab === 'dashboard' && (
           <div className="animate-fade-in">
             {/* Step 1: Media Input (idle) */}
@@ -275,28 +357,6 @@ function App() {
                 onReset={handleReset}
               />
             ) : null}
-
-            {/* Step 3: Results (complete or error with results) */}
-            {(status === 'complete' || (status === 'error' && results?.clips?.length > 0)) && (
-              <ResultsGrid
-                results={results}
-                status={status}
-                jobId={jobId}
-                preselections={preselections}
-                processingMedia={processingMedia}
-                syncedTime={syncedTime}
-                isSyncedPlaying={isSyncedPlaying}
-                syncTrigger={syncTrigger}
-                logs={logs}
-                logsVisible={logsVisible}
-                onLogsToggle={() => setLogsVisible(!logsVisible)}
-                onClipPlay={handleClipPlay}
-                onClipPause={handleClipPause}
-                onRetry={handleProcess}
-                clipStates={clipStates}
-                onUpdateClipState={updateClipState}
-              />
-            )}
           </div>
         )}
       </main>
