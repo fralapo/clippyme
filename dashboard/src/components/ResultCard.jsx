@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
 import PublishModal from './PublishModal';
 import { toast } from 'sonner';
@@ -180,6 +180,32 @@ export default function ResultCard({
             return next;
         });
     };
+
+    // Persist seeded state into clipStates on first mount so BatchPublishModal
+    // (which reads toggles/hookParams/subtitleParams from clipStates, not
+    // from each ResultCard's local state) sees the user's preselections
+    // even if they never manually touched a toggle on this specific card.
+    //
+    // Without this, the batch publisher was receiving empty {} for every
+    // clip that still had its "fresh from preselections" state — so
+    // compose_first was never triggered and the raw clip was uploaded
+    // regardless of the Smart Cut / Hook / Subtitles pre-selections the
+    // user had set in the home Advanced Options.
+    //
+    // Guarded by "only if clipState is missing the field" so we don't
+    // overwrite user overrides on subsequent renders.
+    useEffect(() => {
+        const patch = {};
+        if (!clipState.toggles) patch.toggles = toggles;
+        if (!clipState.hookParams) patch.hookParams = hookParams;
+        if (!clipState.subtitleParams) patch.subtitleParams = subtitleParams;
+        if (Object.keys(patch).length > 0) {
+            onUpdateState(patch);
+        }
+        // Run once per clip mount — the seeded state does not change after
+        // initial computation, so the deps list is intentionally empty.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const [isComposing, setIsComposing] = useState(false);
     const [showPublishModal, setShowPublishModal] = useState(false);
