@@ -75,7 +75,7 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
     <div className="relative w-full mb-8 animate-[fadeIn_0.5s_ease-out]">
       {/* Video container with pulsing border */}
       <div
-        className={`relative aspect-video rounded-2xl overflow-hidden bg-[#0f0f13] transition-all duration-500 ${
+        className={`relative aspect-video rounded-[3px] overflow-hidden bg-[oklch(9%_0.006_260)] transition-all duration-500 ${
           isSyncedPlaying
             ? 'ring-2 ring-primary outline outline-2 outline-background'
             : !isComplete
@@ -133,7 +133,7 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
 
         {/* Status badge - top left */}
         {!isSyncedPlaying && (
-          <div className={`absolute top-3 left-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-md transition-all duration-500 ${
+          <div className={`absolute top-3 left-3 z-20 flex items-center gap-2 px-3 py-1.5 rounded-[3px] text-xs font-medium backdrop-blur-md transition-all duration-500 ${
             isComplete
               ? 'bg-success/10 border border-success/20 text-success'
               : 'bg-black/50 border border-white/10 text-white/70'
@@ -154,7 +154,7 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
 
         {/* Synced playing indicator */}
         {isSyncedPlaying && (
-          <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-red-500/90 backdrop-blur-sm text-white rounded-lg text-xs font-medium animate-pulse">
+          <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-red-500/90 backdrop-blur-sm text-white rounded-[3px] text-xs font-medium animate-pulse">
             <Activity size={12} />
             Live Sync
           </div>
@@ -164,11 +164,11 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
       {/* HUD badges below the video */}
       {!isSyncedPlaying && (
         <div className="flex items-center gap-2 mt-3">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#0f0f13] border border-white/[0.06] rounded-lg text-[11px] text-zinc-500">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[oklch(9%_0.006_260)] border border-white/[0.06] rounded-[3px] text-[11px] text-zinc-500">
             <Cpu size={11} className="text-zinc-400" />
             {modelName}
           </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#0f0f13] border border-white/[0.06] rounded-lg text-[11px] text-zinc-500">
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[oklch(9%_0.006_260)] border border-white/[0.06] rounded-[3px] text-[11px] text-zinc-500">
             <Zap size={11} className="text-warning" />
             Auto Hardware
           </div>

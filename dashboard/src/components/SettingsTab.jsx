@@ -58,7 +58,7 @@ export default function SettingsTab({ onKeySet, onHfTokenSet, onCookiesChange })
 
       {/* Setup status card */}
       <div
-        className={`rounded-2xl border p-4 ${
+        className={`rounded-[3px] border p-4 ${
           missingRequired > 0
             ? 'bg-amber-500/5 border-amber-500/20'
             : 'bg-emerald-500/5 border-emerald-500/20'
@@ -86,7 +86,7 @@ export default function SettingsTab({ onKeySet, onHfTokenSet, onCookiesChange })
           {setupItems.map((item) => (
             <div
               key={item.key}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[11px] ${
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-[3px] border text-[11px] ${
                 item.ok
                   ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
                   : item.required
@@ -104,7 +104,7 @@ export default function SettingsTab({ onKeySet, onHfTokenSet, onCookiesChange })
         </div>
       </div>
 
-      <div className="rounded-2xl bg-[#0f0f13] border border-white/5 overflow-hidden">
+      <div className="rounded-[3px] bg-[oklch(9%_0.006_260)] border border-white/5 overflow-hidden">
         <div className="px-6 py-4 border-b border-white/5 flex items-center gap-2.5">
           <Shield size={16} className="text-emerald-400" />
           <span className="text-sm font-medium text-zinc-300">API Keys &amp; Security</span>
@@ -114,7 +114,7 @@ export default function SettingsTab({ onKeySet, onHfTokenSet, onCookiesChange })
         </div>
       </div>
 
-      <div className="rounded-2xl bg-[#0f0f13] border border-white/5 overflow-hidden">
+      <div className="rounded-[3px] bg-[oklch(9%_0.006_260)] border border-white/5 overflow-hidden">
         <div className="px-6 py-4 border-b border-white/5 flex items-center gap-2.5">
           <Send size={16} className="text-accent-pink" />
           <span className="text-sm font-medium text-zinc-300">Social Publishing (Zernio)</span>
@@ -129,7 +129,7 @@ export default function SettingsTab({ onKeySet, onHfTokenSet, onCookiesChange })
           href="https://github.com/fralapo/clippyme"
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 border border-white/5 hover:border-white/10 text-sm text-zinc-400 hover:text-white transition-all"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-[3px] bg-white/5 border border-white/5 hover:border-white/10 text-sm text-zinc-400 hover:text-white transition-all"
         >
           <Github size={16} />
           Repository

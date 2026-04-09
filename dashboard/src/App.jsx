@@ -170,15 +170,15 @@ function App() {
     setLogs([]);
     setProcessingMedia(null);
     setCurrentStep(null);
-    localStorage.removeItem(SESSION_KEY);
+    try { localStorage.removeItem('clippyme_session'); } catch { /* silent */ }
   };
 
 
 
   return (
-    <div className="min-h-screen bg-[#050507] text-zinc-300 font-sans selection:bg-blue-500/20 selection:text-white">
-      {/* Background effects */}
-      <div className="fixed inset-0 bg-gradient-mesh opacity-20 pointer-events-none -z-10" />
+    <div className="min-h-screen bg-background text-zinc-300 font-sans">
+      {/* Single warm ambient wash — replaces the dead .bg-gradient-mesh class */}
+      <div className="fixed inset-0 bg-ambient pointer-events-none -z-10" />
 
       <ConfettiOverlay visible={showConfetti} />
 
@@ -218,6 +218,18 @@ function App() {
                 setStatus('complete');
                 setProcessingMedia({ type: 'url', payload: entry.source });
                 setActiveTab('dashboard');
+                // Rehydrate the clip preselections for THIS job id. The
+                // per-job snapshot was written at submission time into
+                // localStorage via setPreselections(). Without this
+                // explicit read, a lingering `preselections` state from
+                // the previous session would leak into the restored
+                // job's ResultCards (wrong defaults for subs/hook/etc).
+                try {
+                  const saved = localStorage.getItem(`clippyme_preselections_job_${entry.jobId}`);
+                  setPreselectionsRaw(saved ? JSON.parse(saved) : null);
+                } catch {
+                  setPreselectionsRaw(null);
+                }
               }}
               onJobDeleted={deleteFromHistory}
               onAllCleared={clearHistory}

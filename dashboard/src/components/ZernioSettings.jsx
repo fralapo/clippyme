@@ -117,7 +117,7 @@ export default function ZernioSettings() {
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
                         placeholder={hasKey ? 'Leave empty to keep current key, or paste a new one' : 'sk_...'}
-                        className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 pr-10 text-sm text-white placeholder:text-zinc-700 focus:outline-none focus:border-accent-pink/50 font-mono"
+                        className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-4 py-3 pr-10 text-sm text-white placeholder:text-zinc-700 focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 font-mono"
                     />
                     <button
                         type="button"
@@ -149,7 +149,7 @@ export default function ZernioSettings() {
                     </button>
                 </div>
                 {discovered.length > 0 && (
-                    <div className="bg-white/[0.02] border border-white/5 rounded-lg p-2 space-y-1 max-h-48 overflow-y-auto">
+                    <div className="bg-white/[0.02] border border-white/5 rounded-[3px] p-2 space-y-1 max-h-48 overflow-y-auto">
                         {discovered.map((a) => {
                             const id = a._id || a.id;
                             const platform = (a.platform || '').toLowerCase();
@@ -202,7 +202,7 @@ export default function ZernioSettings() {
                                 value={accounts[key]}
                                 onChange={(e) => setAccounts({ ...accounts, [key]: e.target.value })}
                                 placeholder="68becb..."
-                                className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-3 py-2 text-xs text-white placeholder:text-zinc-700 focus:outline-none focus:border-accent-pink/50 font-mono"
+                                className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-3 py-2 text-xs text-white placeholder:text-zinc-700 focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 font-mono"
                             />
                         </div>
                     );
@@ -217,7 +217,7 @@ export default function ZernioSettings() {
                     value={timezone}
                     onChange={(e) => setTimezone(e.target.value)}
                     placeholder="Europe/Rome"
-                    className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-2 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                    className="w-full bg-white/[0.03] border border-white/5 rounded-[3px] px-3 py-2 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                 />
                 <p className="text-[10px] text-zinc-600">
                     IANA timezone string (e.g. Europe/Rome, America/New_York).
@@ -229,7 +229,7 @@ export default function ZernioSettings() {
                     type="button"
                     onClick={handleSave}
                     disabled={saving}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent-pink/20 text-accent-pink border border-accent-pink/30 hover:bg-accent-pink/30 text-sm font-medium transition-colors disabled:opacity-50"
+                    className="flex items-center gap-2 px-4 py-2 rounded-[3px] bg-accent-pink/20 text-accent-pink border border-accent-pink/30 hover:bg-accent-pink/30 text-sm font-medium transition-colors disabled:opacity-50"
                 >
                     <Save size={14} />
                     {saving ? 'Saving...' : 'Save Zernio settings'}

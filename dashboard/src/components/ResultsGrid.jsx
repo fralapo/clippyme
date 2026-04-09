@@ -195,7 +195,7 @@ export default function ResultsGrid({
       </header>
 
       {processingMedia && (
-        <div className="rounded-2xl bg-[#0f0f13] border border-white/5 p-4">
+        <div className="rounded-[3px] bg-[oklch(9%_0.006_260)] border border-white/5 p-4">
           <ProcessingAnimation
             media={processingMedia}
             isComplete={status === 'complete'}
@@ -323,7 +323,7 @@ export default function ResultsGrid({
       />
 
       {status === 'error' && (
-        <div className="rounded-2xl bg-red-500/10 border border-red-500/20 p-4 flex items-center justify-between">
+        <div className="rounded-[3px] bg-red-500/10 border border-red-500/20 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <AlertCircle size={18} className="text-red-400 shrink-0" />
             <p className="text-sm text-red-400">

@@ -63,7 +63,7 @@ export default function ProcessingView({
               {results.clips.length} segment{results.clips.length !== 1 ? 's' : ''} found so far
             </p>
           </div>
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-[3px] bg-blue-500/10 border border-blue-500/20">
             <Activity size={14} className="text-blue-400 animate-pulse" />
             <span className="text-xs font-medium text-blue-400">Processing</span>
           </div>
@@ -121,7 +121,7 @@ export default function ProcessingView({
 
           {status === 'error' && (
             <div className="flex flex-col items-center py-8 space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-red-500/10 flex items-center justify-center">
+              <div className="w-14 h-14 rounded-[3px] bg-red-500/10 flex items-center justify-center">
                 <AlertCircle size={28} className="text-red-400" />
               </div>
               <div className="text-center">
@@ -139,7 +139,7 @@ export default function ProcessingView({
                 )}
                 <button
                   onClick={onReset}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-zinc-300 text-sm font-medium hover:bg-white/10 transition-all"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-[3px] bg-white/5 border border-white/10 text-zinc-300 text-sm font-medium hover:bg-white/10 transition-all"
                 >
                   New Project
                 </button>

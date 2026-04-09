@@ -304,13 +304,13 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
             onClick={publishing ? undefined : onClose}
         >
             <div
-                className="bg-[#0f0f13] border border-white/10 rounded-2xl w-full max-w-xl shadow-elevated relative flex flex-col max-h-[90vh] overflow-hidden"
+                className="bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] w-full max-w-xl shadow-elevated relative flex flex-col max-h-[90vh] overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
             >
                 {!publishing && (
                     <button
                         onClick={onClose}
-                        className="absolute top-4 right-4 z-30 p-1.5 rounded-lg bg-white/5 hover:bg-white/10"
+                        className="absolute top-4 right-4 z-30 p-1.5 rounded-[3px] bg-white/5 hover:bg-white/10"
                     >
                         <X size={18} className="text-zinc-400" />
                     </button>
@@ -328,7 +328,7 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
 
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
                     {!isConfigured && (
-                        <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+                        <div className="px-4 py-3 rounded-[3px] bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
                             ⚠ Zernio is not configured. Open <strong>Settings → Social Publishing</strong> first.
                         </div>
                     )}
@@ -349,7 +349,7 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                                         key={id}
                                         onClick={() => available && setEnabled({ ...enabled, [id]: !enabled[id] })}
                                         disabled={!available || publishing}
-                                        className={`py-2.5 px-3 rounded-lg text-xs font-medium border transition-all ${
+                                        className={`py-2.5 px-3 rounded-[3px] text-xs font-medium border transition-all ${
                                             active
                                                 ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
                                                 : available
@@ -377,7 +377,7 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                                     key={id}
                                     onClick={() => setScheduleMode(id)}
                                     disabled={publishing}
-                                    className={`py-2.5 px-3 rounded-lg text-xs font-medium border transition-all flex items-center justify-center gap-1.5 ${
+                                    className={`py-2.5 px-3 rounded-[3px] text-xs font-medium border transition-all flex items-center justify-center gap-1.5 ${
                                         scheduleMode === id
                                             ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
                                             : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300'
@@ -409,12 +409,12 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                                     min={todayLocalISO()}
                                     onChange={(e) => setStartDate(e.target.value)}
                                     disabled={publishing}
-                                    className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-accent-pink/50 disabled:opacity-50"
+                                    className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-3 py-2.5 text-sm text-white focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 disabled:opacity-50"
                                 />
                             </div>
 
                             {/* One-per-day toggle */}
-                            <div className="flex items-start justify-between gap-3 p-3 rounded-lg bg-white/[0.02] border border-white/5">
+                            <div className="flex items-start justify-between gap-3 p-3 rounded-[3px] bg-white/[0.02] border border-white/5">
                                 <div className="flex-1 min-w-0">
                                     <div className="text-[11px] font-medium text-zinc-300">
                                         One clip per day
@@ -453,7 +453,7 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                             return (
                                 <div
                                     key={originalIndex}
-                                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.02] border border-white/5"
+                                    className="flex items-center gap-2 px-3 py-2 rounded-[3px] bg-white/[0.02] border border-white/5"
                                 >
                                     <span className="text-[10px] text-zinc-600 font-mono w-6">#{originalIndex + 1}</span>
                                     <span className="flex-1 text-[11px] text-zinc-400 truncate">
@@ -478,7 +478,7 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                     <button
                         onClick={handlePublishAll}
                         disabled={publishing || !isConfigured || enabledCount === 0 || clips.length === 0}
-                        className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gradient-to-r from-accent-pink to-accent-purple text-white text-sm font-semibold shadow-glow-pink disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-[3px] bg-gradient-to-r from-accent-pink to-accent-purple text-white text-sm font-semibold shadow-glow-pink disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {publishing ? (
                             <>

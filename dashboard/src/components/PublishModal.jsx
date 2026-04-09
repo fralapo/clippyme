@@ -156,12 +156,12 @@ export default function PublishModal({
             onClick={onClose}
         >
             <div
-                className="bg-[#0f0f13] border border-white/10 rounded-2xl w-full max-w-2xl shadow-elevated relative flex flex-col max-h-[90vh] overflow-hidden"
+                className="bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] w-full max-w-2xl shadow-elevated relative flex flex-col max-h-[90vh] overflow-hidden"
                 onClick={(e) => e.stopPropagation()}
             >
                 <button
                     onClick={onClose}
-                    className="absolute top-4 right-4 z-30 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
+                    className="absolute top-4 right-4 z-30 p-1.5 rounded-[3px] bg-white/5 hover:bg-white/10 transition-colors"
                 >
                     <X size={18} className="text-zinc-400" />
                 </button>
@@ -178,12 +178,12 @@ export default function PublishModal({
 
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
                     {zernioConfig === null && (
-                        <div className="px-4 py-3 rounded-lg bg-white/[0.02] border border-white/5 text-zinc-500 text-xs flex items-center gap-2">
+                        <div className="px-4 py-3 rounded-[3px] bg-white/[0.02] border border-white/5 text-zinc-500 text-xs flex items-center gap-2">
                             <Loader2 size={12} className="animate-spin" /> Checking Zernio configuration…
                         </div>
                     )}
                     {zernioConfig !== null && !isConfigured && (
-                        <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-2">
+                        <div className="px-4 py-3 rounded-[3px] bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs space-y-2">
                             <p>
                                 ⚠ Zernio is not configured. You need an API key + at least one connected social account before you can publish.
                             </p>
@@ -209,7 +209,7 @@ export default function PublishModal({
                             value={title}
                             onChange={(e) => setTitle(e.target.value)}
                             maxLength={100}
-                            className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+                            className="w-full bg-white/[0.03] border border-white/5 rounded-[3px] px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30"
                             placeholder="YouTube title (max 100 chars)"
                         />
                     </div>
@@ -222,7 +222,7 @@ export default function PublishModal({
                             onChange={(e) => setCaption(e.target.value)}
                             rows={4}
                             maxLength={2200}
-                            className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 resize-none"
+                            className="w-full bg-white/[0.03] border border-white/5 rounded-[3px] px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 resize-none"
                             placeholder="Caption / description shown on all platforms"
                         />
                         <p className="text-[10px] text-zinc-600 text-right">{caption.length} / 2200</p>
@@ -245,7 +245,7 @@ export default function PublishModal({
                                         type="button"
                                         onClick={() => available && setEnabled({ ...enabled, [id]: !enabled[id] })}
                                         disabled={!available}
-                                        className={`py-2.5 px-3 rounded-lg text-xs font-medium border transition-all ${
+                                        className={`py-2.5 px-3 rounded-[3px] text-xs font-medium border transition-all ${
                                             active
                                                 ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
                                                 : available
@@ -274,7 +274,7 @@ export default function PublishModal({
                                     key={id}
                                     type="button"
                                     onClick={() => setScheduleMode(id)}
-                                    className={`py-2.5 px-3 rounded-lg text-xs font-medium border transition-all flex items-center justify-center gap-1.5 ${
+                                    className={`py-2.5 px-3 rounded-[3px] text-xs font-medium border transition-all flex items-center justify-center gap-1.5 ${
                                         scheduleMode === id
                                             ? 'bg-accent-pink/20 text-accent-pink border-accent-pink/30'
                                             : 'bg-white/[0.02] text-zinc-500 border-white/5 hover:text-zinc-300'
@@ -290,7 +290,7 @@ export default function PublishModal({
                                 type="datetime-local"
                                 value={manualDateTime}
                                 onChange={(e) => setManualDateTime(e.target.value)}
-                                className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 mt-2"
+                                className="w-full bg-white/[0.03] border border-white/5 rounded-[3px] px-3 py-2 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 mt-2"
                             />
                         )}
                         {scheduleMode === 'auto' && (
@@ -302,7 +302,7 @@ export default function PublishModal({
 
                     {/* Result */}
                     {result && (
-                        <div className="px-4 py-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs space-y-1">
+                        <div className="px-4 py-3 rounded-[3px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs space-y-1">
                             <p>✅ Post created — id: <code className="text-[10px] bg-black/20 px-1 rounded">{result.post_id || '?'}</code></p>
                             {result.scheduled_for && <p>Scheduled for: {result.scheduled_for}</p>}
                         </div>
@@ -317,7 +317,7 @@ export default function PublishModal({
                         type="button"
                         onClick={handlePublish}
                         disabled={publishing || !isConfigured || enabledCount === 0}
-                        className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gradient-to-r from-accent-pink to-accent-purple text-white text-sm font-semibold shadow-glow-pink disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-[3px] bg-gradient-to-r from-accent-pink to-accent-purple text-white text-sm font-semibold shadow-glow-pink disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                     >
                         {publishing ? (
                             <>

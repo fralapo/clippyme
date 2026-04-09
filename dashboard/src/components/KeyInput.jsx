@@ -226,7 +226,7 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
         <div className="space-y-5 animate-[fadeIn_0.5s_ease-out]">
             {/* Status message */}
             {message.text && (
-                <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
+                <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-[3px] ${
                     message.type === 'success' ? 'bg-success/10 text-success border border-success/20' : 'bg-error/10 text-error border border-error/20'
                 }`}>
                     {message.type === 'success' ? <Check size={14} /> : <AlertCircle size={14} />}
@@ -272,7 +272,7 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                                     value={keys[type.id] || ''}
                                     onChange={(e) => setKeys({ ...keys, [type.id]: e.target.value })}
                                     placeholder={type.placeholder}
-                                    className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-accent-pink/50 pr-10 placeholder:text-zinc-700"
+                                    className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 pr-10 placeholder:text-zinc-700"
                                 />
                                 <button
                                     onClick={() => toggleVisibility(type.id)}
@@ -284,7 +284,7 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                             <button
                                 onClick={() => handleSave(type.id)}
                                 disabled={!keys[type.id] || isSaving}
-                                className={`px-4 rounded-lg font-medium text-sm transition-all flex items-center gap-1.5 ${
+                                className={`px-4 rounded-[3px] font-medium text-sm transition-all flex items-center gap-1.5 ${
                                     !keys[type.id] || isSaving
                                         ? 'bg-white/[0.03] text-zinc-600 cursor-not-allowed border border-white/[0.06]'
                                         : 'text-white border border-transparent'
@@ -308,11 +308,11 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                         value={selectedModel}
                         onChange={handleModelChange}
                         disabled={isLoadingModels}
-                        className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-accent-pink/50 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                        className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-4 py-3 text-sm text-white focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-wait"
                     >
                         {models.length > 0 ? (
                             models.map(m => (
-                                <option key={m.name} value={m.name} className="bg-[#0f0f13]">
+                                <option key={m.name} value={m.name} className="bg-[oklch(9%_0.006_260)]">
                                     {m.display_name} ({m.name})
                                 </option>
                             ))
@@ -352,10 +352,10 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                     <select
                         value={transcriptionProvider}
                         onChange={handleProviderChange}
-                        className="w-full bg-[#0f0f13] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:outline-none focus:border-accent-pink/50 appearance-none cursor-pointer"
+                        className="w-full bg-[oklch(9%_0.006_260)] border border-white/10 rounded-[3px] px-4 py-3 text-sm text-white focus:outline-none focus:border-[oklch(74%_0.175_62)]/55 appearance-none cursor-pointer"
                     >
-                        <option value="deepgram" className="bg-[#0f0f13]">Deepgram Nova-3 (cloud, recommended — 30× faster, ~2× more accurate)</option>
-                        <option value="whisper" className="bg-[#0f0f13]">Faster-Whisper (local fallback, no API key needed)</option>
+                        <option value="deepgram" className="bg-[oklch(9%_0.006_260)]">Deepgram Nova-3 (cloud, recommended — 30× faster, ~2× more accurate)</option>
+                        <option value="whisper" className="bg-[oklch(9%_0.006_260)]">Faster-Whisper (local fallback, no API key needed)</option>
                     </select>
                     <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
                         <ChevronDown size={14} />
@@ -401,7 +401,7 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                             onChange={(e) => setCookiesFile(e.target.files?.[0] || null)}
                             className="absolute inset-0 opacity-0 cursor-pointer z-10"
                         />
-                        <div className="w-full bg-[#0f0f13] border border-dashed border-white/10 rounded-lg py-3 px-4 text-xs text-zinc-500 group-hover/cookie:border-accent-pink/30 transition-all flex items-center justify-between">
+                        <div className="w-full bg-[oklch(9%_0.006_260)] border border-dashed border-white/10 rounded-[3px] py-3 px-4 text-xs text-zinc-500 group-hover/cookie:border-[oklch(74%_0.175_62)]/35 transition-all flex items-center justify-between">
                             <span>{cookiesFile ? cookiesFile.name : 'Drop .txt cookies file here'}</span>
                             <Upload size={13} className="text-zinc-600 group-hover/cookie:text-zinc-400 transition-colors" />
                         </div>
@@ -409,7 +409,7 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                     <button
                         onClick={handleCookieUpload}
                         disabled={!cookiesFile || isSavingCookies}
-                        className={`px-4 rounded-lg font-medium text-sm transition-all flex items-center gap-1.5 ${
+                        className={`px-4 rounded-[3px] font-medium text-sm transition-all flex items-center gap-1.5 ${
                             !cookiesFile || isSavingCookies
                                 ? 'bg-white/[0.03] text-zinc-600 cursor-not-allowed border border-white/[0.06]'
                                 : 'text-white border border-transparent'
@@ -423,7 +423,7 @@ export default function KeyInput({ onKeySet, onHfTokenSet, onCookiesChange }) {
                         <button
                             onClick={handleCookieDelete}
                             disabled={isSavingCookies}
-                            className="px-3 rounded-lg font-medium text-sm transition-all flex items-center gap-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 disabled:opacity-50"
+                            className="px-3 rounded-[3px] font-medium text-sm transition-all flex items-center gap-1.5 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 disabled:opacity-50"
                             title="Remove cookies"
                         >
                             <Trash2 size={14} />

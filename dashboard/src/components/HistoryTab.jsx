@@ -109,7 +109,7 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
         {serverHistory.length > 0 && (
           <button
             onClick={handleDeleteAll}
-            className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-red-400 px-4 py-2 rounded-xl bg-white/5 border border-white/10 hover:border-red-500/30 transition-all"
+            className="flex items-center gap-2 text-xs font-semibold text-zinc-400 hover:text-red-400 px-4 py-2 rounded-[3px] bg-white/5 border border-white/10 hover:border-red-500/30 transition-all"
           >
             <X size={14} /> Clear All
           </button>
@@ -148,7 +148,7 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
         </div>
       ) : serverHistory.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-zinc-600 space-y-4">
-          <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center">
+          <div className="w-16 h-16 rounded-[3px] bg-white/5 flex items-center justify-center">
             <History size={32} className="opacity-30" />
           </div>
           <p className="text-sm font-medium text-zinc-500">No sessions on disk</p>
@@ -159,7 +159,7 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
           {serverHistory.map((entry) => (
             <div
               key={entry.jobId}
-              className="group rounded-2xl bg-[#16161d] border border-white/5 hover:border-white/10 overflow-hidden transition-all duration-300"
+              className="group rounded-[3px] bg-[oklch(15%_0.01_260)] border border-white/5 hover:border-white/10 overflow-hidden transition-all duration-300"
             >
               <div className="p-5">
                 <div className="flex items-start justify-between gap-3">
@@ -186,13 +186,13 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
                   <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => handleOpen(entry)}
-                      className="px-3 py-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-lg transition-all"
+                      className="px-3 py-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 rounded-[3px] transition-all"
                     >
                       Open
                     </button>
                     <button
                       onClick={() => handleDelete(entry.jobId)}
-                      className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                      className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-[3px] transition-all"
                       title="Delete job and files"
                     >
                       <X size={14} />
@@ -219,7 +219,7 @@ export default function HistoryTab({ onRestore, onJobDeleted, onAllCleared }) {
                   {expanded === entry.jobId && (
                     <div className="border-t border-white/5 p-4 grid grid-cols-2 sm:grid-cols-3 gap-3">
                       {entry.clips.map((clip, ci) => (
-                        <div key={ci} className="bg-black rounded-xl overflow-hidden">
+                        <div key={ci} className="bg-black rounded-[3px] overflow-hidden">
                           <video
                             src={getApiUrl(clip.video_url)}
                             className="w-full aspect-[9/16] object-cover"
