@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
-import PublishModal from './PublishModal';
+import { Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Trash2, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 import SubtitleModal from './SubtitleModal';
@@ -207,78 +206,16 @@ export default function ResultCard({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const [isComposing, setIsComposing] = useState(false);
-    const [showPublishModal, setShowPublishModal] = useState(false);
+    // isComposing + showPublishModal were used by the now-removed per-card
+    // Download + Publish buttons. The sticky action rail in ResultsGrid
+    // hosts those actions via the selection model, so both pieces of
+    // state are obsolete. handleDownload() and <PublishModal/> are also
+    // deleted below.
 
     const copyToClipboard = (text, field) => {
         navigator.clipboard.writeText(text);
         setCopiedField(field);
         setTimeout(() => setCopiedField(null), 2000);
-    };
-
-    const handleDownload = async () => {
-        // Idempotency guard: React sets isComposing asynchronously so a fast
-        // double-click can fire two requests before the first setState lands.
-        // Bail out immediately if a compose is already in flight.
-        if (isComposing) return;
-
-        const hasActiveToggles = Object.values(toggles).some(Boolean);
-
-        if (!hasActiveToggles) {
-            // Download original clip directly
-            try {
-                const response = await fetch(currentVideoUrl);
-                if (!response.ok) throw new Error('Download failed');
-                const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = `clippyme-segment-${index + 1}.mp4`;
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(() => window.URL.revokeObjectURL(url), 60000);
-                document.body.removeChild(a);
-            } catch (err) {
-                console.error('Download error:', err);
-                window.open(currentVideoUrl, '_blank');
-            }
-            return;
-        }
-
-        setIsComposing(true);
-        try {
-            const res = await fetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    toggles,
-                    hook_params: toggles.hook ? hookParams : {},
-                    subtitle_params: toggles.subtitles ? subtitleParams : {},
-                }),
-            });
-            const data = await res.json();
-            if (data.composed_url) {
-                const videoRes = await fetch(getApiUrl(data.composed_url));
-                const blob = await videoRes.blob();
-                const url = window.URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = url;
-                a.download = `clippyme-segment-${index + 1}.mp4`;
-                document.body.appendChild(a);
-                a.click();
-                setTimeout(() => window.URL.revokeObjectURL(url), 60000);
-                document.body.removeChild(a);
-            } else {
-                toast.error(data.detail || 'Compose returned no video URL');
-            }
-        } catch (err) {
-            console.error('Compose failed:', err);
-            toast.error('Compose failed — check console for details');
-        } finally {
-            setIsComposing(false);
-        }
     };
 
     const duration = Math.floor(clip.end - clip.start);
@@ -669,59 +606,15 @@ export default function ResultCard({
                     />
                 </div>
 
-                {/* Download + Publish row — flat editorial buttons */}
-                <div className="flex gap-2">
-                    <button
-                        onClick={handleDownload}
-                        disabled={isComposing}
-                        className="flex-1 h-11 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(14%_0.01_260)] font-mono text-[11px] uppercase tracking-[0.16em] font-semibold border border-[oklch(70%_0.18_62)] flex items-center justify-center gap-2 shadow-[0_1px_0_0_oklch(100%_0_0/0.3)_inset,0_8px_20px_-14px_oklch(74%_0.175_62/0.5)] active:translate-y-px transition-all duration-150 disabled:opacity-50 disabled:cursor-wait focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)] focus-visible:ring-offset-2 focus-visible:ring-offset-[oklch(14%_0.009_260)]"
-                    >
-                        {isComposing ? (
-                            <>
-                                <Loader2 size={14} className="animate-spin" strokeWidth={2.2} />
-                                Composing
-                            </>
-                        ) : (
-                            <>
-                                <Download size={14} strokeWidth={2.2} />
-                                Download
-                            </>
-                        )}
-                    </button>
-                    <button
-                        onClick={() => setShowPublishModal(true)}
-                        disabled={isComposing}
-                        title={
-                            publishedAt
-                                    ? 'Already published — click to publish again'
-                                    : 'Publish to TikTok / Instagram / YouTube via Zernio'
-                        }
-                        className={`h-11 px-4 rounded-[3px] border font-mono text-[11px] uppercase tracking-[0.16em] font-semibold flex items-center justify-center gap-2 transition-all duration-150 active:translate-y-px disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[oklch(14%_0.009_260)] ${
-                            publishedAt
-                                ? 'bg-[oklch(68%_0.18_145)]/[0.12] border-[oklch(68%_0.18_145)]/50 text-[oklch(80%_0.15_145)] hover:bg-[oklch(68%_0.18_145)]/[0.2] focus-visible:ring-[oklch(68%_0.18_145)]'
-                                : 'bg-transparent border-[oklch(74%_0.175_62)]/50 text-[oklch(82%_0.16_68)] hover:bg-[oklch(74%_0.175_62)]/[0.12] hover:border-[oklch(74%_0.175_62)]/80 focus-visible:ring-[oklch(74%_0.175_62)]'
-                        }`}
-                    >
-                        {publishedAt ? <Check size={14} strokeWidth={2.4} /> : <Send size={14} strokeWidth={2.2} />}
-                        {publishedAt ? 'Republish' : 'Publish'}
-                    </button>
-                </div>
-
-                <PublishModal
-                    isOpen={showPublishModal}
-                    onClose={() => setShowPublishModal(false)}
-                    jobId={jobId}
-                    clipIndex={index}
-                    defaultTitle={clip.video_title_for_youtube_short || ''}
-                    defaultCaption={clip.tiktok_caption || ''}
-                    videoUrl={currentVideoUrl}
-                    composeBeforePublish={
-                        Object.values(toggles).some(Boolean)
-                            ? { toggles, hookParams, subtitleParams }
-                            : null
-                    }
-                    onPublished={() => onUpdateState({ publishedAt: Date.now() })}
-                />
+                {/* Per-card Download + Publish buttons (and their
+                    PublishModal) removed in favour of the sticky action
+                    rail in ResultsGrid. The rail's 'Download NN' /
+                    'Publish NN' operate on the selected clips, so this
+                    card's actions are now exposed via the selection
+                    checkbox on the video overlay + the bulk buttons.
+                    Single-clip publish still works: tick this card, then
+                    click 'Publish 01' in the rail. Eliminates the visual
+                    duplication the user called out. */}
 
                 {/* Metadata (collapsible) — YouTube title + TikTok caption */}
                 <div className="border-t border-white/5 pt-2 -mx-4 px-4">
