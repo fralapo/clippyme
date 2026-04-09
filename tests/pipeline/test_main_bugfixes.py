@@ -50,3 +50,15 @@ def test_bug2_person_box_targets_head_zone_not_above_head():
     cam.update_target([800, 200, 300, 800], is_person_box=True)
     # Head zone = y + h*0.15 = 200 + 120 = 320 px
     assert cam.target_center_y == pytest.approx(320, abs=1)
+
+
+def test_bug5_cooldown_blocks_switch_even_when_old_speaker_offscreen():
+    from clippyme.pipeline.main import SpeakerTracker
+    st = SpeakerTracker(cooldown_frames=45)
+    box_a = {'box': [100, 100, 200, 200], 'score': 40000, 'mar': 0.3}
+    st.get_target([box_a], frame_number=0, width=1920)
+    active_before = st.active_speaker_id
+    box_b = {'box': [1500, 100, 200, 200], 'score': 40000, 'mar': 0.3}
+    st.get_target([box_b], frame_number=5, width=1920)
+    assert st.active_speaker_id == active_before, \
+        "cooldown was bypassed when old speaker left the frame"

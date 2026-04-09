@@ -624,7 +624,12 @@ class SpeakerTracker:
                 old_cand = next((c for c in current_candidates if c['id'] == self.active_speaker_id), None)
                 if old_cand:
                     return old_cand['box']
-            
+                # Active speaker temporarily off-screen: hold the previous
+                # framing (return None → cameraman keeps its current target)
+                # instead of switching. Prevents rapid A→B→A oscillation
+                # when A briefly turns away / occludes.
+                return None
+
             self.active_speaker_id = target_id
             self.last_switch_frame = frame_number
             self.locked_counter = 0
