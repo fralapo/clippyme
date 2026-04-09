@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, EyeOff } from 'lucide-react';
+import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, EyeOff, ChevronDown, ChevronUp } from 'lucide-react';
 import ResultCard from './ResultCard';
 import ProcessingAnimation from './ProcessingAnimation';
 import LogsPanel from './LogsPanel';
@@ -53,6 +53,9 @@ export default function ResultsGrid({
 }) {
   const [batchPublishOpen, setBatchPublishOpen] = useState(false);
   const [sortBy, setSortBy] = useState('viral_desc');
+  // Collapse the source-video preview once the job is complete — users
+  // want the clips grid, not a big player of the original 1h video.
+  const [sourcePreviewOpen, setSourcePreviewOpen] = useState(status !== 'complete');
 
   const allClips = results?.clips || [];
   // Filter out deleted clips from the grid
@@ -195,14 +198,95 @@ export default function ResultsGrid({
       </header>
 
       {processingMedia && (
-        <div className="rounded-[3px] bg-[oklch(9%_0.006_260)] border border-white/5 p-4">
-          <ProcessingAnimation
-            media={processingMedia}
-            isComplete={status === 'complete'}
-            syncedTime={syncedTime}
-            isSyncedPlaying={isSyncedPlaying}
-            syncTrigger={syncTrigger}
-          />
+        <div className="rounded-[3px] bg-[oklch(9%_0.006_260)] border border-white/5 overflow-hidden">
+          {/* Collapsible source-preview. When the job is done the user
+              wants the clip grid, not a big player of the original video,
+              so we default to collapsed on completion. */}
+          <button
+            type="button"
+            onClick={() => setSourcePreviewOpen((v) => !v)}
+            className="w-full px-5 py-2.5 flex items-center justify-between hover:bg-white/[0.02] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+            title={sourcePreviewOpen ? 'Hide source preview' : 'Show source preview'}
+          >
+            <span className="type-label flex items-center gap-2.5">
+              Source preview
+              <span className="type-mono text-[10px] text-zinc-600 normal-case tracking-normal">
+                {status === 'complete' ? 'Job complete' : 'Live'}
+              </span>
+            </span>
+            {sourcePreviewOpen ? (
+              <ChevronUp size={12} className="text-zinc-600" />
+            ) : (
+              <ChevronDown size={12} className="text-zinc-600" />
+            )}
+          </button>
+          {sourcePreviewOpen && (
+            <div className="border-t border-white/5 p-4">
+              <ProcessingAnimation
+                media={processingMedia}
+                isComplete={status === 'complete'}
+                syncedTime={syncedTime}
+                isSyncedPlaying={isSyncedPlaying}
+                syncTrigger={syncTrigger}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {clipCount > 0 && (publishableClips.length > 0 || clipCount > 1) && (
+        /* Sticky action rail — stays pinned under the top nav while the user
+           scrolls through a long clip list, so 'Publish all' and 'Sort' are
+           always one click away. Editorial hairline border + backdrop blur
+           to stay legible over whatever grid section sits behind it. */
+        <div className="sticky top-[56px] z-40 -mx-4 px-4 py-2 backdrop-blur-md bg-[oklch(9%_0.006_260)]/82 border-y border-white/[0.06]">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="type-label flex items-center gap-3 text-zinc-500">
+              <span>
+                <span className="text-zinc-700">on&nbsp;grid&nbsp;/&nbsp;</span>
+                <span className="tabular-nums text-zinc-300">{String(clipCount).padStart(2, '0')}</span>
+              </span>
+              {stats.published > 0 && (
+                <span className="text-[oklch(78%_0.17_145)] tabular-nums">
+                  · {String(stats.published).padStart(2, '0')}&nbsp;live
+                </span>
+              )}
+              {stats.disabled > 0 && (
+                <span className="text-zinc-600 tabular-nums">
+                  · {String(stats.disabled).padStart(2, '0')}&nbsp;muted
+                </span>
+              )}
+            </div>
+            <div className="flex items-stretch gap-2">
+              {clipCount > 1 && (
+                <div className="relative">
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value)}
+                    className="appearance-none bg-white/[0.02] border border-white/10 hover:border-white/20 text-zinc-200 text-[10px] font-mono uppercase tracking-[0.12em] pl-3 pr-8 h-9 rounded-[3px] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+                  >
+                    {SORT_OPTIONS.map((opt) => (
+                      <option key={opt.id} value={opt.id} className="bg-background text-white">
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ArrowUpDown size={11} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+                </div>
+              )}
+              {publishableClips.length > 0 && (
+                <button
+                  onClick={() => setBatchPublishOpen(true)}
+                  className="flex items-center gap-2 h-9 px-3.5 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] text-[oklch(12%_0.01_260)] text-[10px] font-mono uppercase tracking-[0.14em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_6px_18px_-10px_oklch(74%_0.175_62/0.6)] active:translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]"
+                  title={`Publish ${publishableClips.length} active clips`}
+                >
+                  <Send size={11} strokeWidth={2.4} />
+                  Publish&nbsp;
+                  <span className="tabular-nums">{String(publishableClips.length).padStart(2, '0')}</span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
