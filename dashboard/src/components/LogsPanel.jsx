@@ -1,5 +1,5 @@
-import React, { useMemo, useRef, useEffect } from 'react';
-import { ChevronDown, Terminal } from 'lucide-react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
+import { ChevronDown, Terminal, Copy, Check } from 'lucide-react';
 
 /**
  * Classify a log line into a level based on emoji/keyword prefixes.
@@ -111,8 +111,20 @@ export default function LogsPanel({
 }) {
   const scrollRef = useRef(null);
   const stuckToBottomRef = useRef(true);
+  const [copied, setCopied] = useState(false);
 
   const compact = useMemo(() => compactLogs(logs || []), [logs]);
+
+  const handleCopy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText((logs || []).join('\n'));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard API unavailable — silently ignore
+    }
+  };
 
   // Auto-scroll follows the tail unless the user scrolled up.
   useEffect(() => {
@@ -148,10 +160,25 @@ export default function LogsPanel({
             </span>
           )}
         </span>
-        <ChevronDown
-          size={12}
-          className={`text-zinc-600 transition-transform ${visible ? '' : 'rotate-180'}`}
-        />
+        <span className="flex items-center gap-2">
+          {totalLines > 0 && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={handleCopy}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleCopy(e); }}
+              title="Copy all logs"
+              className="flex items-center gap-1 type-mono text-[10px] uppercase tracking-[0.08em] text-zinc-500 hover:text-[oklch(86%_0.07_85)] px-2 py-1 rounded-[2px] hover:bg-white/[0.04] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[oklch(74%_0.175_62)]/50"
+            >
+              {copied ? <Check size={11} strokeWidth={2} /> : <Copy size={11} strokeWidth={1.8} />}
+              {copied ? 'Copied' : 'Copy'}
+            </span>
+          )}
+          <ChevronDown
+            size={12}
+            className={`text-zinc-600 transition-transform ${visible ? '' : 'rotate-180'}`}
+          />
+        </span>
       </button>
       {visible && (
         <div
