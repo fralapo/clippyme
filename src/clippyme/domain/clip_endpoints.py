@@ -28,6 +28,12 @@ async def run_smart_cut(
     """Execute smart_cut for a single clip. Returns endpoint response payload.
 
     Raises HTTPException for client/server errors.
+
+    Idempotency: calling this twice on the same clip is safe. ``smart_cut``
+    computes a stable hash over (input path, keep-segments, encoder flags)
+    and short-circuits when the cached result on disk matches — so repeated
+    clicks from the dashboard never re-render the same plan. The only cost
+    of a repeat call is a transcript walk to produce the plan hash.
     """
     transcript = data.get("transcript")
     if not transcript:

@@ -162,7 +162,21 @@ async def run_job(job_id, job_data):
     cmd = job_data['cmd']
     env = job_data['env']
     output_dir = job_data['output_dir']
-    
+
+    # Merge the LATEST persisted config into the job env at run time (not
+    # at enqueue time). Fixes a race where the user updates a key
+    # (Deepgram / HF / Gemini model / transcription provider) in Settings
+    # between submit and dispatch: without this, the worker would use the
+    # stale values captured at enqueue. Keys already present in `env`
+    # (e.g. GEMINI_API_KEY set from the X-Gemini-Key header) win over the
+    # persistent config, matching the reframe-endpoint behaviour.
+    try:
+        for k, v in (load_persistent_config() or {}).items():
+            if v is not None and k not in env:
+                env[str(k)] = str(v)
+    except Exception as exc:
+        logger.warning("Could not merge persistent config into job env for %s: %s", job_id, exc)
+
     jobs[job_id]['status'] = 'processing'
     jobs[job_id]['logs'].append("Job started by worker.")
     jobs[job_id]['process'] = None  # Will hold Popen reference for cancel
