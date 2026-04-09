@@ -290,112 +290,37 @@ export default function ResultsGrid({
         </div>
       )}
 
-      {clipCount > 0 && sortBy === 'viral_desc' ? (
-        // Chunked view: group clips by viral_score tier so the grid is
-        // scannable even with 15+ clips (Law of Miller — chunking).
-        // Tiers inspired by the NotebookLM brainstorm recommendation.
-        (() => {
-          const tiers = [
-            { id: 'top', numeral: 'I', label: 'High viral score', hint: 'Score 80+ \u2014 publish these first', min: 80, max: 101 },
-            { id: 'mid', numeral: 'II', label: 'Good candidates', hint: 'Score 50\u201379 \u2014 improve with Smart Cut + hooks', min: 50, max: 80 },
-            { id: 'low', numeral: 'III', label: 'Lower score', hint: 'Score <50 \u2014 consider skipping', min: 0, max: 50 },
-          ];
-          const groups = tiers
-            .map((tier) => ({
-              ...tier,
-              entries: visibleClips.filter(({ clip }) => {
-                const s = clip.viral_score || 0;
-                return s >= tier.min && s < tier.max;
-              }),
-            }))
-            .filter((g) => g.entries.length > 0);
-
-          return (
-            <div className="space-y-12">
-              {groups.map((group) => (
-                <section key={group.id} aria-labelledby={`tier-${group.id}`}>
-                  {/* Editorial chapter header — Roman numeral + Fraunces italic +
-                      mono deckline. Full-width rule underneath. */}
-                  <header className="mb-6">
-                    <div className="flex items-baseline justify-between gap-4 mb-2">
-                      <div className="flex items-baseline gap-4 min-w-0">
-                        <span
-                          className="type-display text-[34px] sm:text-[42px] text-[oklch(74%_0.175_62)] leading-none shrink-0"
-                          aria-hidden
-                        >
-                          {group.numeral}.
-                        </span>
-                        <h3
-                          id={`tier-${group.id}`}
-                          className="type-display text-[22px] sm:text-[26px] text-white font-normal italic truncate"
-                        >
-                          {group.label}
-                          <span className="ml-3 not-italic type-mono text-[11px] align-middle text-zinc-600 tabular-nums">
-                            {String(group.entries.length).padStart(2, '0')}
-                          </span>
-                        </h3>
-                      </div>
-                      <p className="type-label hidden md:block shrink-0 text-right max-w-xs">
-                        {group.hint}
-                      </p>
-                    </div>
-                    <div
-                      aria-hidden
-                      className="h-px bg-gradient-to-r from-[oklch(74%_0.175_62)]/60 via-white/10 to-transparent"
-                    />
-                  </header>
-                  <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-                    {group.entries.map(({ clip, originalIndex, rank }, i) => (
-                      <div
-                        key={originalIndex}
-                        className="animate-rise-in"
-                        style={{ animationDelay: `${i * 60}ms` }}
-                      >
-                        <ResultCard
-                          clip={clip}
-                          index={originalIndex}
-                          rank={rank}
-                          totalClips={visibleClips.length}
-                          jobId={jobId}
-                          preselections={preselections}
-                          onPlay={(time) => onClipPlay(time)}
-                          onPause={onClipPause}
-                          clipState={clipStates[originalIndex] || {}}
-                          onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ))}
+      {clipCount > 0 && (
+        /* Single flat grid. The previous tier grouping (High viral /
+           Good candidates / Lower score) was confusing because users
+           didn't realise "Good candidates" was still the same sorted
+           list — just broken up with a section header. Now every clip
+           lives in one grid, already ordered by the active `sortBy`
+           (defaults to viral_desc). Viral score is still rendered on
+           each card so the visual hierarchy is preserved without the
+           artificial chapter breaks. */
+        <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+          {visibleClips.map(({ clip, originalIndex, rank }, i) => (
+            <div
+              key={originalIndex}
+              className="animate-rise-in"
+              style={{ animationDelay: `${i * 60}ms` }}
+            >
+              <ResultCard
+                clip={clip}
+                index={originalIndex}
+                rank={rank}
+                totalClips={visibleClips.length}
+                jobId={jobId}
+                preselections={preselections}
+                onPlay={(time) => onClipPlay(time)}
+                onPause={onClipPause}
+                clipState={clipStates[originalIndex] || {}}
+                onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
+              />
             </div>
-          );
-        })()
-      ) : (
-        clipCount > 0 && (
-          <div className="grid gap-6 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
-            {visibleClips.map(({ clip, originalIndex, rank }, i) => (
-              <div
-                key={originalIndex}
-                className="animate-rise-in"
-                style={{ animationDelay: `${i * 60}ms` }}
-              >
-                <ResultCard
-                  clip={clip}
-                  index={originalIndex}
-                  rank={rank}
-                  totalClips={visibleClips.length}
-                  jobId={jobId}
-                  preselections={preselections}
-                  onPlay={(time) => onClipPlay(time)}
-                  onPause={onClipPause}
-                  clipState={clipStates[originalIndex] || {}}
-                  onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
-                />
-              </div>
-            ))}
-          </div>
-        )
+          ))}
+        </div>
       )}
 
       <BatchPublishModal
