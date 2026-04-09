@@ -14,6 +14,8 @@ class ProcessRequest(BaseModel):
     instructions: Optional[str] = Field(None, max_length=2000)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled)$")
     language: Optional[str] = Field(None, max_length=16)
+    no_zoom: Optional[bool] = False
+    skip_analysis: Optional[bool] = False
 
 
 class BatchRequest(BaseModel):
@@ -26,6 +28,8 @@ class BatchRequest(BaseModel):
     # transcription accuracy AND speaker diarization reliability on audio
     # that isn't actually multilingual.
     language: Optional[str] = Field(None, max_length=16)
+    no_zoom: Optional[bool] = False
+    skip_analysis: Optional[bool] = False
 
 
 class ConfigUpdateRequest(BaseModel):

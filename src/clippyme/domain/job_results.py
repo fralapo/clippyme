@@ -29,6 +29,8 @@ def build_main_cmd(
     reframe_mode: str | None = None,
     cookies_path: str | None = None,
     language: str | None = None,
+    no_zoom: bool = False,
+    skip_analysis: bool = False,
 ) -> list[str]:
     """Build a `python -u -m clippyme.pipeline.main ...` command line for a single processing job."""
     if reframe_mode is not None and reframe_mode not in ALLOWED_REFRAME_MODES:
@@ -62,6 +64,10 @@ def build_main_cmd(
         cmd.extend(["--reframe-mode", reframe_mode])
     if language and language.strip() and language.strip() != "multi":
         cmd.extend(["--language", language.strip()])
+    if no_zoom:
+        cmd.append("--no-zoom")
+    if skip_analysis:
+        cmd.append("--skip-analysis")
     return cmd
 
 

@@ -232,6 +232,8 @@ async def process_endpoint(
     instructions = None
     reframe_mode = None
     language = None
+    no_zoom = False
+    skip_analysis = False
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         try:
@@ -245,6 +247,8 @@ async def process_endpoint(
         instructions = validated.instructions
         reframe_mode = validated.reframe_mode
         language = validated.language
+        no_zoom = bool(validated.no_zoom)
+        skip_analysis = bool(validated.skip_analysis)
 
     # For multipart/form-data uploads, extract reframe_mode + language from form fields
     if "multipart/form-data" in content_type:
@@ -255,6 +259,8 @@ async def process_endpoint(
         # so drag-and-drop uploads can pass AI directives just like URL
         # submissions (was previously ignored).
         instructions = form.get("instructions", instructions)
+        no_zoom = str(form.get("no_zoom", "")).lower() in {"1", "true", "yes"} or no_zoom
+        skip_analysis = str(form.get("skip_analysis", "")).lower() in {"1", "true", "yes"} or skip_analysis
         # Validate the multipart values through the same schema for
         # consistency — we drop the url requirement since we're using
         # an uploaded file path.
@@ -264,6 +270,8 @@ async def process_endpoint(
                 "reframe_mode": reframe_mode or None,
                 "language": language or None,
                 "instructions": instructions or None,
+                "no_zoom": no_zoom,
+                "skip_analysis": skip_analysis,
             })
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors())
@@ -306,6 +314,8 @@ async def process_endpoint(
             reframe_mode=reframe_mode,
             cookies_path=os.path.join("data", "cookies.txt"),
             language=language,
+            no_zoom=no_zoom,
+            skip_analysis=skip_analysis,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -354,6 +364,8 @@ async def batch_process(req: BatchRequest, request: Request):
                 instructions=req.instructions,
                 reframe_mode=req.reframe_mode,
                 language=getattr(req, "language", None),
+                no_zoom=bool(getattr(req, "no_zoom", False)),
+                skip_analysis=bool(getattr(req, "skip_analysis", False)),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
