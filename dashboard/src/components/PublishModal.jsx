@@ -70,27 +70,35 @@ export default function PublishModal({
             return;
         }
 
+        // Zernio platform payload rules (per docs.zernio.com):
+        //   - `content` is the universal post text shown on all platforms
+        //   - `title` is required ONLY for YouTube, sent at the root level
+        //   - `tiktokSettings` is a ROOT body field, NOT platformSpecificData
+        //   - `platformSpecificData` holds per-platform data Zernio forwards
+        //     verbatim to each platform's API (e.g. YouTube visibility,
+        //     Instagram shareToFeed). Empty dict = sensible defaults.
+        //
+        // Previous bug: we were wrapping tiktokSettings inside
+        // platformSpecificData and duplicating YouTube `title` both at root
+        // and inside platformSpecificData, which confused Zernio. Cleaned up.
         const platformTargets = [];
         if (enabled.tiktok && accounts.tiktok) {
             platformTargets.push({
                 platform: 'tiktok',
                 accountId: accounts.tiktok,
-                platformSpecificData: {
-                    tiktokSettings: {
-                        privacy_level: 'PUBLIC_TO_EVERYONE',
-                        allow_comment: true,
-                        allow_duet: true,
-                        allow_stitch: true,
-                        content_preview_confirmed: true,
-                        express_consent_given: true,
-                    },
-                },
+                // TikTok caption comes from root `content` (below). No title
+                // concept on TikTok — if the user typed a title without a
+                // caption, the backend will use the title as content.
+                platformSpecificData: {},
             });
         }
         if (enabled.instagram && accounts.instagram) {
             platformTargets.push({
                 platform: 'instagram',
                 accountId: accounts.instagram,
+                // shareToFeed=true so video clips land on the main grid in
+                // addition to Reels. Instagram Reels auto-detected by media
+                // type by Zernio.
                 platformSpecificData: { shareToFeed: true },
             });
         }
@@ -98,20 +106,38 @@ export default function PublishModal({
             platformTargets.push({
                 platform: 'youtube',
                 accountId: accounts.youtube,
+                // Title is sent at the root. Here we only specify per-video
+                // YouTube flags.
                 platformSpecificData: {
-                    title: (title || 'Clip').slice(0, 100),
                     visibility: 'public',
                     madeForKids: false,
                 },
             });
         }
 
+        // Ensure TikTok and Instagram always receive some text: if the user
+        // left the caption blank, fall back to the title. The backend will
+        // also apply this fallback (belt-and-suspenders) but doing it here
+        // means the user sees the exact content that will be posted in the
+        // response if there's an error.
+        const effectiveCaption = (caption && caption.trim()) || title || '';
+
         const body = {
             title,
-            caption,
+            caption: effectiveCaption,
             platforms: platformTargets,
             schedule_mode: scheduleMode,
             timezone: zernioConfig?.timezone || 'Europe/Rome',
+            // TikTok settings at the root — Zernio expects them there, not
+            // nested inside platformSpecificData.
+            tiktok_settings: enabled.tiktok && accounts.tiktok ? {
+                privacy_level: 'PUBLIC_TO_EVERYONE',
+                allow_comment: true,
+                allow_duet: true,
+                allow_stitch: true,
+                content_preview_confirmed: true,
+                express_consent_given: true,
+            } : undefined,
         };
         if (scheduleMode === 'manual') {
             // ISO 8601 from datetime-local input (no timezone offset → backend treats it as local)

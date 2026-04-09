@@ -335,6 +335,18 @@ def publish_clip(
     if schedule_mode == "manual" and not scheduled_for:
         raise ValueError("schedule_mode='manual' requires scheduled_for")
 
+    # Caption fallback: TikTok and Instagram have no concept of a separate
+    # "title" field — the text shown under the video is whatever we pass as
+    # `content`. If the user typed a title but left the caption blank, we
+    # want TikTok/IG to show the title instead of being empty. YouTube uses
+    # the separate `title` field at the Zernio root, so it's unaffected.
+    effective_content = (caption or "").strip() or (title or "").strip()
+    logger.info(
+        "publish_clip: platforms=%s content_len=%d title_len=%d mode=%s",
+        [p.get("platform") for p in platform_targets],
+        len(effective_content), len(title or ""), schedule_mode,
+    )
+
     client = ZernioClient(api_key)
 
     # 1. Resolve scheduled_for based on mode
@@ -414,7 +426,7 @@ def publish_clip(
     # 3. Create post
     media_items = [{"type": "video", "url": public_url}]
     response = client.create_post(
-        content=caption,
+        content=effective_content,
         title=title,
         media_items=media_items,
         platforms=platform_targets,
