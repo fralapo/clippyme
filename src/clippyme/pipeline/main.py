@@ -2034,12 +2034,12 @@ if __name__ == '__main__':
                 clip_duration = float(end) - float(start)
                 cut_command = [
                     'ffmpeg', '-y',
-                    '-ss', str(start),
-                    '-to', str(end),
+                    '-ss', f'{float(start):.3f}',
                     '-i', input_video,
+                    '-t', f'{clip_duration:.3f}',
                     '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
                     '-c:a', 'aac',
-                    clip_source_path
+                    clip_source_path,
                 ]
                 # Emit a "beat" before/after so the user sees progress even
                 # though ffmpeg runs silent (stdout=DEVNULL). Hard timeout of
