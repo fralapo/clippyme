@@ -264,14 +264,26 @@ SUBTITLE_PRESETS = {
 }
 
 # Bundled TTF fonts live at repo-root `fonts/` and are also mounted by
-# the FastAPI static handler at /fonts. Use the same CWD-relative path so
-# libass picks up Anton / Bangers / Montserrat / Poppins instead of
-# silently falling back to system fonts. The `__file__`-relative path
-# used before the src-layout refactor resolved to
-# `src/clippyme/domain/fonts` (which doesn't exist) — libass then
-# defaulted to Fontconfig and every karaoke preset rendered in the wrong
-# face without any error. Override via env var for alternate layouts.
-FONTS_DIR = os.environ.get("CLIPPYME_FONTS_DIR") or os.path.abspath("fonts")
+# the FastAPI static handler at /fonts. We resolve the repo root by
+# walking 3 levels up from this file (src/clippyme/domain/subtitles.py
+# → src/clippyme/domain → src/clippyme → src → repo-root). CWD-based
+# resolution was fragile: any caller running from a different directory
+# (tests, reframe subprocess, ad-hoc scripts) got a bogus path and
+# libass silently fell back to Fontconfig. Override via env var for
+# alternate layouts (installed package on a different prefix, etc.).
+_REPO_ROOT_FROM_HERE = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+)
+_DEFAULT_FONTS_DIR = os.path.join(_REPO_ROOT_FROM_HERE, "fonts")
+# Fallback #2: if the walked-up path doesn't actually contain fonts
+# (e.g. editable install in an unusual layout), try a CWD-relative
+# `fonts/` before giving up. libass tolerates a missing fontsdir by
+# using system fonts, so we never want to crash here.
+if not os.path.isdir(_DEFAULT_FONTS_DIR):
+    _cwd_fallback = os.path.abspath("fonts")
+    if os.path.isdir(_cwd_fallback):
+        _DEFAULT_FONTS_DIR = _cwd_fallback
+FONTS_DIR = os.environ.get("CLIPPYME_FONTS_DIR") or _DEFAULT_FONTS_DIR
 
 
 def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
