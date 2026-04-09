@@ -603,12 +603,24 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
 
     logger.info("Reframe subprocess: %s", " ".join(cmd))
 
+    # Propagate persisted config (Deepgram / HF / Gemini keys, transcription
+    # provider, etc.) into the subprocess env. Without this, the reframe-only
+    # path could silently fall back to Whisper when the user expects Deepgram,
+    # or fail transcription entirely if the keys live only in data/config.json.
+    reframe_env = os.environ.copy()
+    try:
+        for k, v in (load_persistent_config() or {}).items():
+            if v is not None and k not in reframe_env:
+                reframe_env[str(k)] = str(v)
+    except Exception as exc:
+        logger.warning("Could not merge persistent config into reframe env: %s", exc)
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            env=os.environ.copy(),
+            env=reframe_env,
         )
         stdout_data, _ = await proc.communicate()
     except Exception as e:
