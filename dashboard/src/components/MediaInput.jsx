@@ -250,7 +250,9 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     // code-switching. When the user knows the video is single-language,
     // picking an explicit code boosts accuracy AND makes diarization
     // reliable — 'multi' has known edge cases on speaker counting.
-    const [preLanguage, setPreLanguage] = useState(persisted.preLanguage ?? 'multi');
+    // Language default is NOT restored from localStorage — always start on
+    // 'multi' since ClippyMe targets a global audience, not IT-only users.
+    const [preLanguage, setPreLanguage] = useState('multi');
 
     // Persist whenever any pre-selection changes.
     useEffect(() => {
