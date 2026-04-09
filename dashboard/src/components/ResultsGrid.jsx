@@ -60,6 +60,10 @@ export default function ResultsGrid({
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [bulkHookModalOpen, setBulkHookModalOpen] = useState(false);
   const [bulkSubModalOpen, setBulkSubModalOpen] = useState(false);
+  // Which of the three lists feeds BatchPublishModal when it opens.
+  // 'selected' = ticked checkboxes · 'unpublished' = every visible clip
+  // not yet sent · 'all' = every visible clip incl. already-published.
+  const [publishScope, setPublishScope] = useState('selected');
   // Staging model for the bulk Edit popover — each layer key can be
   // in one of 3 states: 'keep' (no change), 'on', 'off'. Clicking the
   // Apply button commits every staged change in one shot via
@@ -232,11 +236,6 @@ export default function ResultsGrid({
   // "Publish all" button that republishes everything including
   // previously-sent posts.
   const allVisibleClips = visibleClips;
-  // Which of the three lists feeds BatchPublishModal when it opens.
-  // 'selected' = ticked checkboxes (existing behaviour)
-  // 'unpublished' = all not-yet-published visible clips
-  // 'all' = every visible clip
-  const [publishScope, setPublishScope] = useState('selected');
   const publishClipsForScope =
     publishScope === 'unpublished'
       ? unpublishedClips
@@ -677,7 +676,7 @@ export default function ResultsGrid({
 
       <BatchPublishModal
         isOpen={batchPublishOpen}
-        onClose={() => setBatchPublishOpen(false)}
+        onClose={() => { setBatchPublishOpen(false); setPublishScope('selected'); }}
         jobId={jobId}
         clips={publishClipsForScope}
         clipStates={clipStates}

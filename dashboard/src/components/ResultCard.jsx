@@ -212,22 +212,20 @@ export default function ResultCard({
     // this sync the card kept showing its own stale local toggles forever
     // — the bulk edit felt like a no-op even though clipStates was
     // correctly updated and downstream (download/publish) honoured it.
+    //
+    // We compare object identity on the incoming clipState slice: since
+    // useClipStates only produces a new reference when the value
+    // actually changed (functional setState with spread), reference
+    // equality is a free and correct change detector — no JSON.stringify
+    // per render.
     useEffect(() => {
         if (clipState.toggles) {
-            setTogglesLocal((prev) =>
-                JSON.stringify(prev) === JSON.stringify(clipState.toggles)
-                    ? prev
-                    : { ...prev, ...clipState.toggles },
-            );
+            setTogglesLocal((prev) => ({ ...prev, ...clipState.toggles }));
         }
     }, [clipState.toggles]);
     useEffect(() => {
         if (clipState.hookParams) {
-            setHookParamsLocal((prev) =>
-                JSON.stringify(prev) === JSON.stringify(clipState.hookParams)
-                    ? prev
-                    : { ...prev, ...clipState.hookParams },
-            );
+            setHookParamsLocal((prev) => ({ ...prev, ...clipState.hookParams }));
         }
     }, [clipState.hookParams]);
     // Cache-bust the <video> src when a bulk reframe finishes. The
@@ -246,11 +244,7 @@ export default function ResultCard({
     }, [clipState.reframeBust]);
     useEffect(() => {
         if (clipState.subtitleParams) {
-            setSubtitleParamsLocal((prev) =>
-                JSON.stringify(prev) === JSON.stringify(clipState.subtitleParams)
-                    ? prev
-                    : { ...prev, ...clipState.subtitleParams },
-            );
+            setSubtitleParamsLocal((prev) => ({ ...prev, ...clipState.subtitleParams }));
         }
     }, [clipState.subtitleParams]);
 
