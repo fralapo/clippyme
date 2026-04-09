@@ -52,8 +52,13 @@ FILLER_WORDS = {
 }
 
 # Path to optional external filler config. JSON shape: {"<lang>": ["word1", ...]}
+# Resolved relative to the current working directory (both the FastAPI
+# backend and the Docker container launch from the repo root → /app).
+# Using a bare relative path silently broke when the pipeline was invoked
+# from a different CWD; absolutizing up-front keeps this predictable.
 EXTERNAL_FILLER_CONFIG = os.environ.get(
-    "AE_FILLER_CONFIG", os.path.join("data", "filler_words.json")
+    "AE_FILLER_CONFIG",
+    os.path.abspath(os.path.join("data", "filler_words.json")),
 )
 _filler_external_loaded = False
 _filler_external_lock = threading.Lock()
