@@ -97,13 +97,36 @@ def zernio_config_status() -> dict:
     }
 
 
+def _normalize_incoming_keys(d: dict) -> dict:
+    """Alias legacy / alternate key spellings to canonical ones.
+
+    ``HUGGINGFACE_TOKEN`` is accepted as an alias for ``HF_TOKEN`` so users
+    who set the env var the long way (or configured it via the dashboard)
+    end up with the same persisted key the rest of the code reads.
+    """
+    if not d:
+        return {}
+    out = dict(d)
+    if "HUGGINGFACE_TOKEN" in out and not out.get("HF_TOKEN"):
+        out["HF_TOKEN"] = out.pop("HUGGINGFACE_TOKEN")
+    else:
+        out.pop("HUGGINGFACE_TOKEN", None)
+    return out
+
+
 def load_persistent_config() -> dict:
     """Load core API keys, falling back to env vars."""
     config = {
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
         "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", ""),
-        "HF_TOKEN": os.environ.get("HF_TOKEN", ""),
+        # Accept either HF_TOKEN or HUGGINGFACE_TOKEN from the environment;
+        # persist under HF_TOKEN (the canonical key used by the rest of the code).
+        "HF_TOKEN": (
+            os.environ.get("HF_TOKEN")
+            or os.environ.get("HUGGINGFACE_TOKEN")
+            or ""
+        ),
         "DEEPGRAM_API_KEY": os.environ.get("DEEPGRAM_API_KEY", ""),
         "TRANSCRIPTION_PROVIDER": os.environ.get("TRANSCRIPTION_PROVIDER", "deepgram"),
     }
@@ -117,15 +140,23 @@ def save_persistent_config(new_config: dict) -> bool:
     """Save core API keys to JSON file and mirror into os.environ.
 
     Preserves any non-core namespaces (like 'zernio') so the Zernio settings
-    aren't wiped when the user updates the Gemini key.
+    aren't wiped when the user updates the Gemini key. Also mirrors
+    ``HF_TOKEN`` into ``HUGGINGFACE_TOKEN`` in ``os.environ`` so third-party
+    libraries (pyannote, huggingface_hub) that only read the long form keep
+    working.
     """
     raw = _read_raw_config()
+    new_config = _normalize_incoming_keys(new_config)
     sanitized = {k: new_config.get(k) for k in VALID_CONFIG_KEYS if k in new_config}
     for key, value in sanitized.items():
         if value in (None, ""):
             raw.pop(key, None)
             os.environ.pop(key, None)
+            if key == "HF_TOKEN":
+                os.environ.pop("HUGGINGFACE_TOKEN", None)
         else:
             raw[key] = value
             os.environ[key] = str(value)
+            if key == "HF_TOKEN":
+                os.environ["HUGGINGFACE_TOKEN"] = str(value)
     return _write_raw_config(raw)
