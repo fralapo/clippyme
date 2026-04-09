@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, Eye, EyeOff, Crop, Square, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
+import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, Crop, Square, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
 import PublishModal from './PublishModal';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
@@ -550,19 +550,13 @@ export default function ResultCard({
                     </div>
                 )}
 
-                {/* Clip actions — Reframe / Disable / Delete. Moved out of
-                    the video overlay so they're always reachable (no need
-                    to hover the player) and they sit next to the other
-                    clip-level controls. Editorial flat toolbar: mono label,
-                    LED indicator for reframe state, amber accent on hover. */}
-                {/* Clip action rail — single reframe toggle (ON = face
+                {/* Clip action rail — reframe toggle switch (ON = face
                     tracking, OFF = letterbox with black bars) grows to
-                    fill the row; mute / remove utility buttons stay as
-                    36px icon-only squares on the right. The toggle pill
-                    mimics an iOS switch so non-technical users instantly
-                    grasp the ON/OFF semantics — calling the disabled
-                    state '4:3' confused people into thinking the output
-                    was a crop rather than a 9:16 frame with letterbox. */}
+                    fill the row; a 36px icon-only Trash button anchors
+                    the right edge for per-clip delete. Selection lives
+                    in the separate pill overlay on the video frame,
+                    not in this rail. The reframe pill mimics an iOS
+                    switch so non-technical users grasp ON/OFF instantly. */}
                 <div className="flex items-stretch gap-1.5 border border-white/[0.07] bg-white/[0.02] rounded-[3px] overflow-hidden">
                     <button
                         type="button"
