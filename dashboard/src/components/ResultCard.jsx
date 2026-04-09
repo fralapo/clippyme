@@ -278,7 +278,12 @@ export default function ResultCard({
             subtitleParams.font !== (preselections?.subtitles?.font || 'Montserrat-Black') ||
             subtitleParams.font_color !== (preselections?.subtitles?.font_color || '#FFFFFF') ||
             subtitleParams.position !== (preselections?.subtitles?.position || 'bottom') ||
-            subtitleParams.offset_y !== 0
+            subtitleParams.offset_y !== 0 ||
+            // Classic-mode stroke + background drift
+            subtitleParams.border_color !== (preselections?.subtitles?.border_color || '#000000') ||
+            subtitleParams.border_width !== (preselections?.subtitles?.border_width ?? 2) ||
+            subtitleParams.bg_color !== (preselections?.subtitles?.bg_color || '#000000') ||
+            subtitleParams.bg_opacity !== (preselections?.subtitles?.bg_opacity ?? 0)
         );
     const isCustomized =
         toggles.smartcut !== defaultSmartCut ||
@@ -730,8 +735,10 @@ export default function ResultCard({
                 onGenerate={(params) => {
                     // Normalize camelCase emitted by SubtitleModal into the
                     // snake_case shape the backend compose endpoint expects.
-                    // Keys the modal doesn't set are left untouched.
+                    // The modal always emits `mode` explicitly so we never
+                    // have to infer it from the presence of other fields.
                     const normalized = {
+                        ...(params.mode !== undefined && { mode: params.mode }),
                         ...(params.position !== undefined && { position: params.position }),
                         ...(params.offset_y !== undefined && { offset_y: params.offset_y }),
                         ...(params.fontSize !== undefined && { font_size: params.fontSize }),
@@ -746,8 +753,6 @@ export default function ResultCard({
                         ...(params.words_per_group !== undefined && { words_per_group: params.words_per_group }),
                         ...(params.uppercase !== undefined && { uppercase: params.uppercase }),
                         ...(params.highlight_color !== undefined && { highlight_color: params.highlight_color }),
-                        // Mode comes from the viral/classic tab in the modal
-                        mode: params.preset !== undefined ? 'karaoke' : 'classic',
                     };
                     setSubtitleParams(prev => ({ ...prev, ...normalized }));
                     setToggles(t => ({ ...t, subtitles: true }));

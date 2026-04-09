@@ -140,6 +140,7 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
     const handleGenerate = () => {
         if (mode === 'viral') {
             onGenerate({
+                mode: 'karaoke',
                 position,
                 offset_y: offsetY,
                 // Viral karaoke uses preset fontsize on the backend — this
@@ -160,7 +161,18 @@ export default function SubtitleModal({ isOpen, onClose, onGenerate, isProcessin
                 highlight_color: highlightColor,
             });
         } else {
-            onGenerate({ position, offset_y: offsetY, fontSize, fontName: classicFontName, fontColor, borderColor, borderWidth, bgColor, bgOpacity });
+            onGenerate({
+                mode: 'classic',
+                position,
+                offset_y: offsetY,
+                fontSize,
+                fontName: classicFontName,
+                fontColor,
+                borderColor,
+                borderWidth,
+                bgColor,
+                bgOpacity,
+            });
         }
     };
 

@@ -62,14 +62,17 @@ function Segmented({ options, value, onChange, size = 'md', fullWidth = false })
  * }} props
  */
 function SwitchRow({ label, description, checked, onChange, onConfigure, configureActive }) {
+    // A single <button role="switch"> would be ideal for a11y, but we
+    // want the label + description to also be clickable. We render the
+    // label block as a plain clickable div (aria-hidden from the a11y
+    // tree) and put the real role="switch" only on the thumb element
+    // below, so screen readers see exactly one switch per row.
     return (
         <div className="flex items-center justify-between gap-3 min-h-[44px]">
-            <button
-                type="button"
+            <div
                 onClick={() => onChange(!checked)}
-                role="switch"
-                aria-checked={checked}
-                className="flex-1 flex items-center gap-2.5 text-left rounded-[3px] py-1 px-1 -mx-1 hover:bg-white/[0.02] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+                className="flex-1 flex items-center gap-2.5 text-left rounded-[3px] py-1 px-1 -mx-1 hover:bg-white/[0.02] cursor-pointer"
+                aria-hidden
             >
                 <span
                     aria-hidden
@@ -89,7 +92,7 @@ function SwitchRow({ label, description, checked, onChange, onConfigure, configu
                         </span>
                     )}
                 </div>
-            </button>
+            </div>
             {onConfigure && checked && (
                 <button
                     type="button"
