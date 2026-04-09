@@ -9,8 +9,13 @@ import { ChevronDown, Terminal, Copy, Check } from 'lucide-react';
  * @returns {'ok'|'warn'|'err'|'step'|'info'}
  */
 function classify(line) {
-  if (/error|failed|exception|traceback/i.test(line)) return 'err';
-  if (/^\s*(⚠️|warning|⚠)/i.test(line) || /deprecated|warn/i.test(line)) return 'warn';
+  // Structured key=value observability fields like "error=none" /
+  // "error=null" / "error=0" / "error=false" are NOT errors — strip them
+  // before the keyword scan so a successful parse log doesn't light up
+  // the gutter red.
+  const scan = line.replace(/\berror=(none|null|0|false)\b/gi, '');
+  if (/\b(error|failed|exception|traceback)\b/i.test(scan)) return 'err';
+  if (/^\s*(⚠️|warning|⚠)/i.test(line) || /\b(deprecated|warn)\b/i.test(line)) return 'warn';
   if (/^\s*(✅|✔|success|done|complete)/i.test(line)) return 'ok';
   if (/^\s*(🎬|🎙|📥|🔍|🎯|🧠|⚙|🚀|▶|—)/i.test(line)) return 'step';
   return 'info';
