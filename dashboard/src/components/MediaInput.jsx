@@ -213,7 +213,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
 
     // Pre-selection state persisted to localStorage so users don't lose their
     // Advanced Options choices when they refocus the window / navigate tabs.
-    const PRESELECT_LS_KEY = 'clippyme_preselections_v1';
+    const PRESELECT_LS_KEY = 'clippyme_preselections_v2';
     const loadPersisted = () => {
         try {
             const raw = localStorage.getItem(PRESELECT_LS_KEY);
