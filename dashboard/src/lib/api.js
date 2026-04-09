@@ -32,21 +32,21 @@ export async function submitProcessJob(data, apiKey) {
 
   const language = pickLanguage(data.preselections);
 
+  // Forward reframe_mode unconditionally so the backend echoes the user's
+  // pre-selection instead of relying on its own default (which could drift).
+  const reframeMode = data.preselections?.reframe_mode;
+
   if (data.type === 'url') {
     headers['Content-Type'] = 'application/json';
     const jsonBody = { url: data.payload };
     if (data.instructions) jsonBody.instructions = data.instructions;
-    if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
-      jsonBody.reframe_mode = data.preselections.reframe_mode;
-    }
+    if (reframeMode) jsonBody.reframe_mode = reframeMode;
     if (language) jsonBody.language = language;
     body = JSON.stringify(jsonBody);
   } else {
     const formData = new FormData();
     formData.append('file', data.payload);
-    if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
-      formData.append('reframe_mode', data.preselections.reframe_mode);
-    }
+    if (reframeMode) formData.append('reframe_mode', reframeMode);
     if (language) formData.append('language', language);
     body = formData;
   }
@@ -65,7 +65,7 @@ export async function submitProcessJob(data, apiKey) {
  */
 export async function submitBatchJob(data, apiKey) {
   const batchBody = { urls: data.urls, instructions: data.instructions };
-  if (data.preselections?.reframe_mode && data.preselections.reframe_mode !== 'auto') {
+  if (data.preselections?.reframe_mode) {
     batchBody.reframe_mode = data.preselections.reframe_mode;
   }
   const language = pickLanguage(data.preselections);
