@@ -233,14 +233,17 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing, co
     // Classic-mode pre-selection controls
     const [preSubClassicFont, setPreSubClassicFont] = useState(persisted.preSubClassicFont ?? 'Verdana');
     const [preSubClassicFontColor, setPreSubClassicFontColor] = useState(persisted.preSubClassicFontColor ?? '#FFFFFF');
-    const [preSubClassicPosition, setPreSubClassicPosition] = useState(persisted.preSubClassicPosition ?? 'bottom');
+    // Position defaults are NOT restored from localStorage — we always force
+    // subtitles='bottom' and hook='top' on a fresh mount so the pre-selection
+    // panel starts in the intended state regardless of prior sessions.
+    const [preSubClassicPosition, setPreSubClassicPosition] = useState('bottom');
     // Classic subtitles stroke + background (matches backend burn_subtitles params)
     const [preSubClassicBorderColor, setPreSubClassicBorderColor] = useState(persisted.preSubClassicBorderColor ?? '#000000');
     const [preSubClassicBorderWidth, setPreSubClassicBorderWidth] = useState(persisted.preSubClassicBorderWidth ?? 2);
     const [preSubClassicBgColor, setPreSubClassicBgColor] = useState(persisted.preSubClassicBgColor ?? '#000000');
     const [preSubClassicBgOpacity, setPreSubClassicBgOpacity] = useState(persisted.preSubClassicBgOpacity ?? 0);
     const [preHook, setPreHook] = useState(persisted.preHook ?? false);
-    const [preHookPosition, setPreHookPosition] = useState(persisted.preHookPosition ?? 'top');
+    const [preHookPosition, setPreHookPosition] = useState('top');
     const [preHookSize, setPreHookSize] = useState(persisted.preHookSize ?? 'S');
     const [showHookConfig, setShowHookConfig] = useState(false);
     // Per-job ASR language override. Default 'multi' uses Deepgram Nova-3
