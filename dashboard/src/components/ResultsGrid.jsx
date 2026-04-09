@@ -58,10 +58,22 @@ export default function ResultsGrid({
   const [sourcePreviewOpen, setSourcePreviewOpen] = useState(status !== 'complete');
 
   const allClips = results?.clips || [];
-  // Filter out deleted clips from the grid
+  // Filter out deleted clips from the grid.
+  //
+  // CRITICAL: `originalIndex` MUST come from `clip.original_index` emitted
+  // by the backend _build_clips(), NOT the position in the returned array.
+  // During partial-result polling the backend returns only ready clips,
+  // so positional index shifts as more clips come online — which would
+  // cause React to reconcile a stale <video> element with a different
+  // clip's video_url (grey-screen bug while processing). Falling back
+  // to positional index only for legacy/restore paths that don't ship
+  // the field yet.
   const visibleClips = useMemo(() => {
     const base = allClips
-      .map((clip, i) => ({ clip, originalIndex: i }))
+      .map((clip, i) => ({
+        clip,
+        originalIndex: typeof clip.original_index === 'number' ? clip.original_index : i,
+      }))
       .filter(({ originalIndex }) => !clipStates[originalIndex]?.deleted);
 
     const sorted = [...base];

@@ -98,6 +98,14 @@ def _build_clips(data: dict, base_name: str, job_id: str, output_dir: str, only_
         if only_ready and not exists:
             continue
         clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
+        # Attach the ABSOLUTE position in the original `shorts` array.
+        # This is the React key the frontend uses for useClipStates[]
+        # and for the ResultsGrid map. Without it, partial-result
+        # polling returns a growing subset and the frontend's
+        # positional index shifts as more clips come online — causing
+        # stale <video> elements to get reconciled with a different
+        # clip's video_url (the "grey screen while processing" bug).
+        clip['original_index'] = i
         result.append(clip)
     return result
 
