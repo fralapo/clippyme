@@ -544,16 +544,16 @@ export default function ResultCard({
                     to hover the player) and they sit next to the other
                     clip-level controls. Editorial flat toolbar: mono label,
                     LED indicator for reframe state, amber accent on hover. */}
+                {/* Clip action rail — reframe segmented control (text) grows
+                    to fill available width, clip-level utility buttons
+                    (mute / remove) collapse to 36px icon-only squares on
+                    the right. This layout survives narrow 3-column grids
+                    where the previous 3-button text row overflowed. */}
                 <div className="flex items-stretch gap-1.5 border border-white/[0.07] bg-white/[0.02] rounded-[3px] overflow-hidden">
-                    {/* Reframe: 2-segment control — 'Face Track' vs 'Full Frame'.
-                        Both states are always visible so the user can see at a
-                        glance which one is active and what the other option is.
-                        Clicking the inactive segment switches modes via the
-                        /api/reframe endpoint. */}
                     <div
                         role="group"
                         aria-label="Reframe mode"
-                        className="flex items-stretch border-r border-white/[0.07]"
+                        className="flex flex-1 min-w-0 items-stretch"
                     >
                         {[
                             { id: 'auto', label: 'Face\u00a0Track', Icon: Crop, title: 'Auto 9:16 with face tracking' },
@@ -571,18 +571,18 @@ export default function ResultCard({
                                     disabled={isReframing}
                                     aria-pressed={active}
                                     title={isReframing ? 'Reframing\u2026' : title}
-                                    className={`h-9 px-3 flex items-center justify-center gap-1.5 type-mono text-[10px] uppercase tracking-[0.14em] transition-colors border-r border-white/[0.05] last:border-r-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait ${
+                                    className={`flex-1 min-w-0 h-9 px-2 flex items-center justify-center gap-1.5 type-mono text-[9.5px] uppercase tracking-[0.12em] transition-colors border-r border-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait whitespace-nowrap ${
                                         active
                                             ? 'bg-[oklch(74%_0.175_62)]/18 text-[oklch(82%_0.16_68)]'
                                             : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
                                     }`}
                                 >
                                     {isReframing && active ? (
-                                        <Loader2 size={12} className="animate-spin" strokeWidth={2.2} />
+                                        <Loader2 size={11} className="animate-spin shrink-0" strokeWidth={2.2} />
                                     ) : (
-                                        <Icon size={12} strokeWidth={2} />
+                                        <Icon size={11} strokeWidth={2} className="shrink-0" />
                                     )}
-                                    {label}
+                                    <span className="truncate">{label}</span>
                                 </button>
                             );
                         })}
@@ -596,24 +596,22 @@ export default function ResultCard({
                                 ? 'Re-enable this clip — it will be included in Publish all again'
                                 : 'Disable this clip — it will be skipped by Publish all'
                         }
-                        className={`flex-1 h-9 flex items-center justify-center gap-2 type-mono text-[10px] uppercase tracking-[0.14em] border-r border-white/[0.07] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset ${
+                        className={`shrink-0 w-9 h-9 flex items-center justify-center border-r border-white/[0.07] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset ${
                             isDisabled
-                                ? 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
-                                : 'text-zinc-300 hover:text-white hover:bg-white/[0.04]'
+                                ? 'text-zinc-600 hover:text-zinc-200 hover:bg-white/[0.04]'
+                                : 'text-zinc-400 hover:text-white hover:bg-white/[0.04]'
                         }`}
                     >
-                        {isDisabled ? <EyeOff size={12} strokeWidth={2} /> : <Eye size={12} strokeWidth={2} />}
-                        {isDisabled ? 'Muted' : 'Active'}
+                        {isDisabled ? <EyeOff size={13} strokeWidth={2} /> : <Eye size={13} strokeWidth={2} />}
                     </button>
                     <button
                         type="button"
                         onClick={handleDelete}
                         aria-label="Remove clip from grid"
                         title="Remove this clip from the grid — the file stays on disk, undo available in the toast"
-                        className="flex-1 h-9 flex items-center justify-center gap-2 type-mono text-[10px] uppercase tracking-[0.14em] text-[oklch(70%_0.2_25)] hover:text-[oklch(82%_0.2_25)] hover:bg-[oklch(62%_0.22_25)]/12 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/55 focus-visible:ring-inset"
+                        className="shrink-0 w-9 h-9 flex items-center justify-center text-[oklch(70%_0.2_25)] hover:text-[oklch(82%_0.2_25)] hover:bg-[oklch(62%_0.22_25)]/12 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(62%_0.22_25)]/55 focus-visible:ring-inset"
                     >
-                        <Trash2 size={12} strokeWidth={2} />
-                        Remove
+                        <Trash2 size={13} strokeWidth={2} />
                     </button>
                 </div>
 
