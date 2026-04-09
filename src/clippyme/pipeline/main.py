@@ -1221,12 +1221,12 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     cameraman = SmoothedCameraman(OUTPUT_WIDTH, OUTPUT_HEIGHT, original_width, original_height)
     
     # --- New Strategy: Per-Scene Analysis ---
-    print("\n   🤖 Step 3: Analyzing Scenes for Strategy (Single vs Group)...")
-    scene_strategies = analyze_scenes_strategy(input_video, scenes)
-    # scene_strategies is a list of 'TRACK' or 'General' corresponding to scenes
-
     if reframe_mode == 'disabled':
+        print("\n   🤖 Step 3: Skipping scene analysis (reframe disabled).")
         scene_strategies = ['DISABLED'] * len(scenes)
+    else:
+        print("\n   🤖 Step 3: Analyzing Scenes for Strategy (Single vs Group)...")
+        scene_strategies = analyze_scenes_strategy(input_video, scenes)
 
     print("\n   ✂️ Step 4: Processing video frames...")
     
