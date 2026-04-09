@@ -55,6 +55,10 @@ services:
       # which yt-dlp re-fetches a slow segment (default 102400 = 100 KB/s).
       - YTDLP_NOCHECKCERT=${YTDLP_NOCHECKCERT:-}
       - YTDLP_THROTTLED_RATE=${YTDLP_THROTTLED_RATE:-}
+      # Auto-purge of output/ and uploads/ folders. 0 = disabled
+      # (recommended — the History tab's Delete button is the single
+      # source of truth). Default fallback in app.py is 30 days.
+      - JOB_RETENTION_SECONDS=${JOB_RETENTION_SECONDS:-0}
     volumes:
       - .:/app
       - /app/__pycache__
