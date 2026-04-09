@@ -211,7 +211,23 @@ function App() {
 
       <TopNav
         activeTab={activeTab}
-        onTabChange={setActiveTab}
+        onTabChange={(nextTab) => {
+          // Special case: the Create tab only renders IdleHero / the
+          // live ProcessingView. It has NO branch for status==='complete'
+          // (results live in the History viewer now), so if the user
+          // clicks Create while we're in a complete state we'd end up
+          // with an empty screen. Silently reset the completed job
+          // state on tab-enter so they always land on the IdleHero.
+          if (nextTab === 'dashboard' && status === 'complete') {
+            setStatus('idle');
+            setJobId(null);
+            setResults(null);
+            setLogs([]);
+            setProcessingMedia(null);
+            setCurrentStep(null);
+          }
+          setActiveTab(nextTab);
+        }}
         status={status}
         jobId={jobId}
         onReset={handleReset}
