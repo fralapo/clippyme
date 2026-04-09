@@ -309,10 +309,10 @@ def validate_and_dedupe(
         or any individual clip fails its validators (duration out of
         range, missing viral_reason, etc.).
     """
-    # Timestamp coercion (e.g. "25.17.724" → 1517.724) now happens inside
-    # ViralClip's @field_validator(mode='before'), so this call is a no-op
-    # but we keep it as a belt-and-suspenders log emitter.
-    data = _normalize_clip_timestamps(data)
+    # Timestamp coercion lives entirely in ViralClip's @field_validator
+    # (mode='before'). The legacy _normalize_clip_timestamps() helper was
+    # removed to keep the pipeline single-source-of-truth — if you need a
+    # log of coerced fields, add it inside the validator.
     parsed = ViralClipsResponse.model_validate(data)
 
     candidates = list(parsed.shorts)

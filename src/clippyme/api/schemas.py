@@ -6,6 +6,14 @@ from pydantic import BaseModel, Field, field_validator
 
 class ProcessRequest(BaseModel):
     url: str = Field(..., max_length=2048)
+    # Optional per-job knobs — mirror the BatchRequest so single and batch
+    # jobs expose the same surface area to the frontend. All three are
+    # validated downstream (reframe_mode by argparse choices, language by
+    # ALLOWED_LANGUAGES in job_results.build_main_cmd, instructions by
+    # length cap).
+    instructions: Optional[str] = Field(None, max_length=2000)
+    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled)$")
+    language: Optional[str] = Field(None, max_length=16)
 
 
 class BatchRequest(BaseModel):
