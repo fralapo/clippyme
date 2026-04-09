@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, EyeOff, RefreshCw, Save, Check, Link2 } from 'lucide-react';
+import { Eye, EyeOff, RefreshCw, Save, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
 

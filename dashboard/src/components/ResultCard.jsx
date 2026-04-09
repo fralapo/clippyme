@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, Crop, Square, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
+import { Download, Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Send, Trash2, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
 import PublishModal from './PublishModal';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
