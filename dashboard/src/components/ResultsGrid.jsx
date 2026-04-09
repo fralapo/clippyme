@@ -319,6 +319,7 @@ export default function ResultsGrid({
         onClose={() => setBatchPublishOpen(false)}
         jobId={jobId}
         clips={publishableClips}
+        clipStates={clipStates}
         onPublished={(originalIndex) => onUpdateClipState(originalIndex, { publishedAt: Date.now() })}
       />
 

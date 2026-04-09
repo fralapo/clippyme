@@ -772,6 +772,14 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     upload_path = base_clip
     composed_path = os.path.join(job_dir, f"composed_clip_{clip_index}.mp4")
 
+    logger.info(
+        "publish_clip_endpoint: job=%s clip=%d compose_first=%s toggles=%s has_hook_params=%s has_sub_params=%s",
+        job_id, clip_index, req.compose_first,
+        list((req.toggles or {}).keys()),
+        bool(req.hook_params),
+        bool(req.subtitle_params),
+    )
+
     if req.compose_first and req.toggles:
         try:
             composed_filename = await compose_layers(

@@ -5,10 +5,13 @@ composition logic; the FastAPI endpoint stays a thin wrapper that handles
 validation, path resolution and HTTP error mapping.
 """
 import asyncio
+import logging
 import os
 import shutil
 
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 
 from clippyme.domain.smartcut import smart_cut
 from clippyme.domain.subtitles import generate_ass_karaoke, generate_srt, burn_subtitles
@@ -188,30 +191,58 @@ async def compose_layers(
     partial file we created before re-raising the original error.
     """
     active = {k: v for k, v in toggles.items() if v}
+    logger.info(
+        "compose_layers: clip_index=%d active=%s hook_text_len=%d subtitle_mode=%s",
+        clip_index, list(active.keys()),
+        len((hook_params or {}).get("text", "") or ""),
+        (subtitle_params or {}).get("mode", "karaoke"),
+    )
     if not active:
+        logger.info("compose_layers: no active toggles → returning base clip unmodified")
         return os.path.basename(base_clip)
 
     current_input = base_clip
     intermediate_files: list = []
     composed_filename = f"composed_clip_{clip_index}.mp4"
     composed_path = os.path.join(job_dir, composed_filename)
+    # Always wipe a stale composed file from a previous compose pass so
+    # we never accidentally upload yesterday's version when the user has
+    # changed toggles in the meantime.
+    if os.path.exists(composed_path):
+        try:
+            os.remove(composed_path)
+        except OSError:
+            pass
+
+    layers_applied: list[str] = []
 
     try:
         if active.get("smartcut"):
             current_input = await _apply_smartcut(
                 current_input, base_clip, metadata, clip_info
             )
+            layers_applied.append("smartcut")
+            logger.info("compose_layers: ✓ smartcut → %s", os.path.basename(current_input))
 
         # Defensive: strip whitespace from hook text and bail if empty
         # (otherwise Pillow/drawtext renders an invisible overlay).
         hook_text = (hook_params or {}).get("text", "")
         if isinstance(hook_text, str):
             hook_text = hook_text.strip()
-        if active.get("hook") and hook_text:
-            hp_clean = {**hook_params, "text": hook_text}
-            current_input = await _apply_hook(
-                current_input, job_dir, clip_index, hp_clean, intermediate_files
-            )
+        if active.get("hook"):
+            if not hook_text:
+                logger.warning(
+                    "compose_layers: hook toggle ON but text is empty — skipping "
+                    "hook layer silently. Ensure PublishModal/ResultCard sends a "
+                    "non-empty hook_params.text.",
+                )
+            else:
+                hp_clean = {**hook_params, "text": hook_text}
+                current_input = await _apply_hook(
+                    current_input, job_dir, clip_index, hp_clean, intermediate_files
+                )
+                layers_applied.append("hook")
+                logger.info("compose_layers: ✓ hook → %s", os.path.basename(current_input))
 
         if active.get("subtitles"):
             current_input = await _apply_subtitles(
@@ -223,10 +254,16 @@ async def compose_layers(
                 subtitle_params,
                 intermediate_files,
             )
+            layers_applied.append("subtitles")
+            logger.info("compose_layers: ✓ subtitles → %s", os.path.basename(current_input))
 
         if os.path.abspath(current_input) != os.path.abspath(composed_path):
             shutil.copy2(current_input, composed_path)
 
+        logger.info(
+            "compose_layers: ✅ final = %s (applied=%s)",
+            os.path.basename(composed_path), layers_applied or ["<none>"],
+        )
         _cleanup_intermediates(intermediate_files, composed_path)
         return composed_filename
     except Exception:

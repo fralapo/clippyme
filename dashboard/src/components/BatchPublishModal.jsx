@@ -13,7 +13,7 @@ import { getApiUrl } from '../config';
  *   clips: Array<{ clip: object, originalIndex: number }>  (already filtered)
  *   onPublished: (originalIndex) => void
  */
-export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPublished }) {
+export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipStates = {}, onPublished }) {
     const [zernioConfig, setZernioConfig] = useState(null);
     const [scheduleMode, setScheduleMode] = useState('auto');
     // Start date for auto slots — defaults to today (local YYYY-MM-DD).
@@ -148,21 +148,14 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
 
             // Rebuild target list per-clip from the current active set so
             // exhausted platforms drop out for the rest of the batch.
+            // NOTE: tiktokSettings goes at the ROOT body level (below), NOT
+            // inside platformSpecificData. Same cleanup as PublishModal.
             const platformTargets = [];
             if (activePlatforms.tiktok && accounts.tiktok) {
                 platformTargets.push({
                     platform: 'tiktok',
                     accountId: accounts.tiktok,
-                    platformSpecificData: {
-                        tiktokSettings: {
-                            privacy_level: 'PUBLIC_TO_EVERYONE',
-                            allow_comment: true,
-                            allow_duet: true,
-                            allow_stitch: true,
-                            content_preview_confirmed: true,
-                            express_consent_given: true,
-                        },
-                    },
+                    platformSpecificData: {},
                 });
             }
             if (activePlatforms.instagram && accounts.instagram) {
@@ -189,24 +182,46 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, onPub
                 continue;
             }
 
+            // Per-clip compose intent: pick up toggles + params the user
+            // configured in ResultCard (persisted via useClipStates). If any
+            // toggle is active we send compose_first=true so the backend
+            // runs the Smart Cut → Hook → Subtitles pipeline before upload.
+            // Without this the batch path uploaded the raw base clip,
+            // ignoring every toggle the user had turned on.
+            const clipState = clipStates[originalIndex] || {};
+            const toggles = clipState.toggles || {};
+            const anyToggleActive = Object.values(toggles).some(Boolean);
+            const hookParams = clipState.hookParams || {};
+            const subtitleParams = clipState.subtitleParams || {};
+
+            const titleText = (clip.video_title_for_youtube_short || `Clip ${originalIndex + 1}`).slice(0, 100);
+            const captionText = (clip.tiktok_caption && clip.tiktok_caption.trim()) || titleText;
+
             try {
                 const body = {
-                    title: (clip.video_title_for_youtube_short || `Clip ${originalIndex + 1}`).slice(0, 100),
-                    caption: clip.tiktok_caption || '',
-                    platforms: platformTargets.map((p) => {
-                        if (p.platform !== 'youtube') return p;
-                        return {
-                            ...p,
-                            platformSpecificData: {
-                                ...p.platformSpecificData,
-                                title: (clip.video_title_for_youtube_short || `Clip ${originalIndex + 1}`).slice(0, 100),
-                            },
-                        };
-                    }),
+                    title: titleText,
+                    caption: captionText,
+                    platforms: platformTargets,
                     schedule_mode: scheduleMode,
                     // Only send start_date in auto mode — ignored by backend for now/manual
                     ...(scheduleMode === 'auto' && perClipStartDate ? { start_date: perClipStartDate } : {}),
                     timezone: zernioConfig?.timezone || 'Europe/Rome',
+                    // TikTok settings at the root (Zernio expects them here).
+                    tiktok_settings: activePlatforms.tiktok && accounts.tiktok ? {
+                        privacy_level: 'PUBLIC_TO_EVERYONE',
+                        allow_comment: true,
+                        allow_duet: true,
+                        allow_stitch: true,
+                        content_preview_confirmed: true,
+                        express_consent_given: true,
+                    } : undefined,
+                    // Honor per-clip Smart Cut / Hook / Subtitles toggles.
+                    ...(anyToggleActive ? {
+                        compose_first: true,
+                        toggles,
+                        hook_params: toggles.hook ? hookParams : {},
+                        subtitle_params: toggles.subtitles ? subtitleParams : {},
+                    } : {}),
                 };
                 const res = await fetch(getApiUrl(`/api/publish/${jobId}/${originalIndex}`), {
                     method: 'POST',
