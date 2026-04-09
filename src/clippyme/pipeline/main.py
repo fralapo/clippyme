@@ -1160,7 +1160,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
 
     print(f"🎬 Processing clip: {input_video}")
     if reframe_mode == 'disabled':
-        print("   🚫 Reframe mode: DISABLED — output will be 4:3 center crop with black bars.")
+        print("   🚫 Reframe mode: DISABLED — clip placed inside a 9:16 frame with letterbox (black bars top & bottom).")
         print("      (Scene detection still runs for consistency; face tracking is skipped.)")
     else:
         print("   🎯 Reframe mode: AUTO — face tracking + dynamic 9:16 crop.")

@@ -305,17 +305,50 @@ def validate_and_dedupe(
     Raises
     ------
     pydantic.ValidationError
-        If the top-level response does not match ``ViralClipsResponse``
-        or any individual clip fails its validators (duration out of
-        range, missing viral_reason, etc.).
+        Only if the top-level response shape is malformed (e.g. ``shorts``
+        is missing or not a list). Individual clip validation failures
+        no longer nuke the whole batch — invalid clips are logged and
+        silently dropped so the pipeline proceeds with whatever Gemini
+        got right. This is critical because Gemini occasionally returns
+        ~15 clips where 14 are valid and 1 has a duration of 2.96s; the
+        old behaviour rejected all 15 and fell back to whole-video mode.
     """
     # Timestamp coercion lives entirely in ViralClip's @field_validator
     # (mode='before'). The legacy _normalize_clip_timestamps() helper was
     # removed to keep the pipeline single-source-of-truth — if you need a
     # log of coerced fields, add it inside the validator.
-    parsed = ViralClipsResponse.model_validate(data)
 
-    candidates = list(parsed.shorts)
+    # Per-clip resilience: iterate manually instead of relying on
+    # ViralClipsResponse's List[ViralClip] fail-fast behaviour.
+    raw_shorts = (data or {}).get("shorts") if isinstance(data, dict) else None
+    if not isinstance(raw_shorts, list):
+        # Top-level shape wrong — let Pydantic emit the authoritative error.
+        ViralClipsResponse.model_validate(data)
+        return []
+
+    from clippyme.api.schemas import ViralClip  # local to avoid cycles
+
+    candidates: List = []
+    dropped_invalid = 0
+    for i, raw in enumerate(raw_shorts):
+        try:
+            candidates.append(ViralClip.model_validate(raw))
+        except Exception as exc:
+            dropped_invalid += 1
+            # Log the first validation error message verbatim so debugging
+            # which field failed is one grep away.
+            msg = str(exc).splitlines()[0] if str(exc) else "unknown"
+            logger.warning(
+                "validate_and_dedupe: dropping clip #%d — %s (input: start=%s end=%s)",
+                i, msg[:200], raw.get("start") if isinstance(raw, dict) else "?",
+                raw.get("end") if isinstance(raw, dict) else "?",
+            )
+    if dropped_invalid:
+        logger.info(
+            "validate_and_dedupe: %d/%d clip(s) rejected by per-clip validation, "
+            "%d survived",
+            dropped_invalid, len(raw_shorts), len(candidates),
+        )
     if video_duration is not None:
         candidates = [c for c in candidates if c.end <= video_duration + 0.5]
 
