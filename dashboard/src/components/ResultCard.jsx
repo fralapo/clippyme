@@ -556,8 +556,8 @@ export default function ResultCard({
                         className="flex flex-1 min-w-0 items-stretch"
                     >
                         {[
-                            { id: 'auto', label: 'Face\u00a0Track', Icon: Crop, title: 'Auto 9:16 with face tracking' },
-                            { id: 'disabled', label: 'Full\u00a0Frame', Icon: Square, title: '4:3 center crop with black bars' },
+                            { id: 'auto', label: '9:16', Icon: Crop, title: 'Auto 9:16 vertical with face tracking' },
+                            { id: 'disabled', label: '4:3', Icon: Square, title: '4:3 centre crop with black bars' },
                         ].map(({ id, label, Icon, title }) => {
                             const active = reframeMode === id;
                             return (
@@ -571,7 +571,7 @@ export default function ResultCard({
                                     disabled={isReframing}
                                     aria-pressed={active}
                                     title={isReframing ? 'Reframing\u2026' : title}
-                                    className={`flex-1 min-w-0 h-9 px-2 flex items-center justify-center gap-1.5 type-mono text-[9.5px] uppercase tracking-[0.12em] transition-colors border-r border-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait whitespace-nowrap ${
+                                    className={`flex-1 min-w-0 h-9 px-2.5 flex items-center justify-center gap-1.5 type-mono text-[10.5px] uppercase tracking-[0.14em] tabular-nums transition-colors border-r border-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55 focus-visible:ring-inset disabled:opacity-60 disabled:cursor-wait whitespace-nowrap ${
                                         active
                                             ? 'bg-[oklch(74%_0.175_62)]/18 text-[oklch(82%_0.16_68)]'
                                             : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
