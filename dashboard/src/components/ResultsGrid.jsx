@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, CheckSquare, Square, Download, Trash2, ChevronDown, ChevronUp, Scissors, MessageSquare, Type, SlidersHorizontal } from 'lucide-react';
+import { AlertCircle, RotateCcw, Sparkles, Send, ArrowUpDown, Check, CheckSquare, Square, Download, Trash2, ChevronDown, ChevronUp, Scissors, MessageSquare, Type, SlidersHorizontal, Crop } from 'lucide-react';
 import { toast } from 'sonner';
 import ResultCard from './ResultCard';
 import ProcessingAnimation from './ProcessingAnimation';
@@ -7,6 +7,7 @@ import LogsPanel from './LogsPanel';
 import BatchPublishModal from './BatchPublishModal';
 import HookModal from './HookModal';
 import SubtitleModal from './SubtitleModal';
+import { getApiUrl } from '../config';
 
 const SORT_OPTIONS = [
   { id: 'viral_desc', label: 'Highest viral score' },
@@ -65,26 +66,92 @@ export default function ResultsGrid({
   // bulkSetToggle. Keeps the popover open until the user explicitly
   // commits or dismisses so mistakes can be corrected before flushing
   // to every selected clip.
-  const [bulkStaged, setBulkStaged] = useState({ smartcut: 'keep', hook: 'keep', subtitles: 'keep' });
+  const [bulkStaged, setBulkStaged] = useState({ smartcut: 'keep', hook: 'keep', subtitles: 'keep', reframe: 'keep' });
   const bulkStagedCount = Object.values(bulkStaged).filter((v) => v !== 'keep').length;
-  const resetBulkStaged = () => setBulkStaged({ smartcut: 'keep', hook: 'keep', subtitles: 'keep' });
-  const applyBulkStaged = () => {
+  const resetBulkStaged = () => setBulkStaged({ smartcut: 'keep', hook: 'keep', subtitles: 'keep', reframe: 'keep' });
+  const applyBulkStaged = async () => {
     // Build the per-clip toggle patch in one pass, then write once per
     // clip. Calling bulkSetToggle sequentially clobbered earlier keys
     // because each call re-read clipStates from a stale closure.
-    const patch = {};
+    const togglePatch = {};
     Object.entries(bulkStaged).forEach(([key, val]) => {
-      if (val === 'on') patch[key] = true;
-      else if (val === 'off') patch[key] = false;
+      if (key === 'reframe') return; // handled separately below
+      if (val === 'on') togglePatch[key] = true;
+      else if (val === 'off') togglePatch[key] = false;
     });
-    if (Object.keys(patch).length > 0) {
-      selectedClips.forEach(({ originalIndex }) => {
-        const prev = clipStates[originalIndex]?.toggles || {};
-        onUpdateClipState(originalIndex, { toggles: { ...prev, ...patch } });
-      });
-    }
+    // Reframe is its own top-level field on clipState, not a toggle.
+    // 'on' → 'auto' (face track), 'off' → 'disabled' (letterbox).
+    // Unlike the other toggles, reframe needs a real backend call per
+    // clip because the clip file on disk has to be re-rendered.
+    const reframeStaged = bulkStaged.reframe;
+    const reframeValue =
+      reframeStaged === 'on' ? 'auto' : reframeStaged === 'off' ? 'disabled' : null;
+
+    // First pass: flush the compose toggles synchronously. These only
+    // touch localStorage + per-card state, no network involved.
+    selectedClips.forEach(({ originalIndex }) => {
+      if (Object.keys(togglePatch).length === 0) return;
+      const prev = clipStates[originalIndex]?.toggles || {};
+      onUpdateClipState(originalIndex, { toggles: { ...prev, ...togglePatch } });
+    });
+
     resetBulkStaged();
     setBulkEditOpen(false);
+
+    // Second pass: fire /api/reframe/{jobId}/{idx} in parallel for every
+    // selected clip and flip reframeMode + cache-bust the video element
+    // once the backend has regenerated the file.
+    if (reframeValue && jobId) {
+      const reframingIds = selectedClips.map(({ originalIndex }) => originalIndex);
+      // Mark everyone as "reframing" so the per-card spinner shows up.
+      reframingIds.forEach((idx) =>
+        onUpdateClipState(idx, { reframing: true }),
+      );
+      const tid = toast.loading(`Reframing ${reframingIds.length} clip(s)…`);
+      const results = await Promise.allSettled(
+        reframingIds.map(async (idx) => {
+          const res = await fetch(getApiUrl(`/api/reframe/${jobId}/${idx}`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reframe_mode: reframeValue }),
+          });
+          if (!res.ok) {
+            const body = await res.text();
+            const err = new Error(body.slice(0, 200) || `HTTP ${res.status}`);
+            err.idx = idx;
+            err.status = res.status;
+            throw err;
+          }
+          return { idx, data: await res.json() };
+        }),
+      );
+      let ok = 0;
+      let failed = 0;
+      let legacy = 0;
+      results.forEach((r, i) => {
+        const idx = reframingIds[i];
+        if (r.status === 'fulfilled') {
+          ok += 1;
+          onUpdateClipState(idx, {
+            reframeMode: reframeValue,
+            reframing: false,
+            reframeBust: Date.now() + i,
+          });
+        } else {
+          failed += 1;
+          if (r.reason?.status === 409) legacy += 1;
+          onUpdateClipState(idx, { reframing: false });
+        }
+      });
+      toast.dismiss(tid);
+      if (failed === 0) {
+        toast.success(`Reframe applied to ${ok} clip(s).`);
+      } else if (legacy === failed) {
+        toast.error(`${failed} clip(s) missing source slice — reprocess to enable reframe switching.`);
+      } else {
+        toast.warning(`Reframe: ${ok} ok / ${failed} failed.`);
+      }
+    }
   };
   // Collapse the source-video preview once the job is complete — users
   // want the clips grid, not a big player of the original 1h video.
@@ -154,6 +221,28 @@ export default function ResultsGrid({
   const publishableClips = selectedClips.filter(({ originalIndex }) =>
     !clipStates[originalIndex]?.publishedAt,
   );
+  // Every visible clip that has never been published — ignores the
+  // checkbox selection entirely. Powers the "Publish unpublished"
+  // shortcut so the user doesn't have to tick 12 boxes to republish
+  // what's left on a freshly opened history entry.
+  const unpublishedClips = visibleClips.filter(
+    ({ originalIndex }) => !clipStates[originalIndex]?.publishedAt,
+  );
+  // Every visible clip regardless of publish state — powers the
+  // "Publish all" button that republishes everything including
+  // previously-sent posts.
+  const allVisibleClips = visibleClips;
+  // Which of the three lists feeds BatchPublishModal when it opens.
+  // 'selected' = ticked checkboxes (existing behaviour)
+  // 'unpublished' = all not-yet-published visible clips
+  // 'all' = every visible clip
+  const [publishScope, setPublishScope] = useState('selected');
+  const publishClipsForScope =
+    publishScope === 'unpublished'
+      ? unpublishedClips
+      : publishScope === 'all'
+          ? allVisibleClips
+          : publishableClips;
 
   const selectAll = () => {
     visibleClips.forEach(({ originalIndex }) =>
@@ -413,10 +502,11 @@ export default function ResultsGrid({
                       Stage changes for {String(selectedClips.length).padStart(2, '0')} selected
                     </div>
                     {[
+                      { key: 'reframe', label: 'Auto Reframe', Icon: Crop, hint: 'On = face track · Off = letterbox', styleOpener: null, onLabel: 'Auto', offLabel: 'Letter' },
                       { key: 'smartcut', label: 'Smart Cut', Icon: Scissors, hint: 'silences + filler words', styleOpener: null },
                       { key: 'hook', label: 'Hook', Icon: MessageSquare, hint: 'text overlay', styleOpener: () => { setBulkEditOpen(false); setBulkHookModalOpen(true); } },
                       { key: 'subtitles', label: 'Subtitles', Icon: Type, hint: 'burned captions', styleOpener: () => { setBulkEditOpen(false); setBulkSubModalOpen(true); } },
-                    ].map(({ key, label, Icon, hint, styleOpener }) => {
+                    ].map(({ key, label, Icon, hint, styleOpener, onLabel, offLabel }) => {
                       const staged = bulkStaged[key];
                       return (
                         <div key={key} className="space-y-1">
@@ -431,8 +521,8 @@ export default function ResultsGrid({
                             {/* Tri-state segmented control: On / Off / Keep */}
                             <div className="flex items-stretch shrink-0 border border-white/10 rounded-[2px] overflow-hidden">
                               {[
-                                { id: 'on', label: 'On' },
-                                { id: 'off', label: 'Off' },
+                                { id: 'on', label: onLabel || 'On' },
+                                { id: 'off', label: offLabel || 'Off' },
                                 { id: 'keep', label: 'Keep' },
                               ].map(({ id, label: btnLabel }) => (
                                 <button
@@ -513,13 +603,39 @@ export default function ResultsGrid({
                 Delete&nbsp;<span className="tabular-nums">{String(selectedClips.length).padStart(2, '0')}</span>
               </button>
               <button
-                onClick={() => setBatchPublishOpen(true)}
+                onClick={() => { setPublishScope('selected'); setBatchPublishOpen(true); }}
                 disabled={publishableClips.length === 0}
                 className="flex items-center gap-2 h-9 px-3.5 rounded-[3px] bg-[oklch(74%_0.175_62)] hover:bg-[oklch(78%_0.175_65)] disabled:bg-[oklch(74%_0.175_62)]/40 text-[oklch(12%_0.01_260)] text-[10px] font-mono uppercase tracking-[0.14em] font-semibold border border-[oklch(70%_0.18_62)] shadow-[0_6px_18px_-10px_oklch(74%_0.175_62/0.6)] active:translate-y-px disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]"
-                title={`Publish ${publishableClips.length} selected clip(s)`}
+                title={`Publish ${publishableClips.length} selected clip(s) (skips already-published)`}
               >
                 <Send size={11} strokeWidth={2.4} />
-                Publish&nbsp;<span className="tabular-nums">{String(publishableClips.length).padStart(2, '0')}</span>
+                Publish&nbsp;selected&nbsp;<span className="tabular-nums">{String(publishableClips.length).padStart(2, '0')}</span>
+              </button>
+              <button
+                onClick={() => { setPublishScope('unpublished'); setBatchPublishOpen(true); }}
+                disabled={unpublishedClips.length === 0}
+                className="flex items-center gap-2 h-9 px-3.5 rounded-[3px] border border-[oklch(74%_0.175_62)]/50 hover:border-[oklch(74%_0.175_62)]/80 hover:bg-[oklch(74%_0.175_62)]/10 text-[oklch(82%_0.16_68)] text-[10px] font-mono uppercase tracking-[0.14em] font-semibold disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/55"
+                title={`Publish every visible clip that hasn't been published yet (${unpublishedClips.length}) — ignores the checkbox selection`}
+              >
+                <Send size={11} strokeWidth={2.4} />
+                Publish&nbsp;unpublished&nbsp;<span className="tabular-nums">{String(unpublishedClips.length).padStart(2, '0')}</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (allVisibleClips.length === 0) return;
+                  if (stats.published > 0) {
+                    // eslint-disable-next-line no-alert
+                    if (!window.confirm(`Re-publish ALL ${allVisibleClips.length} clips including ${stats.published} already-published? This will create duplicate posts.`)) return;
+                  }
+                  setPublishScope('all');
+                  setBatchPublishOpen(true);
+                }}
+                disabled={allVisibleClips.length === 0}
+                className="flex items-center gap-2 h-9 px-3.5 rounded-[3px] border border-white/10 hover:border-white/25 text-zinc-300 hover:text-white text-[10px] font-mono uppercase tracking-[0.14em] font-semibold disabled:opacity-30 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30"
+                title={`Publish EVERY visible clip regardless of state (${allVisibleClips.length}) — will republish already-sent posts`}
+              >
+                <Send size={11} strokeWidth={2.4} />
+                Publish&nbsp;all&nbsp;<span className="tabular-nums">{String(allVisibleClips.length).padStart(2, '0')}</span>
               </button>
             </div>
           </div>
@@ -563,7 +679,7 @@ export default function ResultsGrid({
         isOpen={batchPublishOpen}
         onClose={() => setBatchPublishOpen(false)}
         jobId={jobId}
-        clips={publishableClips}
+        clips={publishClipsForScope}
         clipStates={clipStates}
         preselections={preselections}
         onPublished={(originalIndex) => onUpdateClipState(originalIndex, { publishedAt: Date.now() })}

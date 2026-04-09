@@ -230,6 +230,20 @@ export default function ResultCard({
             );
         }
     }, [clipState.hookParams]);
+    // Cache-bust the <video> src when a bulk reframe finishes. The
+    // ResultsGrid bulk edit posts /api/reframe/{jobId}/{idx} in parallel
+    // and then writes {reframeMode, reframeBust: timestamp} into
+    // clipState — we listen for reframeBust and append it to the
+    // original clip URL so the browser stops serving the stale file.
+    useEffect(() => {
+        if (clipState.reframeBust) {
+            const base = clip.video_url || '';
+            if (!base) return;
+            const joiner = base.includes('?') ? '&' : '?';
+            setCurrentVideoUrl(getApiUrl(`${base}${joiner}v=${clipState.reframeBust}`));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clipState.reframeBust]);
     useEffect(() => {
         if (clipState.subtitleParams) {
             setSubtitleParamsLocal((prev) =>
