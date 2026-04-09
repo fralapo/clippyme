@@ -1981,7 +1981,14 @@ if __name__ == '__main__':
                 clip_final_path = os.path.join(output_dir, clip_filename)
 
                 # ffmpeg cut
-                # Using re-encoding for precision as requested by strict seconds
+                # Using re-encoding for precision as requested by strict seconds.
+                # NOTE on seek: `-ss` BEFORE `-i` uses fast input seek (jumps
+                # to the nearest keyframe before `start` and then decodes
+                # forward to the exact start). On very long source videos
+                # (e.g. 1h+) this can take 30-60s for the first cut — the
+                # file has to be partially decoded to reach the target.
+                # Subsequent cuts on the same file are usually faster.
+                clip_duration = float(end) - float(start)
                 cut_command = [
                     'ffmpeg', '-y',
                     '-ss', str(start),
@@ -1991,7 +1998,27 @@ if __name__ == '__main__':
                     '-c:a', 'aac',
                     clip_source_path
                 ]
-                subprocess.run(cut_command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                # Emit a "beat" before/after so the user sees progress even
+                # though ffmpeg runs silent (stdout=DEVNULL). Hard timeout of
+                # 10 minutes per cut prevents an infinite hang on corrupt
+                # sources — 10 min is ~10x the worst legitimate seek time
+                # on a 1 hour input video.
+                print(f"   ✂️  ffmpeg cut: seek→{start:.2f}s, duration={clip_duration:.2f}s …", flush=True)
+                try:
+                    cut_proc = subprocess.run(
+                        cut_command,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        timeout=600,  # 10 min hard cap
+                    )
+                    if cut_proc.returncode != 0:
+                        err_tail = (cut_proc.stderr or b'').decode('utf-8', errors='replace')[-500:]
+                        print(f"   ⚠️  ffmpeg cut failed (code {cut_proc.returncode}): {err_tail}", flush=True)
+                    else:
+                        print(f"   ✅ ffmpeg cut done", flush=True)
+                except subprocess.TimeoutExpired:
+                    print(f"   ❌ ffmpeg cut TIMED OUT after 10 min — skipping this clip. Input may be corrupt or seek is stuck.", flush=True)
+                    continue
 
                 # Process vertical from the preserved source slice
                 success = process_video_to_vertical(clip_source_path, clip_final_path, reframe_mode=args.reframe_mode)
