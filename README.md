@@ -140,6 +140,10 @@ Runtime env overrides (rarely needed):
 | `DEEPGRAM_LANGUAGE` | `multi` | |
 | `ZERNIO_DEFAULT_TZ` | `Europe/Rome` | |
 | `ZERNIO_MIN_GAP_SECONDS` | `5400` | SmartScheduler min spacing between posts. |
+| `REFRAME_SMOOTHER` | _(blank)_ | `euro` switches the speaker camera to the 1€ adaptive filter; blank keeps the two-speed EMA. |
+| `REFRAME_LOST_HOLD` | `90` | Frames a lost subject is held before the camera drifts back to center (~3 s @ 30 fps). |
+| `REFRAME_LOST_DRIFT` | `0.05` | Per-frame ease rate of the drift-to-center recovery. |
+| `REFRAME_EURO_MINCUTOFF` / `REFRAME_EURO_BETA` | `0.014` / `0.0008` | 1€ smoother tuning (only when `REFRAME_SMOOTHER=euro`): smoothness floor / speed responsiveness. |
 
 ---
 
@@ -242,6 +246,8 @@ Three per-scene strategies, decided by sampling 7 frames per scene:
 - **TRACK** — single speaker → active-speaker tracking via `SpeakerTracker` (MAR variance + face size) and `SmoothedCameraman` (adaptive smoothing slow/fast, X+Y axis tracking, dynamic 1.0–1.6× zoom).
 - **WIDE** — multi-speaker → same tracker with longer cooldown (45 frames ≈ 1.5 s) for interview-style switching.
 - **GENERAL** — no faces → letterbox.
+
+**Lost-subject recovery:** in TRACK/WIDE, if no speaker is detected for `REFRAME_LOST_HOLD` frames (~3 s) the camera eases back to the source center and gently zooms out instead of freezing on empty space. The active-speaker camera can optionally use a 1€ adaptive filter (`REFRAME_SMOOTHER=euro`) in place of the default two-speed EMA. The pure decision math lives in the cv2-free, host-tested `clippyme.pipeline.reframe_ops` module.
 
 Override per job: `--reframe-mode disabled` forces a 4:3 center crop with black bars.
 
