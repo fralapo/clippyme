@@ -19,6 +19,8 @@ from google import genai
 from dotenv import load_dotenv
 import json
 
+from clippyme.pipeline.reframe_ops import OneEuroFilter, drift_to_center, salient_crop_center
+
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf')
 
@@ -437,6 +439,25 @@ class SmoothedCameraman:
         self.safe_zone_radius_x = self.max_crop_width * 0.20
         self.safe_zone_radius_y = self.max_crop_height * 0.15
 
+        # Lost-subject recovery: when no target arrives for a while (speaker
+        # leaves / long occlusion), hold then ease back to the source center
+        # instead of freezing the camera on empty space. Always on — strictly
+        # safer than the old freeze behavior.
+        self.frames_since_target = 0
+        self.lost_hold_frames = int(os.getenv("REFRAME_LOST_HOLD", "90"))
+        self.lost_drift_rate = float(os.getenv("REFRAME_LOST_DRIFT", "0.05"))
+
+        # Optional 1€ adaptive smoother (opt-in via REFRAME_SMOOTHER=euro).
+        # Default keeps the proven two-speed EMA. The 1€ path follows fast
+        # moves and damps jitter with a single principled tradeoff; enable it
+        # to A/B test camera feel in an environment where output can be viewed.
+        self._use_euro = os.getenv("REFRAME_SMOOTHER", "").strip().lower() == "euro"
+        if self._use_euro:
+            mc = float(os.getenv("REFRAME_EURO_MINCUTOFF", "0.014"))
+            beta = float(os.getenv("REFRAME_EURO_BETA", "0.0008"))
+            self._euro_x = OneEuroFilter(min_cutoff=mc, beta=beta)
+            self._euro_y = OneEuroFilter(min_cutoff=mc, beta=beta)
+
     def update_target(self, face_box, is_person_box: bool = False):
         """
         Updates target center + target zoom based on a detected face or person box.
@@ -449,6 +470,8 @@ class SmoothedCameraman:
         """
         if not face_box:
             return
+        # A real target this frame → reset the lost-subject counter.
+        self.frames_since_target = 0
         x, y, w, h = face_box
         self.target_center_x = x + w / 2
 
@@ -493,15 +516,43 @@ class SmoothedCameraman:
             self.current_center_x = self.target_center_x
             self.current_center_y = self.target_center_y
             self.current_zoom = self.target_zoom
+            self.frames_since_target = 0
+            if self._use_euro:
+                self._euro_x.reset()
+                self._euro_y.reset()
         else:
-            self.current_center_x = self._ease_axis(
-                self.current_center_x, self.target_center_x,
-                self.safe_zone_radius_x, self.max_crop_width,
-            )
-            self.current_center_y = self._ease_axis(
-                self.current_center_y, self.target_center_y,
-                self.safe_zone_radius_y, self.max_crop_height,
-            )
+            # Lost-subject recovery: once we've gone `lost_hold_frames` without
+            # a fresh target, ease the TARGET toward the source center (and
+            # gently zoom out). Normal easing below then glides the camera
+            # there smoothly. Active in TRACK/WIDE only (GENERAL/DISABLED set
+            # centers directly and never call this).
+            self.frames_since_target += 1
+            if self.frames_since_target > self.lost_hold_frames:
+                self.target_center_x = drift_to_center(
+                    self.target_center_x, self.video_width / 2,
+                    self.frames_since_target, self.lost_hold_frames, self.lost_drift_rate)
+                self.target_center_y = drift_to_center(
+                    self.target_center_y, self.video_height / 2,
+                    self.frames_since_target, self.lost_hold_frames, self.lost_drift_rate)
+                if self.target_zoom > 1.0:
+                    self.target_zoom = max(1.0, self.target_zoom - 0.01)
+
+            if self._use_euro:
+                # Apply the dead-band on the target, then 1€-filter every frame
+                # (feeding the filter each frame keeps its velocity estimate live).
+                tx = self.target_center_x if abs(self.target_center_x - self.current_center_x) > self.safe_zone_radius_x else self.current_center_x
+                ty = self.target_center_y if abs(self.target_center_y - self.current_center_y) > self.safe_zone_radius_y else self.current_center_y
+                self.current_center_x = self._euro_x.filter(tx, 1.0)
+                self.current_center_y = self._euro_y.filter(ty, 1.0)
+            else:
+                self.current_center_x = self._ease_axis(
+                    self.current_center_x, self.target_center_x,
+                    self.safe_zone_radius_x, self.max_crop_width,
+                )
+                self.current_center_y = self._ease_axis(
+                    self.current_center_y, self.target_center_y,
+                    self.safe_zone_radius_y, self.max_crop_height,
+                )
             # Zoom animates more slowly than position to feel cinematic
             zoom_diff = self.target_zoom - self.current_zoom
             if abs(zoom_diff) > 0.01:
