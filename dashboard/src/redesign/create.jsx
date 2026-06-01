@@ -1,5 +1,5 @@
 // ClippyMe redesign — Create flow: presets + source + calm options recipe.
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Icon, Social, Btn, Panel, Segmented, Switch, Stepper, PlatPill, PLATFORMS } from './primitives';
 import { Hero } from './chrome';
 import { PRESETS, ASPECTS, SUBTITLE_PRESETS, LANGUAGES } from './data';
@@ -21,7 +21,12 @@ function PresetCards({ active, onPick }) {
 
 function SourcePanel({ opts, set }) {
   const [drag, setDrag] = useState(false);
+  const fileInput = useRef(null);
+  const batchInput = useRef(null);
   const batchLines = opts.batch.split('\n').filter((l) => l.trim());
+  const batchFileCount = (opts.batchFiles || []).length;
+  const totalQueued = batchLines.length + batchFileCount;
+  const pickFile = (f) => f && set({ file: f, fileName: f.name });
   return (
     <Panel title="Source" sub="Paste a link or drop a file" icon="link"
       headRight={
@@ -46,11 +51,13 @@ function SourcePanel({ opts, set }) {
             <div className={'dropzone' + (opts.file ? ' has' : drag ? ' drag' : '')}
               onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
               onDragLeave={() => setDrag(false)}
-              onDrop={(e) => { e.preventDefault(); setDrag(false); set({ file: 'interview_final.mp4' }); }}
-              onClick={() => set({ file: opts.file ? null : 'interview_final.mp4' })}>
+              onDrop={(e) => { e.preventDefault(); setDrag(false); pickFile(e.dataTransfer.files?.[0]); }}
+              onClick={() => { if (opts.file) { set({ file: null, fileName: '' }); } else { fileInput.current?.click(); } }}>
+              <input ref={fileInput} type="file" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi" hidden
+                onChange={(e) => pickFile(e.target.files?.[0])} />
               <div className="dz-ico"><Icon n={opts.file ? 'file-video' : 'upload'} /></div>
               {opts.file ? (
-                <div><b>{opts.file}</b><div className="label" style={{ marginTop: 6 }}>Ready · click to remove</div></div>
+                <div><b>{opts.fileName}</b><div className="label" style={{ marginTop: 6 }}>Ready · click to remove</div></div>
               ) : (
                 <div>Drop a video or <b style={{ color: 'var(--brand-blue)' }}>browse</b>
                   <div className="label" style={{ marginTop: 6, textTransform: 'none', letterSpacing: 0 }}>MP4 · MOV · WEBM · up to 2&nbsp;GB</div></div>
@@ -67,14 +74,24 @@ function SourcePanel({ opts, set }) {
               onChange={(e) => set({ batch: e.target.value })}></textarea>
           </div>
           <div className="field" style={{ marginBottom: 0 }}>
-            <div className="dropzone" style={{ padding: 18 }} onClick={() => set({ batch: opts.batch + (opts.batch ? '\n' : '') + 'local · clip_' + (batchLines.length + 1) + '.mp4' })}>
+            <div className="dropzone" style={{ padding: 18 }} onClick={() => batchInput.current?.click()}>
+              <input ref={batchInput} type="file" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi" hidden multiple
+                onChange={(e) => set({ batchFiles: [...(opts.batchFiles || []), ...Array.from(e.target.files || [])] })} />
               <Icon n="plus" style={{ width: 16, height: 16 }} /> &nbsp;Add files to the batch
             </div>
           </div>
+          {batchFileCount > 0 && (
+            <div className="s-sub" style={{ marginTop: 10 }}>
+              {(opts.batchFiles || []).map((f, i) => (
+                <span key={i} className="chip">{f.name.slice(0, 22)}</span>
+              ))}
+              <span className="chip" style={{ cursor: 'pointer', color: 'var(--danger)' }} onClick={() => set({ batchFiles: [] })}>clear files</span>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line-1)' }}>
             <span className="label">Queued</span>
-            <span className="label tnum" style={{ color: batchLines.length > 20 ? 'var(--danger)' : batchLines.length ? 'var(--brand-amber)' : 'var(--fg-4)' }}>
-              {String(batchLines.length).padStart(2, '0')} / 20
+            <span className="label tnum" style={{ color: totalQueued > 20 ? 'var(--danger)' : totalQueued ? 'var(--brand-amber)' : 'var(--fg-4)' }}>
+              {String(totalQueued).padStart(2, '0')} / 20
             </span>
           </div>
         </div>
@@ -240,10 +257,11 @@ function SummaryBar({ opts, ready, count, onCreate }) {
 }
 
 export function CreateView({ opts, set, onPickPreset, onCreate }) {
+  const batchCount = opts.batch.split('\n').filter((l) => l.trim()).length + (opts.batchFiles || []).length;
   const ready = opts.mode === 'single'
     ? (opts.source === 'url' ? !!opts.url : !!opts.file)
-    : opts.batch.split('\n').filter((l) => l.trim()).length > 0;
-  const nSources = opts.mode === 'single' ? 1 : Math.max(1, opts.batch.split('\n').filter((l) => l.trim()).length);
+    : batchCount > 0;
+  const nSources = opts.mode === 'single' ? 1 : Math.max(1, batchCount);
   const count = opts.detect ? opts.clips * nSources : nSources;
   return (
     <div className="container fade-in">

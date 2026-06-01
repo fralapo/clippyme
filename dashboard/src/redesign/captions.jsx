@@ -3,11 +3,21 @@ import { useState } from 'react';
 import { Icon, Btn, Segmented } from './primitives';
 import { CLIP_GRADS, SUBTITLE_PRESETS } from './data';
 
-export function CaptionEditModal({ clip, idx, onClose, onSave }) {
-  const [mode, setMode] = useState('karaoke');
-  const [preset, setPreset] = useState('hormozi_bold');
-  const [position, setPosition] = useState('center');
-  const [hookText, setHookText] = useState(clip.hook.join(' '));
+export function CaptionEditModal({ clip, idx, initial, preselections, onClose, onSave }) {
+  const sp = initial?.subtitleParams || {};
+  const pre = preselections?.subtitles || {};
+  const [mode, setMode] = useState(sp.mode || pre.mode || 'karaoke');
+  const [preset, setPreset] = useState(sp.preset || pre.preset || 'hormozi_bold');
+  const [position, setPosition] = useState(sp.position || pre.position || 'center');
+  const [hookText, setHookText] = useState(
+    initial?.hookParams?.text || clip.viral_hook_text || clip.hook_text || '',
+  );
+
+  const save = () => onSave({
+    toggles: { ...(initial?.toggles || {}), subtitles: true, hook: !!hookText.trim() },
+    subtitleParams: { ...(initial?.subtitleParams || {}), mode, preset, position },
+    hookParams: { ...(initial?.hookParams || {}), text: hookText },
+  });
   const ps = SUBTITLE_PRESETS.find((p) => p.id === preset) || SUBTITLE_PRESETS[0];
   const posStyle = position === 'top' ? { justifyContent: 'flex-start', paddingTop: 28 }
     : position === 'bottom' ? { justifyContent: 'flex-end', paddingBottom: 28 }
@@ -24,7 +34,7 @@ export function CaptionEditModal({ clip, idx, onClose, onSave }) {
           <div className="clip" style={{ cursor: 'default' }}>
             <div className="clip-media" style={{ background: CLIP_GRADS[idx % CLIP_GRADS.length], ...posStyle }}>
               <div className="clip-top" style={{ position: 'absolute', top: 12, left: 12, right: 12 }}>
-                <span className="score" style={{ fontSize: 12 }}>{clip.score}</span>
+                <span className="score" style={{ fontSize: 12 }}>{Math.round(clip.viral_score || 0)}</span>
               </div>
               <div style={{ position: 'relative', zIndex: 3, textAlign: 'center', padding: '0 8px' }}>
                 <span style={{ ...ps.style, fontSize: 15, fontWeight: 800, lineHeight: 1.1 }}>
@@ -65,7 +75,7 @@ export function CaptionEditModal({ clip, idx, onClose, onSave }) {
         </div>
         <div className="modal-foot">
           <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
-          <div className="mf-right"><Btn variant="primary" icon="check" onClick={onSave}>Save captions</Btn></div>
+          <div className="mf-right"><Btn variant="primary" icon="check" onClick={save}>Save captions</Btn></div>
         </div>
       </div>
     </div>

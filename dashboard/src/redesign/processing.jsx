@@ -1,62 +1,62 @@
-// ClippyMe redesign — ProcessingView: one progress source, vertical pipeline,
-// live log, streaming clips.
-import { useState, useEffect, useRef } from 'react';
+// ClippyMe redesign — ProcessingView wired to real polling: live logs, a
+// vertical pipeline driven by the detected step, and real clips streaming in
+// as partial results arrive.
+import { useEffect, useRef } from 'react';
 import { Icon, Btn, Badge, Panel } from './primitives';
 import { Hero } from './chrome';
-import { CLIP_GRADS, PIPE, LOG_SCRIPT, CLIPS } from './data';
+import { PIPE } from './data';
+import { clipVideoSrc, fmtDuration } from './realApi';
+
+// Map the backend's detected pipeline step to an approximate % + pipe index.
+// (The backend streams logs, not a numeric %, so this is a visual estimate.)
+const STEP_INFO = {
+  queued: { pct: 5, idx: 0 },
+  downloading: { pct: 18, idx: 0 },
+  transcribing: { pct: 38, idx: 1 },
+  analyzing: { pct: 58, idx: 2 },
+  processing: { pct: 80, idx: 3 },
+};
 
 function MiniClip({ clip, idx }) {
   return (
     <div className="clip fade-in" style={{ cursor: 'default' }}>
-      <div className="clip-media" style={{ background: CLIP_GRADS[idx % CLIP_GRADS.length], padding: 10 }}>
-        <div className="clip-top"><span className="score" style={{ fontSize: 12, padding: '3px 7px' }}>{clip.score}</span></div>
-        <div className="clip-hook" style={{ fontSize: 15 }}>{clip.hook[0]}<br /><span className="y">{clip.hook[1]}</span></div>
-        <div className="clip-bottom"><span className="dur">{clip.dur}</span></div>
+      <div className="clip-media" style={{ padding: 0, background: '#000' }}>
+        <video src={clipVideoSrc(clip)} muted playsInline preload="metadata"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />
+        <div className="clip-top" style={{ padding: 8 }}>
+          <span className="score" style={{ fontSize: 12, padding: '3px 7px' }}>{Math.round(clip.viral_score || 0)}</span>
+        </div>
+        <div className="clip-bottom" style={{ padding: 8 }}><span className="dur">{fmtDuration(clip.start, clip.end)}</span></div>
       </div>
     </div>
   );
 }
 
-export function ProcessingView({ media, onDone, onCancel }) {
-  const [pct, setPct] = useState(0);
-  const [logs, setLogs] = useState([]);
+export function ProcessingView({ media, status, logs = [], step, clips = [], onCancel, onRetry }) {
   const logRef = useRef(null);
-  const shown = useRef(0);
-
-  useEffect(() => {
-    const t0 = Date.now();
-    const RUN = 8000;
-    const id = setInterval(() => {
-      const p = Math.min(100, ((Date.now() - t0) / RUN) * 100);
-      setPct(p);
-      while (shown.current < LOG_SCRIPT.length && LOG_SCRIPT[shown.current].t <= p) {
-        const line = LOG_SCRIPT[shown.current];
-        const ts = new Date().toLocaleTimeString('en-GB');
-        setLogs((L) => [...L, { ts, ...line }]);
-        shown.current++;
-      }
-      if (p >= 100) { clearInterval(id); setTimeout(onDone, 650); }
-    }, 80);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; });
 
-  const activeIdx = Math.min(PIPE.length - 1, Math.floor((pct / 100) * PIPE.length));
-  const readyCount = pct < 54 ? 0 : Math.min(CLIPS.length, Math.floor(((pct - 54) / 45) * CLIPS.length) + 1);
-  const sourceLabel = media?.type === 'url' ? media.payload : (media?.payload || 'your video');
+  const failed = status === 'error';
+  const info = STEP_INFO[step] || STEP_INFO.queued;
+  // Once clips start arriving, push the bar toward the finish.
+  const clipBoost = clips.length > 0 ? Math.min(18, clips.length * 3) : 0;
+  const pct = failed ? 100 : Math.min(96, info.pct + clipBoost);
+  const activeIdx = clips.length > 0 ? Math.max(info.idx, 4) : info.idx;
+  const sourceLabel = media?.type === 'url' ? media.payload : (media?.payload?.name || media?.payload || 'your video');
 
   return (
     <div className="container fade-in">
-      <Hero eyebrow="Pipeline running" line1="Cutting your clips." sub="ClippyMe is working through the pipeline. Clips appear below as soon as they're rendered — no need to wait for the whole batch." />
+      <Hero eyebrow={failed ? 'Pipeline error' : 'Pipeline running'}
+        line1={failed ? 'Something broke.' : 'Cutting your clips.'}
+        sub={failed ? 'The job failed — check the log below. You can retry or start over.'
+          : "ClippyMe is working through the pipeline. Clips appear below as soon as they're rendered — no need to wait for the whole batch."} />
       <div className="proc">
         <aside className="proc-aside">
           <Panel pad={true}>
             <div className="pipe">
               {PIPE.map((s, i) => {
-                const done = i < activeIdx || pct >= 100;
-                const active = i === activeIdx && pct < 100;
+                const done = !failed && (i < activeIdx);
+                const active = !failed && i === activeIdx;
                 return (
                   <div key={s.id} className={'pstep' + (done ? ' done' : active ? ' active' : '')}>
                     <div className="rail">
@@ -77,36 +77,40 @@ export function ProcessingView({ media, onDone, onCancel }) {
         <div>
           <Panel pad={true}>
             <div className="pbar-wrap">
-              <div className="pbar"><i style={{ width: pct + '%' }}></i></div>
-              <div className="pbar-pct tnum">{Math.round(pct)}%</div>
+              <div className="pbar"><i style={{ width: pct + '%', background: failed ? 'var(--danger)' : undefined }}></i></div>
+              <div className="pbar-pct tnum">{failed ? '—' : Math.round(pct) + '%'}</div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16, gap: 10 }}>
               <span className="label" style={{ textTransform: 'none', letterSpacing: 0, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>
                 <span className="mono" style={{ color: 'var(--fg-4)' }}>src ·</span> {String(sourceLabel).slice(0, 46)}
               </span>
-              <span style={{ marginLeft: 'auto' }}>
-                <Btn variant="ghost" size="sm" icon="x" onClick={onCancel}>Cancel</Btn>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                {failed && <Btn variant="secondary" size="sm" icon="wand-sparkles" onClick={onRetry}>Retry</Btn>}
+                <Btn variant="ghost" size="sm" icon="x" onClick={onCancel}>{failed ? 'Start over' : 'Cancel'}</Btn>
               </span>
             </div>
             <div className="log" ref={logRef}>
+              {logs.length === 0 && <div className="ln"><span className="ts">··</span> <span>waiting for the worker…</span></div>}
               {logs.map((l, i) => (
-                <div key={i} className="ln"><span className="ts">{l.ts}</span> <span className={l.c}>{l.m}</span></div>
+                <div key={i} className="ln">
+                  <span className={/error/i.test(l) ? '' : /✓|done|complete|found/i.test(l) ? 'ok' : ''}
+                    style={/error/i.test(l) ? { color: 'var(--danger)' } : undefined}>{l}</span>
+                </div>
               ))}
-              {pct < 100 && <div><span className="ts">{new Date().toLocaleTimeString('en-GB')}</span> <span className="cursor"></span></div>}
+              {!failed && <div><span className="cursor"></span></div>}
             </div>
           </Panel>
 
           <div className="stream-head">
             <h3>Clips</h3>
-            {readyCount > 0
-              ? <Badge tone="teal" icon="check">{readyCount} ready</Badge>
-              : <Badge tone="out">finding moments…</Badge>}
+            {clips.length > 0
+              ? <Badge tone="teal" icon="check">{clips.length} ready</Badge>
+              : <Badge tone="out">{failed ? 'no clips' : 'finding moments…'}</Badge>}
           </div>
           <div className="stream">
-            {CLIPS.slice(0, 8).map((c, i) => (
-              i < readyCount
-                ? <MiniClip key={c.id} clip={c} idx={i} />
-                : <div key={c.id} className="slot">{i === readyCount && pct >= 54 ? <div className="sk"></div> : null}</div>
+            {clips.slice(0, 8).map((c, i) => <MiniClip key={c.original_index ?? i} clip={c} idx={i} />)}
+            {!failed && clips.length < 4 && Array.from({ length: 4 - clips.length }).map((_, i) => (
+              <div key={'slot' + i} className="slot">{i === 0 && clips.length > 0 ? <div className="sk"></div> : (clips.length === 0 && i === 0 ? <div className="sk"></div> : null)}</div>
             ))}
           </div>
         </div>

@@ -1,8 +1,21 @@
-// ClippyMe redesign — HistoryView, SettingsView, ApiKeyModal.
-import { useState } from 'react';
+// ClippyMe redesign — HistoryView + SettingsView + ApiKeyModal, wired to the
+// real backend (history list/restore/delete; config keys, cookies, Zernio).
+import { useState, useEffect } from 'react';
 import { Icon, Btn, Badge, Switch, Panel } from './primitives';
 import { Hero } from './chrome';
-import { CLIP_GRADS } from './data';
+import {
+  getConfig, saveConfig, cookiesStatus, uploadCookies, deleteCookies,
+  getZernio, saveZernio, discoverZernioAccounts,
+} from './realApi';
+
+function relTime(ts) {
+  if (!ts) return '';
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
 
 export function HistoryView({ history, onOpen, onDelete, onClear }) {
   if (!history.length) {
@@ -27,29 +40,34 @@ export function HistoryView({ history, onOpen, onDelete, onClear }) {
         </div>
       </div>
       <Panel pad={false} className="hlist">
-        {history.map((h) => (
-          <div className="hrow" key={h.id} onClick={() => onOpen(h)}>
-            <div className="hthumb" style={{ background: CLIP_GRADS[h.grad % CLIP_GRADS.length] }}>{h.score}</div>
-            <div style={{ minWidth: 0 }}>
-              <div className="ht">{h.source}</div>
-              <div className="hm">
-                <Icon n={h.platform === 'url' ? 'globe' : 'file-video'} style={{ width: 11, height: 11, verticalAlign: '-1px', marginRight: 5 }} />
-                {h.clips} clips · ${h.cost} · {h.when}
+        {history.map((h) => {
+          const ok = h.status === 'complete';
+          return (
+            <div className="hrow" key={h.jobId} onClick={() => ok && onOpen(h)} style={{ cursor: ok ? 'pointer' : 'default' }}>
+              <div className="hthumb" style={{ background: 'var(--grad-viral)' }}>{h.clipCount ?? 0}</div>
+              <div style={{ minWidth: 0 }}>
+                <div className="ht">{h.source || h.jobId}</div>
+                <div className="hm">
+                  <Icon n={h.sourceType === 'url' ? 'globe' : 'file-video'} style={{ width: 11, height: 11, verticalAlign: '-1px', marginRight: 5 }} />
+                  {h.clipCount || 0} clips{h.cost != null ? ` · $${Number(h.cost).toFixed(2)}` : ''} · {relTime(h.timestamp)}
+                </div>
+              </div>
+              <div className="hr">
+                {ok ? <Badge tone="teal" icon="check">complete</Badge>
+                  : h.status === 'error' ? <Badge tone="danger" icon="triangle-alert">error</Badge>
+                    : <Badge tone="amber" icon="clock">{h.status || 'pending'}</Badge>}
+                <span className="mini" title="Delete" onClick={(e) => { e.stopPropagation(); onDelete(h.jobId); }}><Icon n="trash-2" /></span>
+                {ok && <Icon n="chevron-right" style={{ width: 18, height: 18, color: 'var(--fg-4)' }} />}
               </div>
             </div>
-            <div className="hr">
-              {h.published ? <Badge tone="teal" icon="check">published</Badge> : <Badge tone="amber" icon="clock">draft</Badge>}
-              <span className="mini" title="Delete" onClick={(e) => { e.stopPropagation(); onDelete(h.id); }}><Icon n="trash-2" /></span>
-              <Icon n="chevron-right" style={{ width: 18, height: 18, color: 'var(--fg-4)' }} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </Panel>
     </div>
   );
 }
 
-function KeyRow({ icon, name, desc, value, set, placeholder }) {
+function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, present }) {
   const [reveal, setReveal] = useState(false);
   return (
     <div className="keyrow">
@@ -60,40 +78,108 @@ function KeyRow({ icon, name, desc, value, set, placeholder }) {
       </div>
       <div className="kr">
         <input className="key-input" type={reveal ? 'text' : 'password'} value={value}
-          placeholder={placeholder} onChange={(e) => set(e.target.value)} />
+          placeholder={placeholder} onChange={(e) => onChange(e.target.value)} onBlur={onSave} />
         <span className="mini" title={reveal ? 'Hide' : 'Show'} onClick={() => setReveal(!reveal)}><Icon n={reveal ? 'eye-off' : 'eye'} /></span>
-        {value ? <Badge tone="teal" icon="check">set</Badge> : <Badge tone="out">empty</Badge>}
+        {value || present ? <Badge tone="teal" icon="check">set</Badge> : <Badge tone="out">empty</Badge>}
       </div>
     </div>
   );
 }
 
-export function SettingsView() {
-  const [gemini, setGemini] = useState('');
+export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast }) {
+  const [gemini, setGemini] = useState(apiKey || '');
   const [deepgram, setDeepgram] = useState('');
   const [hf, setHf] = useState('');
-  const [zernio, setZernio] = useState(false);
-  const [cookies, setCookies] = useState(true);
+  const [present, setPresent] = useState({});
+  const [zernio, setZernioState] = useState(null);
+  const [zKey, setZKey] = useState('');
+  const [accts, setAccts] = useState({ tiktok: '', instagram: '', youtube: '' });
+  const [cookies, setCookies] = useState(!!cookiesConfigured);
+
+  useEffect(() => {
+    getConfig().then((c) => setPresent({
+      gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY,
+    })).catch(() => {});
+    getZernio().then((z) => { setZernioState(z); if (z.accounts) setAccts({ tiktok: '', instagram: '', youtube: '', ...z.accounts }); }).catch(() => {});
+    cookiesStatus().then((s) => setCookies(!!s.configured)).catch(() => {});
+  }, []);
+
+  const saveKeys = async (patch) => {
+    try { await saveConfig(patch); pushToast?.('success', 'Saved'); } catch { pushToast?.('error', 'Save failed'); }
+  };
+
+  const saveZernioCfg = async () => {
+    try {
+      const payload = { accounts: accts };
+      if (zKey.trim()) payload.api_key = zKey.trim();
+      const z = await saveZernio(payload);
+      setZernioState(z); setZKey('');
+      pushToast?.('success', 'Zernio saved');
+    } catch { pushToast?.('error', 'Zernio save failed'); }
+  };
+
+  const discover = async () => {
+    try {
+      const { accounts } = await discoverZernioAccounts();
+      const next = { ...accts };
+      (accounts || []).forEach((a) => {
+        const p = (a.platform || '').toLowerCase();
+        const id = a._id || a.id;
+        if (p.includes('tiktok')) next.tiktok = id;
+        else if (p.includes('insta')) next.instagram = id;
+        else if (p.includes('you')) next.youtube = id;
+      });
+      setAccts(next);
+      pushToast?.('success', `Discovered ${(accounts || []).length} accounts`);
+    } catch { pushToast?.('error', 'Discover failed — check API key'); }
+  };
+
+  const onCookieFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try { await uploadCookies(f); setCookies(true); pushToast?.('success', 'Cookies uploaded'); }
+    catch { pushToast?.('error', 'Cookie upload failed'); }
+  };
+  const removeCookies = async () => {
+    try { await deleteCookies(); setCookies(false); pushToast?.('info', 'Cookies removed'); }
+    catch { pushToast?.('error', 'Remove failed'); }
+  };
+
   return (
     <div className="container narrow fade-in">
       <Hero eyebrow="Settings" line1="Keys & connections." sub="Everything is stored locally. Your keys never leave your machine." />
 
       <Panel title="API keys" sub="Required for transcription & moment detection" icon="key-round" style={{ marginBottom: 18 }}>
-        <KeyRow icon="sparkles" name="Gemini" desc="Viral-moment detection" value={gemini} set={setGemini} placeholder="AIza…" />
-        <KeyRow icon="audio-lines" name="Deepgram" desc="Nova-3 transcription" value={deepgram} set={setDeepgram} placeholder="dg_…" />
-        <KeyRow icon="scan-face" name="Hugging Face token" desc="Speaker diarization models" value={hf} set={setHf} placeholder="hf_…" />
+        <KeyRow icon="sparkles" name="Gemini" desc="Viral-moment detection" value={gemini} present={present.gemini}
+          onChange={(v) => { setGemini(v); onApiKey?.(v); }} onSave={() => gemini && saveKeys({ GEMINI_API_KEY: gemini })} placeholder="AIza…" />
+        <KeyRow icon="audio-lines" name="Deepgram" desc="Nova-3 transcription" value={deepgram} present={present.deepgram}
+          onChange={setDeepgram} onSave={() => deepgram && saveKeys({ DEEPGRAM_API_KEY: deepgram })} placeholder="dg_…" />
+        <KeyRow icon="scan-face" name="Hugging Face token" desc="Speaker diarization models" value={hf} present={present.hf}
+          onChange={setHf} onSave={() => hf && saveKeys({ HF_TOKEN: hf })} placeholder="hf_…" />
       </Panel>
 
-      <Panel title="Publishing" sub="Push finished clips to socials" icon="send" style={{ marginBottom: 18 }}>
-        <div className="zernio-card">
-          <div className="zico"><Icon n="rss" /></div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="kt">Zernio</div>
-            <div className="kd">{zernio ? 'Connected · scheduling to TikTok, Reels & Shorts' : 'Connect to schedule prime-time posts'}</div>
+      <Panel title="Publishing" sub="Push finished clips to socials via Zernio" icon="send" style={{ marginBottom: 18 }}>
+        <div className="zernio-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div className="zico"><Icon n="rss" /></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="kt">Zernio</div>
+              <div className="kd">{zernio?.configured ? `Connected${zernio.api_key_masked ? ' · ' + zernio.api_key_masked : ''}` : 'Add your API key + account IDs to schedule posts'}</div>
+            </div>
+            {zernio?.configured && <span className="conn"><Icon n="circle-check" />Connected</span>}
           </div>
-          {zernio
-            ? <span className="conn"><Icon n="circle-check" />Connected</span>
-            : <Btn variant="primary" size="sm" icon="link" onClick={() => setZernio(true)}>Connect</Btn>}
+          <input className="key-input" style={{ width: '100%' }} type="password" value={zKey}
+            placeholder={zernio?.configured ? 'Replace API key (optional)' : 'Zernio API key (sk_…)'} onChange={(e) => setZKey(e.target.value)} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+            {['tiktok', 'instagram', 'youtube'].map((p) => (
+              <input key={p} className="key-input" style={{ width: '100%', fontFamily: 'var(--font-sans)' }}
+                value={accts[p] || ''} placeholder={`${p} account id`} onChange={(e) => setAccts((a) => ({ ...a, [p]: e.target.value }))} />
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Btn variant="secondary" size="sm" icon="rss" onClick={discover}>Discover from Zernio</Btn>
+            <Btn variant="primary" size="sm" icon="check" onClick={saveZernioCfg}>Save</Btn>
+          </div>
         </div>
       </Panel>
 
@@ -101,7 +187,13 @@ export function SettingsView() {
         <div className="opt" style={{ borderBottom: 0 }}>
           <div className="oico"><Icon n="cookie" /></div>
           <div className="otxt"><div className="ot">YouTube cookies</div><div className="od">{cookies ? 'Configured · restricted videos OK' : 'Not set · public videos only'}</div></div>
-          <div className="r"><Switch on={cookies} onChange={setCookies} /></div>
+          <div className="r" style={{ gap: 8 }}>
+            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+              <Icon n="upload" />Upload
+              <input type="file" accept=".txt" hidden onChange={onCookieFile} />
+            </label>
+            {cookies && <Btn variant="ghost" size="sm" icon="trash-2" onClick={removeCookies}>Remove</Btn>}
+          </div>
         </div>
       </Panel>
     </div>

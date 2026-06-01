@@ -2,13 +2,13 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
 
-// Opt-in redesign preview: open with ?ui=next to render the new flat-editorial
-// UI (Claude Design handoff). The current production app stays the default so
-// nothing regresses while the redesign is wired to the backend.
-const useNextUI = typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('ui') === 'next';
+// The flat-editorial redesign (Claude Design handoff, wired to the real
+// backend) is now the default UI. The previous app is still reachable at
+// ?ui=legacy as a safety net.
+const useLegacy = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('ui') === 'legacy';
 
-const App = React.lazy(() => (useNextUI ? import('./redesign/RedesignApp') : import('./App')));
+const App = React.lazy(() => (useLegacy ? import('./App') : import('./redesign/RedesignApp')));
 
 ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
