@@ -59,6 +59,16 @@ services:
       # (recommended — the History tab's Delete button is the single
       # source of truth). Default fallback in app.py is 30 days.
       - JOB_RETENTION_SECONDS=${JOB_RETENTION_SECONDS:-0}
+      # Reframe camera tuning (all optional; defaults preserve current feel).
+      # REFRAME_SMOOTHER=euro switches the active-speaker camera to the 1€
+      # adaptive filter; leave blank for the proven two-speed EMA. The LOST_*
+      # knobs control lost-subject drift-to-center (always on). EURO_* tune the
+      # 1€ filter when enabled. See CLAUDE.md "Reframing Modes".
+      - REFRAME_SMOOTHER=${REFRAME_SMOOTHER:-}
+      - REFRAME_LOST_HOLD=${REFRAME_LOST_HOLD:-90}
+      - REFRAME_LOST_DRIFT=${REFRAME_LOST_DRIFT:-0.05}
+      - REFRAME_EURO_MINCUTOFF=${REFRAME_EURO_MINCUTOFF:-0.014}
+      - REFRAME_EURO_BETA=${REFRAME_EURO_BETA:-0.0008}
     volumes:
       - .:/app
       - /app/__pycache__

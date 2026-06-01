@@ -19,6 +19,8 @@ from google import genai
 from dotenv import load_dotenv
 import json
 
+from clippyme.pipeline.reframe_ops import OneEuroFilter, drift_to_center, salient_crop_center
+
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf')
 
@@ -249,6 +251,22 @@ def _get_yolo_model():
         _yolo_model.to(DEVICE)
     return _yolo_model
 
+
+# Whisper models are expensive to construct (weights load + device placement),
+# so cache one per (model, device, compute_type) for the life of the process.
+# Batch jobs re-using the same config reuse the loaded model instead of paying
+# the init cost on every clip.
+_whisper_models: dict = {}
+
+
+def _get_whisper_model(model_name, device, compute_type):
+    """Lazy-load + cache a faster-whisper model keyed by its config."""
+    from faster_whisper import WhisperModel
+    key = (model_name, device, compute_type)
+    if key not in _whisper_models:
+        _whisper_models[key] = WhisperModel(model_name, device=device, compute_type=compute_type)
+    return _whisper_models[key]
+
 # --- MediaPipe Setup ---
 # Use standard Face Detection (BlazeFace) for speed
 mp_face_detection = mp.solutions.face_detection
@@ -421,6 +439,25 @@ class SmoothedCameraman:
         self.safe_zone_radius_x = self.max_crop_width * 0.20
         self.safe_zone_radius_y = self.max_crop_height * 0.15
 
+        # Lost-subject recovery: when no target arrives for a while (speaker
+        # leaves / long occlusion), hold then ease back to the source center
+        # instead of freezing the camera on empty space. Always on — strictly
+        # safer than the old freeze behavior.
+        self.frames_since_target = 0
+        self.lost_hold_frames = int(os.getenv("REFRAME_LOST_HOLD", "90"))
+        self.lost_drift_rate = float(os.getenv("REFRAME_LOST_DRIFT", "0.05"))
+
+        # Optional 1€ adaptive smoother (opt-in via REFRAME_SMOOTHER=euro).
+        # Default keeps the proven two-speed EMA. The 1€ path follows fast
+        # moves and damps jitter with a single principled tradeoff; enable it
+        # to A/B test camera feel in an environment where output can be viewed.
+        self._use_euro = os.getenv("REFRAME_SMOOTHER", "").strip().lower() == "euro"
+        if self._use_euro:
+            mc = float(os.getenv("REFRAME_EURO_MINCUTOFF", "0.014"))
+            beta = float(os.getenv("REFRAME_EURO_BETA", "0.0008"))
+            self._euro_x = OneEuroFilter(min_cutoff=mc, beta=beta)
+            self._euro_y = OneEuroFilter(min_cutoff=mc, beta=beta)
+
     def update_target(self, face_box, is_person_box: bool = False):
         """
         Updates target center + target zoom based on a detected face or person box.
@@ -433,6 +470,8 @@ class SmoothedCameraman:
         """
         if not face_box:
             return
+        # A real target this frame → reset the lost-subject counter.
+        self.frames_since_target = 0
         x, y, w, h = face_box
         self.target_center_x = x + w / 2
 
@@ -477,15 +516,43 @@ class SmoothedCameraman:
             self.current_center_x = self.target_center_x
             self.current_center_y = self.target_center_y
             self.current_zoom = self.target_zoom
+            self.frames_since_target = 0
+            if self._use_euro:
+                self._euro_x.reset()
+                self._euro_y.reset()
         else:
-            self.current_center_x = self._ease_axis(
-                self.current_center_x, self.target_center_x,
-                self.safe_zone_radius_x, self.max_crop_width,
-            )
-            self.current_center_y = self._ease_axis(
-                self.current_center_y, self.target_center_y,
-                self.safe_zone_radius_y, self.max_crop_height,
-            )
+            # Lost-subject recovery: once we've gone `lost_hold_frames` without
+            # a fresh target, ease the TARGET toward the source center (and
+            # gently zoom out). Normal easing below then glides the camera
+            # there smoothly. Active in TRACK/WIDE only (GENERAL/DISABLED set
+            # centers directly and never call this).
+            self.frames_since_target += 1
+            if self.frames_since_target > self.lost_hold_frames:
+                self.target_center_x = drift_to_center(
+                    self.target_center_x, self.video_width / 2,
+                    self.frames_since_target, self.lost_hold_frames, self.lost_drift_rate)
+                self.target_center_y = drift_to_center(
+                    self.target_center_y, self.video_height / 2,
+                    self.frames_since_target, self.lost_hold_frames, self.lost_drift_rate)
+                if self.target_zoom > 1.0:
+                    self.target_zoom = max(1.0, self.target_zoom - 0.01)
+
+            if self._use_euro:
+                # Apply the dead-band on the target, then 1€-filter every frame
+                # (feeding the filter each frame keeps its velocity estimate live).
+                tx = self.target_center_x if abs(self.target_center_x - self.current_center_x) > self.safe_zone_radius_x else self.current_center_x
+                ty = self.target_center_y if abs(self.target_center_y - self.current_center_y) > self.safe_zone_radius_y else self.current_center_y
+                self.current_center_x = self._euro_x.filter(tx, 1.0)
+                self.current_center_y = self._euro_y.filter(ty, 1.0)
+            else:
+                self.current_center_x = self._ease_axis(
+                    self.current_center_x, self.target_center_x,
+                    self.safe_zone_radius_x, self.max_crop_width,
+                )
+                self.current_center_y = self._ease_axis(
+                    self.current_center_y, self.target_center_y,
+                    self.safe_zone_radius_y, self.max_crop_height,
+                )
             # Zoom animates more slowly than position to feel cinematic
             zoom_diff = self.target_zoom - self.current_zoom
             if abs(zoom_diff) > 0.01:
@@ -1256,93 +1323,111 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     cap = cv2.VideoCapture(input_video)
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    stderr_output = ""
+    try:
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    frame_number = 0
-    current_scene_index = 0
+        frame_number = 0
+        current_scene_index = 0
     
-    # Pre-calculate scene boundaries
-    scene_boundaries = []
-    for s_start, s_end in scenes:
-        scene_boundaries.append((s_start.get_frames(), s_end.get_frames()))
+        # Pre-calculate scene boundaries
+        scene_boundaries = []
+        for s_start, s_end in scenes:
+            scene_boundaries.append((s_start.get_frames(), s_end.get_frames()))
 
-    # Global tracker for single-person shots
-    # Cooldown of 45 frames (~1.5s @ 30fps) protects against rapid back-and-forth
-    # switching in WIDE multi-speaker scenes (interview/podcast botta-risposta).
-    speaker_tracker = SpeakerTracker(cooldown_frames=45)
-    detection_smoother = DetectionSmoother(window_size=5)
+        # Global tracker for single-person shots
+        # Cooldown of 45 frames (~1.5s @ 30fps) protects against rapid back-and-forth
+        # switching in WIDE multi-speaker scenes (interview/podcast botta-risposta).
+        speaker_tracker = SpeakerTracker(cooldown_frames=45)
+        detection_smoother = DetectionSmoother(window_size=5)
 
-    with tqdm(total=total_frames, desc="   Processing", file=sys.stdout) as pbar:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+        with tqdm(total=total_frames, desc="   Processing", file=sys.stdout) as pbar:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            # Update Scene Index
-            if current_scene_index < len(scene_boundaries):
-                start_f, end_f = scene_boundaries[current_scene_index]
-                if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
-                    current_scene_index += 1
+                # Update Scene Index
+                if current_scene_index < len(scene_boundaries):
+                    start_f, end_f = scene_boundaries[current_scene_index]
+                    if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
+                        current_scene_index += 1
             
-            # Determine Strategy for current frame based on scene
-            current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
+                # Determine Strategy for current frame based on scene
+                current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
             
-            # Apply Strategy
-            if current_strategy == 'DISABLED':
-                output_frame = create_disabled_reframe(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+                # Apply Strategy
+                if current_strategy == 'DISABLED':
+                    output_frame = create_disabled_reframe(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
 
-            elif current_strategy == 'GENERAL':
-                # No faces detected anywhere in scene → letterbox fallback
-                output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
-                cameraman.current_center_x = original_width / 2
-                cameraman.target_center_x = original_width / 2
-                cameraman.current_center_y = original_height / 2
-                cameraman.target_center_y = original_height / 2
-                cameraman.current_zoom = 1.0
-                cameraman.target_zoom = 1.0
+                elif current_strategy == 'GENERAL':
+                    # No faces detected anywhere in scene → letterbox fallback
+                    output_frame = create_general_frame(frame, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+                    cameraman.current_center_x = original_width / 2
+                    cameraman.target_center_x = original_width / 2
+                    cameraman.current_center_y = original_height / 2
+                    cameraman.target_center_y = original_height / 2
+                    cameraman.current_zoom = 1.0
+                    cameraman.target_zoom = 1.0
 
-            else:
-                # TRACK (single speaker) or WIDE (multi-speaker) — both use the
-                # same active-speaker tracker now. WIDE relies on MAR-variance
-                # to pick whichever face is currently talking, switching
-                # dynamically with cooldown protection.
-                if frame_number % 2 == 0:
-                    candidates = detect_face_candidates(frame)
-                    candidates = detection_smoother.smooth(candidates, frame_number)
-                    for cand in candidates:
-                        cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
-                    target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
-                    if target_box:
-                        cameraman.update_target(target_box)
-                    elif current_strategy == 'TRACK':
-                        # Single-speaker scene: fall back to YOLO body detection
-                        person_box = detect_person_yolo(frame)
-                        if person_box:
-                            cameraman.update_target(person_box, is_person_box=True)
-                    # WIDE: if no face detected this frame, just keep the
-                    # cameraman's current target (don't fall back to body
-                    # tracking which would jump to a random person).
-
-                # Snap camera on scene change to avoid panning from previous scene position
-                is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
-
-                x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
-
-                # Crop
-                if y2 > y1 and x2 > x1:
-                    cropped = frame[y1:y2, x1:x2]
-                    output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
                 else:
-                    output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                    # TRACK (single speaker) or WIDE (multi-speaker) — both use the
+                    # same active-speaker tracker now. WIDE relies on MAR-variance
+                    # to pick whichever face is currently talking, switching
+                    # dynamically with cooldown protection.
+                    if frame_number % 2 == 0:
+                        candidates = detect_face_candidates(frame)
+                        candidates = detection_smoother.smooth(candidates, frame_number)
+                        for cand in candidates:
+                            cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
+                        target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
+                        if target_box:
+                            cameraman.update_target(target_box)
+                        elif current_strategy == 'TRACK':
+                            # Single-speaker scene: fall back to YOLO body detection
+                            person_box = detect_person_yolo(frame)
+                            if person_box:
+                                cameraman.update_target(person_box, is_person_box=True)
+                        # WIDE: if no face detected this frame, just keep the
+                        # cameraman's current target (don't fall back to body
+                        # tracking which would jump to a random person).
 
-            ffmpeg_process.stdin.write(output_frame.tobytes())
-            frame_number += 1
-            pbar.update(1)
+                    # Snap camera on scene change to avoid panning from previous scene position
+                    is_scene_start = (frame_number == scene_boundaries[current_scene_index][0])
+
+                    x1, y1, x2, y2 = cameraman.get_crop_box(force_snap=is_scene_start)
+
+                    # Crop
+                    if y2 > y1 and x2 > x1:
+                        cropped = frame[y1:y2, x1:x2]
+                        output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                    else:
+                        output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+
+                ffmpeg_process.stdin.write(output_frame.tobytes())
+                frame_number += 1
+                pbar.update(1)
     
-    ffmpeg_process.stdin.close()
-    stderr_output = ffmpeg_process.stderr.read().decode()
-    ffmpeg_process.wait()
-    cap.release()
+        ffmpeg_process.stdin.close()
+        stderr_output = ffmpeg_process.stderr.read().decode()
+        ffmpeg_process.wait()
+    finally:
+        cap.release()
+        # If we left the loop abnormally (exception, early break on a
+        # write error), make sure ffmpeg can't linger as a zombie holding
+        # the stdin pipe open.
+        if ffmpeg_process.poll() is None:
+            try:
+                if ffmpeg_process.stdin and not ffmpeg_process.stdin.closed:
+                    ffmpeg_process.stdin.close()
+            except (OSError, ValueError):
+                pass
+            ffmpeg_process.terminate()
+            try:
+                ffmpeg_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                ffmpeg_process.kill()
+                ffmpeg_process.wait()
 
     if ffmpeg_process.returncode != 0:
         print("\n   ❌ FFmpeg frame processing failed.")
@@ -1568,12 +1653,10 @@ def transcribe_video(video_path):
         except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
             print(f"⚠️  Deepgram transcription failed ({exc}); falling back to Faster-Whisper.")
 
-    from faster_whisper import WhisperModel
-
     device = "cuda" if CUDA_AVAILABLE else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
     print(f"🎙️  Transcribing with Faster-Whisper [{WHISPER_MODEL}] ({device.upper()} mode)...")
-    model = WhisperModel(WHISPER_MODEL, device=device, compute_type=compute_type)
+    model = _get_whisper_model(WHISPER_MODEL, device, compute_type)
     # Honor per-job language override (set by main.py --language → CLIPPYME_LANGUAGE).
     # 'multi' / '' / unset → let Faster-Whisper auto-detect.
     _lang_override = (os.getenv("CLIPPYME_LANGUAGE") or "").strip().lower()
@@ -2004,10 +2087,19 @@ if __name__ == '__main__':
 
         # Get duration
         cap = cv2.VideoCapture(input_video)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        duration = frame_count / fps
-        cap.release()
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        finally:
+            cap.release()
+        # OpenCV returns 0 for fps/frame_count on corrupt or unreadable files;
+        # guard the division so the pipeline degrades to whole-video mode
+        # instead of crashing with ZeroDivisionError.
+        if fps and fps > 0 and frame_count > 0:
+            duration = frame_count / fps
+        else:
+            print(f"   ⚠️ Could not read duration (fps={fps}, frames={frame_count}); defaulting to 0.")
+            duration = 0.0
 
         # 4. Gemini Analysis
         clips_data = get_viral_clips(transcript, duration, instructions=args.instructions)

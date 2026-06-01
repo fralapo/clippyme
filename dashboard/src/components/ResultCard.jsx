@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Youtube, Loader2, Type, Instagram, Copy, Check, Scissors, MessageSquare, Settings, Trash2, ChevronDown, Trophy, Clock, Quote } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
+import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
 import SubtitleModal from './SubtitleModal';
 import HookModal from './HookModal';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -73,7 +74,7 @@ function ToggleCell({ icon: Icon, label, active, onToggle, onConfigure, title })
     );
 }
 
-export default function ResultCard({
+function ResultCard({
     clip,
     index,
     rank = null,
@@ -83,8 +84,16 @@ export default function ResultCard({
     onPause,
     preselections,
     clipState = {},
-    onUpdateState = () => {},
+    onUpdateClipState = () => {},
 }) {
+    // Bind the stable 2-arg parent callback to THIS card's index so the
+    // internal `onUpdateState(patch)` API stays unchanged while the prop
+    // ResultsGrid passes (onUpdateClipState) keeps a stable reference —
+    // letting React.memo skip re-renders that don't touch this card.
+    const onUpdateState = React.useCallback(
+        (patch) => onUpdateClipState(index, patch),
+        [onUpdateClipState, index],
+    );
     const [showMetadata, setShowMetadata] = useState(false);
     // Selection model v2 — 'selected' is the opt-in flag for bulk
     // publish/download/delete. Legacy records lacking it default to
@@ -112,43 +121,11 @@ export default function ResultCard({
 
     // Layered state seeding: clipState (persisted per-clip) > preselections
     // (pipeline defaults) > hard-coded defaults. This way a refresh restores
-    // the user's exact choices for this specific clip.
-    const defaultToggles = {
-        smartcut: !!preselections?.smartcut,
-        hook: !!preselections?.hook,
-        subtitles: !!preselections?.subtitles,
-    };
-    const defaultHookParams = {
-        text: clip.viral_hook_text || clip.hook_text || '',
-        position: preselections?.hook?.position || 'top',
-        size: preselections?.hook?.size || 'S',
-        offset_y: 0,
-    };
-    const defaultSubtitleParams = {
-        preset: preselections?.subtitles?.preset || 'classic_white',
-        mode: preselections?.subtitles?.mode || 'karaoke',
-        display_mode: 'word_group',
-        highlight_color: null,
-        font: preselections?.subtitles?.font || 'Montserrat-Black',
-        uppercase: true,
-        offset_y: 0,
-        font_color: preselections?.subtitles?.font_color || '#FFFFFF',
-        position: preselections?.subtitles?.position || 'bottom',
-        // Classic-mode stroke + background (passed through to burn_subtitles)
-        border_color: preselections?.subtitles?.border_color || '#000000',
-        border_width: preselections?.subtitles?.border_width ?? 2,
-        bg_color: preselections?.subtitles?.bg_color || '#000000',
-        bg_opacity: preselections?.subtitles?.bg_opacity ?? 0,
-        // Optional custom size / grouping. Keys omitted when unset so the
-        // backend preset default applies. Mirrored in BatchPublishModal's
-        // seededSubtitleParams — keep the two in sync.
-        ...(preselections?.subtitles?.font_size !== undefined
-            ? { fontSize: preselections.subtitles.font_size }
-            : {}),
-        ...(preselections?.subtitles?.words_per_group !== undefined
-            ? { words_per_group: preselections.subtitles.words_per_group }
-            : {}),
-    };
+    // the user's exact choices for this specific clip. Seeding lives in a
+    // shared util so the single-clip and batch-publish paths stay identical.
+    const defaultToggles = seedToggles(preselections);
+    const defaultHookParams = seedHookParams(clip, preselections);
+    const defaultSubtitleParams = seedSubtitleParams(preselections);
 
     const [toggles, setTogglesLocal] = useState({
         ...defaultToggles,
@@ -781,3 +758,9 @@ export default function ResultCard({
         </div>
     );
 }
+
+// Memoized: ResultsGrid re-renders on every poll tick (2s) and on any clip's
+// state change. Without memo, all N cards re-render each time; with it, only
+// cards whose props actually changed re-render. Relies on the grid passing
+// stable callback refs (see the useCallback wrapping in ResultsGrid).
+export default React.memo(ResultCard);

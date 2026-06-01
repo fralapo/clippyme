@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Send, Loader2, Check, AlertCircle, Clock, Zap, Calendar } from 'lucide-react';
 import { toast } from 'sonner';
 import { getApiUrl } from '../config';
+import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
 
 /**
  * BatchPublishModal — publish multiple clips in sequence on Zernio.
@@ -245,50 +246,14 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
             // both 'brand new job just finished' and 'job restored from
             // history' paths without relying on React timing.
             const clipState = clipStates[originalIndex] || {};
-            const seededToggles = {
-                smartcut: !!preselections?.smartcut,
-                hook: !!preselections?.hook,
-                subtitles: !!preselections?.subtitles,
-            };
-            const toggles = clipState.toggles ?? seededToggles;
+            // Race-proof fallback: if the persisted clipState hasn't settled
+            // yet (modal opened right after the job finished, or job restored
+            // from history), reconstruct toggles/params from preselections via
+            // the shared seeding util ResultCard also uses.
+            const toggles = clipState.toggles ?? seedToggles(preselections);
             const anyToggleActive = Object.values(toggles).some(Boolean);
-
-            // Same race-proof fallback for hook/subtitle params — use
-            // the persisted values if present, otherwise reconstruct from
-            // preselections (mirroring ResultCard's default*Params).
-            const seededHookParams = {
-                text: clip.viral_hook_text || clip.hook_text || '',
-                position: preselections?.hook?.position || 'top',
-                size: preselections?.hook?.size || 'S',
-                offset_y: 0,
-            };
-            const seededSubtitleParams = {
-                preset: preselections?.subtitles?.preset || 'classic_white',
-                mode: preselections?.subtitles?.mode || 'karaoke',
-                display_mode: 'word_group',
-                highlight_color: null,
-                font: preselections?.subtitles?.font || 'Montserrat-Black',
-                uppercase: true,
-                offset_y: 0,
-                font_color: preselections?.subtitles?.font_color || '#FFFFFF',
-                position: preselections?.subtitles?.position || 'bottom',
-                border_color: preselections?.subtitles?.border_color || '#000000',
-                border_width: preselections?.subtitles?.border_width ?? 2,
-                bg_color: preselections?.subtitles?.bg_color || '#000000',
-                bg_opacity: preselections?.subtitles?.bg_opacity ?? 0,
-                // Propagate custom font_size / words_per_group when set in
-                // the pre-selection panel. Keys are omitted when unset so
-                // the backend's preset default applies instead of a hard-
-                // coded 16. Kept in sync with ResultCard.defaultSubtitleParams.
-                ...(preselections?.subtitles?.font_size !== undefined
-                    ? { font_size: preselections.subtitles.font_size }
-                    : {}),
-                ...(preselections?.subtitles?.words_per_group !== undefined
-                    ? { words_per_group: preselections.subtitles.words_per_group }
-                    : {}),
-            };
-            const hookParams = clipState.hookParams ?? seededHookParams;
-            const subtitleParams = clipState.subtitleParams ?? seededSubtitleParams;
+            const hookParams = clipState.hookParams ?? seedHookParams(clip, preselections);
+            const subtitleParams = clipState.subtitleParams ?? seedSubtitleParams(preselections);
 
             const titleText = (clip.video_title_for_youtube_short || `Clip ${originalIndex + 1}`).slice(0, 100);
             const captionText = (clip.tiktok_caption && clip.tiktok_caption.trim()) || titleText;

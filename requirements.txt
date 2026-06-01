@@ -5,7 +5,9 @@ torchvision==0.26.0
 tqdm==4.67.3
 yt-dlp>=2026.3.17
 faster-whisper==1.2.1
-google-genai>=1.70.0
+# Capped below 2.0 so an unattended rebuild can't pull a breaking major
+# release of the SDK (gemini_service / gemini_parser depend on the 1.x API).
+google-genai>=1.70.0,<2.0.0
 python-dotenv==1.2.2
 mediapipe==0.10.14
 fastapi==0.135.3

@@ -94,19 +94,23 @@ ENV PATH=/app/data/bin:$PATH
 ARG GPU_RUNTIME
 ARG ENABLE_WHISPER_DIARIZE=0
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
+# BuildKit cache mount: pip's download cache lives in the mount (shared across
+# rebuilds) and is NOT baked into the image layer, so we get fast rebuilds
+# without the image bloat that dropping --no-cache-dir would otherwise cause.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install -r requirements.txt && \
     if [ "$GPU_RUNTIME" = "nvidia" ]; then \
-        pip install --no-cache-dir nvidia-cublas-cu12 && \
+        pip install nvidia-cublas-cu12 && \
         SITE=$(python -c "import site; print(site.getsitepackages()[0])") && \
         echo "$SITE/nvidia/cublas/lib" > /etc/ld.so.conf.d/nvidia-pip.conf && \
         echo "$SITE/nvidia/cudnn/lib" >> /etc/ld.so.conf.d/nvidia-pip.conf && \
         ldconfig 2>/dev/null || true; \
     fi && \
     if [ "$ENABLE_WHISPER_DIARIZE" = "1" ]; then \
-        pip install --no-cache-dir 'pyannote.audio>=3.1'; \
+        pip install 'pyannote.audio>=3.1'; \
     fi && \
-    pip install --upgrade --no-cache-dir yt-dlp
+    pip install --upgrade yt-dlp
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \

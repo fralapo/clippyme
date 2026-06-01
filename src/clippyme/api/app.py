@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd
 from clippyme.domain.compose import compose_layers
+from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
 from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
 from clippyme.domain.url_utils import filename_from_video_url
 from clippyme.api.schemas import (
@@ -197,10 +198,12 @@ async def run_job(job_id, job_data):
         t_log.daemon = True
         t_log.start()
         
-        # Async wait for process with incremental partial-result updates
+        # Async wait for process with incremental partial-result updates.
+        # The partial-result load touches disk, so run it off the event loop
+        # to avoid stalling other handlers while a batch of jobs polls.
         while process.poll() is None:
             await asyncio.sleep(2)
-            partial = load_partial_result(job_id, output_dir)
+            partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
             if partial:
                 jobs[job_id]['result'] = partial
 
@@ -213,8 +216,8 @@ async def run_job(job_id, job_data):
             jobs[job_id]['logs'].append("Process finished successfully.")
             # Backward-compat rescue if outputs were written to OUTPUT_DIR root
             if not glob.glob(os.path.join(output_dir, "*_metadata.json")):
-                relocate_root_job_artifacts(job_id, output_dir, OUTPUT_DIR)
-            final = load_final_result(job_id, output_dir)
+                await asyncio.to_thread(relocate_root_job_artifacts, job_id, output_dir, OUTPUT_DIR)
+            final = await asyncio.to_thread(load_final_result, job_id, output_dir)
             if final:
                 jobs[job_id]['result'] = final
             else:
@@ -308,16 +311,13 @@ async def process_endpoint(
         raw_ext = os.path.splitext(file.filename or "")[1].lower()
         safe_ext = raw_ext if raw_ext in {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"} else ".mp4"
         input_path = os.path.join(UPLOAD_DIR, f"{job_id}{safe_ext}")
-        size = 0
-        limit_bytes = MAX_FILE_SIZE_MB * 1024 * 1024
-        with open(input_path, "wb") as buffer:
-            while content := await file.read(1024 * 1024):
-                size += len(content)
-                if size > limit_bytes:
-                    os.remove(input_path)
-                    shutil.rmtree(job_output_dir)
-                    raise HTTPException(status_code=413, detail=f"File too large. Max size {MAX_FILE_SIZE_MB}MB")
-                buffer.write(content)
+        try:
+            await stream_upload_within_limit(file, input_path, MAX_FILE_SIZE_MB * 1024 * 1024)
+        except FileTooLarge as exc:
+            # The helper already removed the partial upload; we still own the
+            # per-job output dir, so clean that up before surfacing the 413.
+            shutil.rmtree(job_output_dir, ignore_errors=True)
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
 
     try:
         cmd = build_main_cmd(

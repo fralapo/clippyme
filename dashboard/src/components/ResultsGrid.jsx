@@ -16,6 +16,11 @@ const SORT_OPTIONS = [
   { id: 'duration_desc', label: 'Longest first' },
 ];
 
+// Stable empty-state reference so a clip without persisted state always gets
+// the SAME object identity across renders — otherwise `|| {}` would mint a
+// fresh object each render and defeat React.memo on ResultCard.
+const EMPTY_CLIP_STATE = Object.freeze({});
+
 /**
  * Final-state view of the Dashboard tab: header, clip grid, optional error
  * banner with retry, and a collapsed logs panel.
@@ -664,10 +669,10 @@ export default function ResultsGrid({
                 totalClips={visibleClips.length}
                 jobId={jobId}
                 preselections={preselections}
-                onPlay={(time) => onClipPlay(time)}
+                onPlay={onClipPlay}
                 onPause={onClipPause}
-                clipState={clipStates[originalIndex] || {}}
-                onUpdateState={(patch) => onUpdateClipState(originalIndex, patch)}
+                clipState={clipStates[originalIndex] || EMPTY_CLIP_STATE}
+                onUpdateClipState={onUpdateClipState}
               />
             </div>
           ))}

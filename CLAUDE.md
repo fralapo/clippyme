@@ -255,6 +255,12 @@ The apply buttons are labelled **"Apply Hook"** / **"Apply Karaoke Subtitles"** 
 
 **`SmoothedCameraman`**: adaptive smoothing (`SLOW=0.08`, `FAST=0.30` for jumps >60% of crop_width), X+Y axis tracking, dynamic 1.0–1.6× zoom based on face height ratio, YOLO person bbox fallback aiming at upper 15% (head zone) when no face detected. `DetectionSmoother` rolling average (window=5) before MAR.
 
+**Lost-subject recovery (always on)**: when no fresh target arrives for `REFRAME_LOST_HOLD` frames (default 90 ≈ 3 s) in a TRACK/WIDE scene, the camera eases its target back toward the source center at `REFRAME_LOST_DRIFT`/frame (default 0.05) and gently zooms out, instead of freezing on empty space.
+
+**Pure decision math lives in `reframe_ops.py`** (no cv2 import → host-unit-tested): `iou`/`associate_subject` (IoU identity association), `OneEuroFilter` (1€ adaptive smoother), `drift_to_center`, `salient_crop_center`, `savgol_1d` (for a future two-stage global-trajectory smoothing pass). `SmoothedCameraman` is thin cv2 glue that calls in. Add new reframe logic here, not in `main.py`, so it stays testable on the host.
+
+**Optional 1€ smoother**: set `REFRAME_SMOOTHER=euro` to replace the two-speed EMA with the 1€ filter (`REFRAME_EURO_MINCUTOFF` default 0.014 = smoothness floor; `REFRAME_EURO_BETA` default 0.0008 = speed responsiveness). Default (blank) keeps the EMA. **A/B procedure**: process the same clip with and without the flag (env vars are in `docker-compose.yml`), compare camera feel — lower `MINCUTOFF` = smoother/laggier at rest, higher `BETA` = snappier on fast speaker switches. `associate_subject` (IoU identity) and `salient_crop_center` (saliency crop) are implemented + tested but intentionally unwired — see the reframe design spec.
+
 ## Pipeline Post-processing (per clip)
 
 After `process_video_to_vertical()`:

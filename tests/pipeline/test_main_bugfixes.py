@@ -7,6 +7,11 @@ the cv2/mediapipe/yt-dlp runtime deps).
 import os
 import pytest
 
+# main.py pulls cv2/scenedetect/mediapipe at import time; skip the whole module
+# on hosts that lack the heavy CV runtime (it runs in the Docker backend image).
+pytest.importorskip("scenedetect")
+pytestmark = pytest.mark.integration
+
 from clippyme.pipeline.main import _resolve_cookies_path
 
 

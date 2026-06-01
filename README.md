@@ -1,12 +1,52 @@
+<a id="readme-top"></a>
+
 <div align="center">
-  <img src="dashboard/public/logo.svg" alt="ClippyMe Logo" width="80" />
+  <img src="dashboard/public/logo.svg" alt="ClippyMe logo" width="90" />
+
+  <h1>ClippyMe</h1>
+
+  <p><b>Self-hosted AI pipeline that turns long videos (YouTube or upload) into viral 9:16 vertical shorts.</b></p>
+
+  <p>
+    <img src="https://img.shields.io/github/license/fralapo/clippyme?style=flat-square&color=3b82f6" alt="MIT license" />
+    <img src="https://img.shields.io/badge/python-3.11-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.11" />
+    <img src="https://img.shields.io/badge/FastAPI-009688?style=flat-square&logo=fastapi&logoColor=white" alt="FastAPI" />
+    <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 18" />
+    <img src="https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker ready" />
+    <img src="https://img.shields.io/github/stars/fralapo/clippyme?style=flat-square&color=eab308" alt="GitHub stars" />
+  </p>
+
+  <p>
+    <a href="#quick-start-docker">Quick start</a> ·
+    <a href="#configuration">Configuration</a> ·
+    <a href="#api">API</a> ·
+    <a href="#security-posture">Security</a> ·
+    <a href="https://github.com/fralapo/clippyme/issues">Report a bug</a>
+  </p>
 </div>
 
-# ClippyMe
-
-Self-hosted AI video pipeline that turns long-form videos (YouTube links or local uploads) into viral 9:16 vertical shorts. Fork of OpenShorts, hardened and extended.
+Fork of OpenShorts, hardened and extended: cloud-or-local transcription, Gemini viral-moment detection, active-speaker 9:16 reframing, compose-on-download editing, and one-click multi-platform scheduling.
 
 > Status: personal/self-hosted project. Safe to run on a trusted LAN. **Do not expose port 8000 to the public internet** without adding an authentication layer in front of it.
+
+<details>
+<summary><b>Table of contents</b></summary>
+
+- [What it does](#what-it-does)
+- [Stack](#stack)
+- [Quick start (Docker)](#quick-start-docker)
+- [Local development (no Docker)](#local-development-no-docker)
+- [Configuration](#configuration)
+- [Repository layout](#repository-layout)
+- [API](#api)
+- [Editing toggles (compose-on-download)](#editing-toggles-compose-on-download)
+- [Reframing](#reframing)
+- [Publishing (Zernio)](#publishing-zernio)
+- [Security posture](#security-posture)
+- [CPU vs GPU](#cpu-vs-gpu)
+- [Acknowledgements](#acknowledgements)
+
+</details>
 
 ---
 
@@ -40,7 +80,7 @@ Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 ## Quick start (Docker)
 
 ```bash
-git clone https://github.com/<you>/clippyme.git
+git clone https://github.com/fralapo/clippyme.git
 cd clippyme
 docker compose up --build
 ```
@@ -179,6 +219,8 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 
 Static mounts: `/videos`, `/thumbnails`, `/gallery`, `/video`, `/fonts` (read-only).
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
 
 ## Editing toggles (compose-on-download)
@@ -234,6 +276,8 @@ This project has been audited; the current state is suitable for **trusted LAN d
 - `ZERNIO_BASE_URL` env override is allowlisted to `https://*.zernio.com`.
 
 **Not yet in place** (required before exposing publicly): authentication layer, rate limiting, CSRF, full reverse proxy with TLS + security headers.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import HistoryTab from './components/HistoryTab';
 import SettingsTab from './components/SettingsTab';
 import PipelineSteps from './components/PipelineSteps';
@@ -82,15 +82,18 @@ function App() {
   }, [jobId]);
   const { states: clipStates, updateClip: updateClipState } = useClipStates(jobId);
 
-  const handleClipPlay = (startTime) => {
+  // Memoized so the stable refs flow down ResultsGrid → React.memo(ResultCard)
+  // and don't force every card to re-render on each 2s poll tick. State setters
+  // are stable, so [] deps are correct.
+  const handleClipPlay = useCallback((startTime) => {
     setSyncedTime(startTime);
     setIsSyncedPlaying(true);
     setSyncTrigger(prev => prev + 1);
-  };
+  }, []);
 
-  const handleClipPause = () => {
+  const handleClipPause = useCallback(() => {
     setIsSyncedPlaying(false);
-  };
+  }, []);
 
   useSessionPersistence({ status, jobId, results, processingMedia, activeTab, preselections });
 

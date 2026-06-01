@@ -213,6 +213,38 @@ SKIP_POLISH_IF_SAVED_OVER = float(os.environ.get("AE_SKIP_POLISH_THRESHOLD", "8.
 # same source 3-4 times for a single download.
 _PROBE_CACHE: dict[tuple, dict] = {}
 
+# Same idea for plain duration probes (format=duration), which the polish
+# pass + stats logging hit several times per clip on output files.
+_DURATION_CACHE: dict[tuple, float] = {}
+
+_CACHE_LIMIT = 256
+
+
+def _probe_cache_key(path: str):
+    """(abspath, size, mtime) key; None if the file can't be stat'd."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (os.path.abspath(path), st.st_size, st.st_mtime)
+
+
+def _cache_get(cache: dict, key):
+    """LRU read: return the cached value and mark `key` most-recently-used."""
+    if key in cache:
+        val = cache.pop(key)
+        cache[key] = val  # reinsert at the end (most recently used)
+        return val
+    return None
+
+
+def _cache_put(cache: dict, key, value, limit: int = _CACHE_LIMIT) -> None:
+    """LRU write: insert and evict the least-recently-used entry past `limit`."""
+    cache.pop(key, None)
+    cache[key] = value
+    if len(cache) > limit:
+        cache.pop(next(iter(cache)))  # front == least recently used
+
 # Cache for `auto-editor --version` output. Refreshed when the binary
 # changes (auto_editor_updater swaps a new file in).
 _AE_VERSION_CACHE: dict[str, Optional[str]] = {}
@@ -412,12 +444,10 @@ def _probe_video(clip_path: str) -> Optional[dict]:
     Returns a dict with keys: fps_num, fps_den, width, height, samplerate.
     Returns None on failure (caller should fall back).
     """
-    try:
-        st = os.stat(clip_path)
-        cache_key = (os.path.abspath(clip_path), st.st_size, st.st_mtime)
-    except OSError:
+    cache_key = _probe_cache_key(clip_path)
+    if cache_key is None:
         return None
-    cached = _PROBE_CACHE.get(cache_key)
+    cached = _cache_get(_PROBE_CACHE, cache_key)
     if cached is not None:
         return cached
 
@@ -465,10 +495,7 @@ def _probe_video(clip_path: str) -> Optional[dict]:
         "height": height,
         "samplerate": samplerate,
     }
-    _PROBE_CACHE[cache_key] = result
-    # Bound the cache so it doesn't leak memory in long-running workers.
-    if len(_PROBE_CACHE) > 256:
-        _PROBE_CACHE.pop(next(iter(_PROBE_CACHE)))
+    _cache_put(_PROBE_CACHE, cache_key, result)
     return result
 
 
@@ -690,6 +717,14 @@ def _audio_polish_pass(input_path: str) -> tuple[str, float]:
 
 
 def _probe_duration(path: str) -> float:
+    # Cached per (path, size, mtime): the polish pass + stats logging probe
+    # the same output files repeatedly within a single smart_cut call.
+    cache_key = _probe_cache_key(path)
+    if cache_key is not None:
+        cached = _cache_get(_DURATION_CACHE, cache_key)
+        if cached is not None:
+            return cached
+
     rc, out, _ = _run([
         "ffprobe", "-v", "error",
         "-show_entries", "format=duration",
@@ -699,9 +734,12 @@ def _probe_duration(path: str) -> float:
     if rc != 0:
         return 0.0
     try:
-        return float(out.strip())
+        duration = float(out.strip())
     except (ValueError, AttributeError):
         return 0.0
+    if cache_key is not None:
+        _cache_put(_DURATION_CACHE, cache_key, duration)
+    return duration
 
 
 # ---------------------------------------------------------------------------

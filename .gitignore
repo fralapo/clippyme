@@ -11,6 +11,13 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
+
+# graphify knowledge-graph output
+graphify-out/
+
+# pytest
+.pytest_cache/
 
 # Temporary files / runtime dirs
 temp_*

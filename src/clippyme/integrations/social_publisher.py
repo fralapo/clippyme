@@ -332,8 +332,17 @@ def publish_clip(
     _validate_platform_targets(platform_targets)
     if schedule_mode not in ("now", "auto", "manual"):
         raise ValueError(f"unknown schedule_mode: {schedule_mode}")
-    if schedule_mode == "manual" and not scheduled_for:
-        raise ValueError("schedule_mode='manual' requires scheduled_for")
+    if schedule_mode == "manual":
+        if not scheduled_for:
+            raise ValueError("schedule_mode='manual' requires scheduled_for")
+        try:
+            # Accept a trailing 'Z' (UTC) by normalising to +00:00, which
+            # datetime.fromisoformat understands on all supported Pythons.
+            datetime.fromisoformat(scheduled_for.replace("Z", "+00:00"))
+        except (ValueError, AttributeError) as exc:
+            raise ValueError(
+                f"scheduled_for must be an ISO 8601 timestamp: {scheduled_for!r}"
+            ) from exc
 
     # Caption fallback: TikTok and Instagram have no concept of a separate
     # "title" field — the text shown under the video is whatever we pass as
