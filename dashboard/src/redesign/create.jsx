@@ -2,19 +2,39 @@
 import { useState, useRef } from 'react';
 import { Icon, Social, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
 import { Hero } from './chrome';
-import { PRESETS, SUBTITLE_PRESETS, LANGUAGES } from './data';
+import { SUBTITLE_PRESETS, LANGUAGES } from './data';
 
-function PresetCards({ active, onPick }) {
+function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelete, onSaveCurrent }) {
+  const corner = { position: 'absolute', top: 12, left: 12, display: 'flex', gap: 8, zIndex: 2 };
   return (
     <div className="preset-row">
-      {PRESETS.map((p) => (
+      {presets.map((p) => (
         <button key={p.id} type="button" className={'preset' + (active === p.id ? ' on' : '')} onClick={() => onPick(p)}>
           <span className="pcheck"><Icon n="check" /></span>
+          <span style={corner}>
+            <span title={defaultId === p.id ? 'Default — click to unset' : 'Set as default'}
+              onClick={(e) => { e.stopPropagation(); onSetDefault(p.id); }}
+              style={{ cursor: 'pointer', color: defaultId === p.id ? 'var(--brand-amber)' : 'var(--fg-4)', display: 'flex' }}>
+              <Icon n="star" style={{ width: 14, height: 14 }} />
+            </span>
+            {p.user && (
+              <span title="Delete preset" onClick={(e) => { e.stopPropagation(); onDelete(p.id); }}
+                style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'flex' }}>
+                <Icon n="trash-2" style={{ width: 14, height: 14 }} />
+              </span>
+            )}
+          </span>
           <span className="pico"><Icon n={p.icon} /></span>
-          <span className="pt">{p.title}</span>
+          <span className="pt">{p.title}{defaultId === p.id && <span style={{ color: 'var(--brand-amber)', fontSize: 11, marginLeft: 6 }}>· default</span>}</span>
           <span className="pd">{p.desc}</span>
         </button>
       ))}
+      <button type="button" className="preset" onClick={onSaveCurrent}
+        style={{ borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+        <span className="pico"><Icon n="plus" /></span>
+        <span className="pt">Save current</span>
+        <span className="pd">Store these settings as your own preset</span>
+      </button>
     </div>
   );
 }
@@ -197,8 +217,9 @@ function OptionsPanel({ opts, set }) {
       </div>
       <div className="opt">
         <div className="oico"><Icon n="crop" /></div>
-        <div className="otxt"><div className="ot">Aspect ratio</div><div className="od">Vertical shorts — the only output format</div></div>
-        <div className="r"><span className="badge badge-blue">9:16</span></div>
+        <div className="otxt"><div className="ot">Aspect ratio</div><div className="od">9:16 vertical · 1:1 square · 16:9 horizontal</div></div>
+        <div className="r"><Segmented value={opts.aspect} onChange={(id) => set({ aspect: id })}
+          options={[{ id: '9:16', label: '9:16' }, { id: '1:1', label: '1:1' }, { id: '16:9', label: '16:9' }]} /></div>
       </div>
 
       <div className="label" style={{ margin: '16px 0 4px' }}>AI &amp; reframe</div>
@@ -233,7 +254,7 @@ function OptionsPanel({ opts, set }) {
 
 function SummaryBar({ opts, ready, count, onCreate }) {
   const chips = [
-    '9:16',
+    opts.aspect || '9:16',
     opts.clipsAuto ? 'auto clips' : `~${opts.clips} clips`,
     opts.detect ? 'viral detect' : 'whole video',
     opts.reframe && 'reframe',
@@ -256,7 +277,7 @@ function SummaryBar({ opts, ready, count, onCreate }) {
   );
 }
 
-export function CreateView({ opts, set, onPickPreset, onCreate }) {
+export function CreateView({ opts, set, onPickPreset, onCreate, presets, defaultId, onSetDefault, onDelete, onSaveCurrent }) {
   const batchCount = opts.batch.split('\n').filter((l) => l.trim()).length + (opts.batchFiles || []).length;
   const ready = opts.mode === 'single'
     ? (opts.source === 'url' ? !!opts.url : !!opts.file)
@@ -267,8 +288,9 @@ export function CreateView({ opts, set, onPickPreset, onCreate }) {
     <div className="container fade-in">
       <Hero eyebrow="Drop a link · get scroll-stopping shorts" line1="Long videos in." grad="Viral shorts out."
         sub="Paste a YouTube link and ClippyMe does the rest: transcribes it, scores every moment, reframes to 9:16, cuts the silence, and queues the best clips to post." />
-      <div className="label" style={{ marginBottom: 12 }}>Start from a recipe</div>
-      <PresetCards active={opts.preset} onPick={onPickPreset} />
+      <div className="label" style={{ marginBottom: 12 }}>Start from a preset — or set everything by hand below</div>
+      <PresetCards presets={presets} active={opts.preset} defaultId={defaultId}
+        onPick={onPickPreset} onSetDefault={onSetDefault} onDelete={onDelete} onSaveCurrent={onSaveCurrent} />
       <div className="create-grid">
         <SourcePanel opts={opts} set={set} />
         <OptionsPanel opts={opts} set={set} />

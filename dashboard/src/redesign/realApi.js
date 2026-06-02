@@ -167,6 +167,7 @@ export async function discoverZernioAccounts() {
 export function optsToPreselections(opts) {
   return {
     reframe_mode: opts.reframe ? 'auto' : 'disabled',
+    aspect: opts.aspect || '9:16',
     language: opts.language,
     no_zoom: !opts.zoom,
     skip_analysis: !opts.detect,

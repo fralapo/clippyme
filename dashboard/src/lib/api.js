@@ -35,6 +35,7 @@ export async function submitProcessJob(data, apiKey) {
   // Forward reframe_mode unconditionally so the backend echoes the user's
   // pre-selection instead of relying on its own default (which could drift).
   const reframeMode = data.preselections?.reframe_mode;
+  const aspect = data.preselections?.aspect;
   const noZoom = data.preselections?.no_zoom === true;
   const skipAnalysis = data.preselections?.skip_analysis === true;
 
@@ -43,6 +44,7 @@ export async function submitProcessJob(data, apiKey) {
     const jsonBody = { url: data.payload };
     if (data.instructions) jsonBody.instructions = data.instructions;
     if (reframeMode) jsonBody.reframe_mode = reframeMode;
+    if (aspect && aspect !== '9:16') jsonBody.aspect = aspect;
     if (language) jsonBody.language = language;
     if (noZoom) jsonBody.no_zoom = true;
     if (skipAnalysis) jsonBody.skip_analysis = true;
@@ -51,6 +53,7 @@ export async function submitProcessJob(data, apiKey) {
     const formData = new FormData();
     formData.append('file', data.payload);
     if (reframeMode) formData.append('reframe_mode', reframeMode);
+    if (aspect && aspect !== '9:16') formData.append('aspect', aspect);
     if (language) formData.append('language', language);
     if (noZoom) formData.append('no_zoom', 'true');
     if (skipAnalysis) formData.append('skip_analysis', 'true');
@@ -73,6 +76,9 @@ export async function submitBatchJob(data, apiKey) {
   const batchBody = { urls: data.urls, instructions: data.instructions };
   if (data.preselections?.reframe_mode) {
     batchBody.reframe_mode = data.preselections.reframe_mode;
+  }
+  if (data.preselections?.aspect && data.preselections.aspect !== '9:16') {
+    batchBody.aspect = data.preselections.aspect;
   }
   const language = pickLanguage(data.preselections);
   if (language) batchBody.language = language;

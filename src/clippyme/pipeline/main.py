@@ -1978,8 +1978,18 @@ if __name__ == '__main__':
                              "When unset, Deepgram uses DEEPGRAM_LANGUAGE from env (default 'multi' "
                              "for native EN+IT code-switching). Single-language mode improves both "
                              "transcription accuracy AND speaker diarization reliability.")
+    parser.add_argument('--aspect', choices=['9:16', '1:1', '16:9'], default='9:16',
+                        help="Output aspect ratio: 9:16 vertical (default), 1:1 square, or 16:9 horizontal.")
 
     args = parser.parse_args()
+
+    # Output aspect ratio drives the crop dimensions + SmoothedCameraman crop
+    # box. ASPECT_RATIO is a module global read by process_video_to_vertical and
+    # SmoothedCameraman; this runs at module scope once per job (subprocess), so
+    # rebinding it here from the arg applies to every clip in this run.
+    ASPECT_RATIO = {'9:16': 9 / 16, '1:1': 1.0, '16:9': 16 / 9}.get(args.aspect, 9 / 16)
+    if args.aspect != '9:16':
+        print(f"📐 Aspect ratio: {args.aspect} ({ASPECT_RATIO:.3f})")
 
     # Per-job language override — propagate to the env BEFORE any transcription
     # call so deepgram_transcribe.transcribe_with_deepgram reads the user's

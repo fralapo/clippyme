@@ -31,10 +31,13 @@ def build_main_cmd(
     language: str | None = None,
     no_zoom: bool = False,
     skip_analysis: bool = False,
+    aspect: str | None = None,
 ) -> list[str]:
     """Build a `python -u -m clippyme.pipeline.main ...` command line for a single processing job."""
     if reframe_mode is not None and reframe_mode not in ALLOWED_REFRAME_MODES:
         raise ValueError(f"invalid reframe_mode: {reframe_mode!r}")
+    if aspect is not None and aspect not in ("9:16", "1:1", "16:9"):
+        raise ValueError(f"invalid aspect: {aspect!r}")
     if instructions is not None and len(instructions) > MAX_INSTRUCTIONS_LEN:
         raise ValueError(f"instructions too long (>{MAX_INSTRUCTIONS_LEN} chars)")
     if language is not None:
@@ -62,6 +65,8 @@ def build_main_cmd(
         cmd.extend(["--instructions", instructions])
     if reframe_mode and reframe_mode != "auto":
         cmd.extend(["--reframe-mode", reframe_mode])
+    if aspect and aspect != "9:16":
+        cmd.extend(["--aspect", aspect])
     if language and language.strip() and language.strip() != "multi":
         cmd.extend(["--language", language.strip()])
     if no_zoom:

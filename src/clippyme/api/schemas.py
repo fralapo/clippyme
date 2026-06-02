@@ -13,6 +13,7 @@ class ProcessRequest(BaseModel):
     # length cap).
     instructions: Optional[str] = Field(None, max_length=2000)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled)$")
+    aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
     language: Optional[str] = Field(None, max_length=16)
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
@@ -22,6 +23,7 @@ class BatchRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=20)
     instructions: Optional[str] = Field(None, max_length=2000)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled)$")
+    aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
     # Optional per-batch ASR language override. When omitted the pipeline
     # uses its default (Deepgram `multi` for EN+IT code-switching). Setting
     # this to a single-language code ("en", "it", "es", …) improves both

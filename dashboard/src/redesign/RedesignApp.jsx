@@ -14,6 +14,7 @@ import { PublishModal } from './publish';
 import { HistoryView, SettingsView, ApiKeyModal } from './views';
 import { CaptionEditModal } from './captions';
 import { optsToPreselections, restoreJob, cancelJob } from './realApi';
+import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from './presets';
 
 import { useJobSubmission } from '../hooks/useJobSubmission';
 import { useJobPolling } from '../hooks/useJobPolling';
@@ -74,7 +75,12 @@ export default function RedesignApp() {
   const [logs, setLogs] = useState([]);
   const [currentStep, setCurrentStep] = useState(null);
   const [processingMedia, setProcessingMedia] = useState(null);
-  const [opts, setOpts] = useState(DEFAULT_OPTS);
+  // Seed Create from the user's default preset (if any) so their preferred
+  // settings are already applied on load.
+  const [opts, setOpts] = useState(() => ({ ...DEFAULT_OPTS, ...(getDefaultPresetOpts() || {}) }));
+  const [presetsVersion, setPresetsVersion] = useState(0);
+  const [defaultPresetId, setDefaultPresetId] = useState(getDefaultPresetId());
+  const presetList = useMemo(() => allPresets(), [presetsVersion]);
   const [preselections, setPreselectionsRaw] = useState(null);
   const [confetti, setConfetti] = useState(false);
   const [toasts, setToasts] = useState([]);
@@ -103,6 +109,26 @@ export default function RedesignApp() {
   // recipe / manual-edit handling on opts
   const set = (patch) => setOpts((o) => ({ ...o, ...patch, preset: null }));
   const pickPreset = (p) => setOpts((o) => ({ ...o, ...p.opts, preset: p.id }));
+
+  const onSaveCurrentPreset = () => {
+    const name = window.prompt('Name this preset:');
+    if (!name || !name.trim()) return;
+    saveUserPreset(name.trim(), opts);
+    setPresetsVersion((v) => v + 1);
+    pushToast('success', `Preset "${name.trim()}" saved`);
+  };
+  const onSetDefaultPreset = (id) => {
+    const next = defaultPresetId === id ? null : id;
+    setDefaultPreset(next);
+    setDefaultPresetId(next);
+    pushToast('info', next ? 'Default preset set' : 'Default cleared');
+  };
+  const onDeletePreset = (id) => {
+    deleteUserPreset(id);
+    setPresetsVersion((v) => v + 1);
+    if (defaultPresetId === id) setDefaultPresetId(null);
+    pushToast('info', 'Preset deleted');
+  };
 
   useJobPolling({
     jobId,
@@ -209,7 +235,9 @@ export default function RedesignApp() {
       {confetti && <Confetti />}
 
       {tab === 'create' && status === 'idle' && (
-        <CreateView opts={opts} set={set} onPickPreset={pickPreset} onCreate={startJob} />
+        <CreateView opts={opts} set={set} onPickPreset={pickPreset} onCreate={startJob}
+          presets={presetList} defaultId={defaultPresetId}
+          onSaveCurrent={onSaveCurrentPreset} onSetDefault={onSetDefaultPreset} onDelete={onDeletePreset} />
       )}
       {tab === 'create' && (status === 'processing' || status === 'error') && (
         <ProcessingView media={processingMedia} status={status} logs={logs} step={currentStep}

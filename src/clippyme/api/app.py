@@ -248,6 +248,7 @@ async def process_endpoint(
     # already using FastAPI's File/Form dependencies.
     instructions = None
     reframe_mode = None
+    aspect = None
     language = None
     no_zoom = False
     skip_analysis = False
@@ -263,6 +264,7 @@ async def process_endpoint(
         url = validated.url
         instructions = validated.instructions
         reframe_mode = validated.reframe_mode
+        aspect = validated.aspect
         language = validated.language
         no_zoom = bool(validated.no_zoom)
         skip_analysis = bool(validated.skip_analysis)
@@ -271,6 +273,7 @@ async def process_endpoint(
     if "multipart/form-data" in content_type:
         form = await request.form()
         reframe_mode = form.get("reframe_mode", reframe_mode)
+        aspect = form.get("aspect", aspect)
         language = form.get("language", language)
         # Also honour the optional instructions field in multipart mode
         # so drag-and-drop uploads can pass AI directives just like URL
@@ -285,6 +288,7 @@ async def process_endpoint(
             ProcessRequest.model_validate({
                 "url": "file://upload",
                 "reframe_mode": reframe_mode or None,
+                "aspect": aspect or None,
                 "language": language or None,
                 "instructions": instructions or None,
                 "no_zoom": no_zoom,
@@ -326,6 +330,7 @@ async def process_endpoint(
             output_dir=job_output_dir,
             instructions=instructions,
             reframe_mode=reframe_mode,
+            aspect=aspect,
             cookies_path=os.path.join("data", "cookies.txt"),
             language=language,
             no_zoom=no_zoom,
@@ -377,6 +382,7 @@ async def batch_process(req: BatchRequest, request: Request):
                 output_dir=job_output_dir,
                 instructions=req.instructions,
                 reframe_mode=req.reframe_mode,
+                aspect=getattr(req, "aspect", None),
                 cookies_path=os.path.join("data", "cookies.txt"),
                 language=getattr(req, "language", None),
                 no_zoom=bool(getattr(req, "no_zoom", False)),

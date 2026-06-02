@@ -10,7 +10,7 @@ import {
   Captions, Type, SlidersHorizontal, Crop, Flame, UserRound, Mic, Plus, ArrowLeft,
   Download, Send, TrendingUp, Play, CheckSquare, X, AudioLines, CalendarClock,
   CalendarCheck, PartyPopper, Loader, Trash2, ChevronRight, Eye, EyeOff, KeyRound,
-  Rss, Cookie, Info,
+  Rss, Cookie, Info, Star,
 } from 'lucide-react';
 
 const MAP = {
@@ -26,7 +26,7 @@ const MAP = {
   'party-popper': PartyPopper, loader: Loader, 'trash-2': Trash2,
   'chevron-right': ChevronRight, eye: Eye, 'eye-off': EyeOff, 'key-round': KeyRound,
   rss: Rss, cookie: Cookie, 'circle-check': CircleCheck, 'triangle-alert': TriangleAlert,
-  info: Info,
+  info: Info, star: Star,
 };
 
 export function Icon({ n, cls, style }) {
