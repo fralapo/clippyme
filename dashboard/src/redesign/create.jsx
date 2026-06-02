@@ -225,7 +225,7 @@ function OptionsPanel({ opts, set }) {
       <div className="label" style={{ margin: '16px 0 4px' }}>AI &amp; reframe</div>
       <OptRow icon="sparkles" label="Find viral moments" desc="Gemini scores the transcript · off = whole video"
         on={opts.detect} set={(v) => set({ detect: v })} />
-      <OptRow icon="scan-face" label="Auto reframe" desc="Face-tracking crop to 9:16 · off = letterbox"
+      <OptRow icon="scan-face" label="Auto reframe" desc={`Face-tracking crop to ${opts.aspect || '9:16'} · off = letterbox`}
         on={opts.reframe} set={(v) => set({ reframe: v })} />
       <OptRow icon="scissors" label="Smart cut" desc="Remove silence & filler words"
         on={opts.smartcut} set={(v) => set({ smartcut: v })} />
