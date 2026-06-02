@@ -21,6 +21,23 @@ export function downloadClip(clip, index) {
   document.body.removeChild(a);
 }
 
+export async function cancelJob(jobId) {
+  try { await fetch(getApiUrl(`/api/cancel/${jobId}`), { method: 'POST' }); } catch { /* best-effort */ }
+}
+
+export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params }) {
+  const res = await fetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ toggles, hook_params, subtitle_params }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json(); // { composed_url }
+}
+
 export async function reframeClip(jobId, index, mode) {
   const res = await fetch(getApiUrl(`/api/reframe/${jobId}/${index}`), {
     method: 'POST',

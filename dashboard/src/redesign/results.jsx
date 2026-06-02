@@ -2,7 +2,9 @@
 // download + publish + captions) and multi-select for batch actions.
 import { useState } from 'react';
 import { Icon, Btn, Badge } from './primitives';
-import { clipVideoSrc, fmtDuration, downloadClip, reframeClip } from './realApi';
+import { clipVideoSrc, fmtDuration, downloadClip, reframeClip, composeClip } from './realApi';
+import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
+import { getApiUrl } from '../config';
 
 function scoreTone(s) {
   if (s >= 80) return 'teal';
@@ -10,12 +12,41 @@ function scoreTone(s) {
   return 'danger';
 }
 
-function ClipCard({ clip, index, jobId, state, onUpdate, selectMode, onPublish, onCaptions, pushToast }) {
+function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMode, onPublish, onCaptions, pushToast }) {
   const [reframing, setReframing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const selected = state?.selected !== false;
   const score = Math.round(clip.viral_score || 0);
   const mode = state?.reframeMode || clip.reframe_mode || 'auto';
   const title = clip.video_title_for_youtube_short || `Clip ${index + 1}`;
+
+  const doDownload = async (e) => {
+    e.stopPropagation();
+    if (downloading) return;
+    const toggles = state?.toggles ?? seedToggles(preselections);
+    const anyActive = Object.values(toggles || {}).some(Boolean);
+    if (!anyActive) { downloadClip(clip, index); return; }  // nothing to compose → raw
+    setDownloading(true);
+    try {
+      const hook = state?.hookParams ?? seedHookParams(clip, preselections);
+      const subs = state?.subtitleParams ?? seedSubtitleParams(preselections);
+      const { composed_url } = await composeClip(jobId, index, {
+        toggles,
+        hook_params: toggles.hook ? hook : {},
+        subtitle_params: toggles.subtitles ? subs : {},
+      });
+      const href = composed_url.startsWith('http') ? composed_url : `${getApiUrl(composed_url)}`;
+      const a = document.createElement('a');
+      a.href = href; a.download = `clip_${index + 1}.mp4`; a.style.display = 'none';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      pushToast?.('success', 'Composed clip downloaded');
+    } catch {
+      pushToast?.('warn', 'Compose failed — downloading the raw clip');
+      downloadClip(clip, index);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const cycleReframe = async (e) => {
     e.stopPropagation();
@@ -56,7 +87,7 @@ function ClipCard({ clip, index, jobId, state, onUpdate, selectMode, onPublish, 
       <div className="clip-foot">
         <span className="ttl" title={title}>{title}</span>
         <span className="mini" title="Edit captions" onClick={(e) => { e.stopPropagation(); onCaptions(clip, index); }}><Icon n="captions" /></span>
-        <span className="mini" title="Download" onClick={(e) => { e.stopPropagation(); downloadClip(clip, index); }}><Icon n="download" /></span>
+        <span className="mini" title="Download (applies active toggles)" onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></span>
         <span className="mini" title="Publish" onClick={(e) => { e.stopPropagation(); onPublish({ ...clip, _idx: index }); }}><Icon n="send" /></span>
       </div>
     </div>
@@ -105,7 +136,7 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
       <div className="results-grid">
         {visible.map(({ c, i }) => (
           <ClipCard key={c.original_index ?? i} clip={c} index={i} jobId={jobId}
-            state={clipStates[i]} onUpdate={onUpdateClipState} selectMode={selectMode}
+            state={clipStates[i]} preselections={preselections} onUpdate={onUpdateClipState} selectMode={selectMode}
             onPublish={onPublish} onCaptions={onCaptions} pushToast={pushToast} />
         ))}
       </div>

@@ -1,7 +1,7 @@
 // ClippyMe redesign — HistoryView + SettingsView + ApiKeyModal, wired to the
 // real backend (history list/restore/delete; config keys, cookies, Zernio).
 import { useState, useEffect } from 'react';
-import { Icon, Btn, Badge, Switch, Panel } from './primitives';
+import { Icon, Btn, Badge, Switch, Segmented, Panel } from './primitives';
 import { Hero } from './chrome';
 import {
   getConfig, saveConfig, cookiesStatus, uploadCookies, deleteCookies,
@@ -95,11 +95,13 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
   const [zKey, setZKey] = useState('');
   const [accts, setAccts] = useState({ tiktok: '', instagram: '', youtube: '' });
   const [cookies, setCookies] = useState(!!cookiesConfigured);
+  const [provider, setProvider] = useState('deepgram');
 
   useEffect(() => {
-    getConfig().then((c) => setPresent({
-      gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY,
-    })).catch(() => {});
+    getConfig().then((c) => {
+      setPresent({ gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY });
+      if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
+    }).catch(() => {});
     getZernio().then((z) => { setZernioState(z); if (z.accounts) setAccts({ tiktok: '', instagram: '', youtube: '', ...z.accounts }); }).catch(() => {});
     cookiesStatus().then((s) => setCookies(!!s.configured)).catch(() => {});
   }, []);
@@ -120,6 +122,9 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
 
   const discover = async () => {
     try {
+      // Discovery runs against the *saved* key, so persist a freshly-typed one
+      // first — otherwise the backend 400s with "API key not configured".
+      if (zKey.trim()) { await saveZernio({ api_key: zKey.trim(), accounts: accts }); setZKey(''); }
       const { accounts } = await discoverZernioAccounts();
       const next = { ...accts };
       (accounts || []).forEach((a) => {
@@ -156,6 +161,13 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
           onChange={setDeepgram} onSave={() => deepgram && saveKeys({ DEEPGRAM_API_KEY: deepgram })} placeholder="dg_…" />
         <KeyRow icon="scan-face" name="Hugging Face token" desc="Speaker diarization models" value={hf} present={present.hf}
           onChange={setHf} onSave={() => hf && saveKeys({ HF_TOKEN: hf })} placeholder="hf_…" />
+        <div className="opt" style={{ borderBottom: 0 }}>
+          <div className="oico"><Icon n="audio-lines" /></div>
+          <div className="otxt"><div className="ot">Transcription engine</div><div className="od">Deepgram Nova-3 (cloud) · falls back to local Whisper if no key</div></div>
+          <div className="r"><Segmented value={provider}
+            onChange={(id) => { setProvider(id); saveKeys({ TRANSCRIPTION_PROVIDER: id }); }}
+            options={[{ id: 'deepgram', label: 'Deepgram' }, { id: 'whisper', label: 'Whisper' }]} /></div>
+        </div>
       </Panel>
 
       <Panel title="Publishing" sub="Push finished clips to socials via Zernio" icon="send" style={{ marginBottom: 18 }}>
