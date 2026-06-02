@@ -1,6 +1,6 @@
 // ClippyMe redesign — Create flow: presets + source + calm options recipe.
 import { useState, useRef } from 'react';
-import { Icon, Social, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
+import { Icon, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
 import { Hero } from './chrome';
 import { SUBTITLE_PRESETS, LANGUAGES } from './data';
 
@@ -12,7 +12,7 @@ function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelet
         <button key={p.id} type="button" className={'preset' + (active === p.id ? ' on' : '')} onClick={() => onPick(p)}>
           <span className="pcheck"><Icon n="check" /></span>
           <span style={corner}>
-            <span title={defaultId === p.id ? 'Default — click to unset' : 'Set as default'}
+            <span title={defaultId === p.id ? 'Default (click to unset)' : 'Set as default'}
               onClick={(e) => { e.stopPropagation(); onSetDefault(p.id); }}
               style={{ cursor: 'pointer', color: defaultId === p.id ? 'var(--brand-amber)' : 'var(--fg-4)', display: 'flex' }}>
               <Icon n="star" style={{ width: 14, height: 14 }} />
@@ -60,8 +60,8 @@ function SourcePanel({ opts, set }) {
           <div style={{ height: 14 }} />
           {opts.source === 'url' ? (
             <div className="input">
-              <Social n="youtube" color="7E7E8F" size={19} />
-              <input value={opts.url} placeholder="Paste a YouTube or video URL…"
+              <Icon n="link" />
+              <input value={opts.url} placeholder="Paste a video link (YouTube, Twitch, Vimeo, …)"
                 onChange={(e) => set({ url: e.target.value })} />
               <button type="button" className="paste" onClick={() => set({ url: 'https://youtube.com/watch?v=dQw4w9WgXcQ' })}>
                 <Icon n="clipboard" />Paste
@@ -234,7 +234,7 @@ function OptionsPanel({ opts, set }) {
       <div className="opt">
         <div className="oico"><Icon n="languages" /></div>
         <div className="otxt" style={{ flex: 1 }}><div className="ot">Spoken language</div><div className="od">Single language boosts accuracy</div></div>
-        <div className="r" style={{ flex: '0 0 150px' }}>
+        <div className="r" style={{ flex: '0 0 184px' }}>
           <select className="sel" value={opts.language} onChange={(e) => set({ language: e.target.value })}>
             {LANGUAGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
@@ -265,7 +265,7 @@ function SummaryBar({ opts, ready, count, onCreate }) {
   return (
     <div className="summary">
       <div>
-        <div className="s-main">{ready ? (opts.clipsAuto ? 'Ready — ClippyMe picks the best clips' : `Ready — aiming for ~${count} clips`) : 'Add a source to get started'}</div>
+        <div className="s-main">{ready ? (opts.clipsAuto ? 'ClippyMe will pick the best clips' : `Aiming for about ${count} clip${count === 1 ? '' : 's'}`) : 'Add a source to get started'}</div>
         <div className="s-sub">
           {chips.map((c) => <span key={c} className="chip">{c}</span>)}
         </div>
@@ -287,13 +287,13 @@ export function CreateView({ opts, set, onPickPreset, onCreate, presets, default
   return (
     <div className="container fade-in">
       <Hero eyebrow="Drop a link · get scroll-stopping shorts" line1="Long videos in." grad="Viral shorts out."
-        sub="Paste a YouTube link and ClippyMe does the rest: transcribes it, scores every moment, reframes to 9:16, cuts the silence, and queues the best clips to post." />
+        sub="Drop a link from YouTube, Twitch, or Vimeo (or upload a file) and ClippyMe does the rest: transcribes it, finds the best moments, reframes and trims them, and queues the top clips to post." />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         {/* Order: pick a source first, then optionally start from a preset,
             then fine-tune the recipe by hand. */}
         <SourcePanel opts={opts} set={set} />
         <div>
-          <div className="label" style={{ marginBottom: 12 }}>Start from a preset — or set everything by hand below</div>
+          <div className="label" style={{ marginBottom: 12 }}>Start from a preset, or set everything by hand below</div>
           <PresetCards presets={presets} active={opts.preset} defaultId={defaultId}
             onPick={onPickPreset} onSetDefault={onSetDefault} onDelete={onDelete} onSaveCurrent={onSaveCurrent} />
         </div>

@@ -44,7 +44,7 @@ export const SUBTITLE_PRESETS = [
 ];
 
 export const LANGUAGES = [
-  ['multi', 'Multi-language (auto)'], ['en', 'English'], ['it', 'Italiano'], ['es', 'Español'],
+  ['multi', 'Multi-language'], ['en', 'English'], ['it', 'Italiano'], ['es', 'Español'],
   ['fr', 'Français'], ['de', 'Deutsch'], ['pt', 'Português'], ['nl', 'Nederlands'],
   ['ja', '日本語'], ['ko', '한국어'], ['zh', '中文'], ['hi', 'हिन्दी'],
 ];
