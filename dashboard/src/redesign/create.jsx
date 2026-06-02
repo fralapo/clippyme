@@ -1,6 +1,6 @@
 // ClippyMe redesign — Create flow: presets + source + calm options recipe.
 import { useState, useRef } from 'react';
-import { Icon, Social, Btn, Panel, Segmented, Switch, Stepper, PlatPill, PLATFORMS } from './primitives';
+import { Icon, Social, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
 import { Hero } from './chrome';
 import { PRESETS, SUBTITLE_PRESETS, LANGUAGES } from './data';
 
@@ -179,7 +179,6 @@ function HookConfig({ opts, set }) {
 function OptionsPanel({ opts, set }) {
   const [subCfg, setSubCfg] = useState(false);
   const [hookCfg, setHookCfg] = useState(false);
-  const togglePlat = (k) => set({ platforms: { ...opts.platforms, [k]: !opts.platforms[k] } });
   return (
     <Panel title="Recipe" sub="What ClippyMe makes from each video" icon="sliders-horizontal">
       <div className="label" style={{ marginBottom: 4 }}>Output</div>
@@ -228,11 +227,6 @@ function OptionsPanel({ opts, set }) {
       <OptRow icon="type" label="Text hooks" desc="Add a scroll-stopping opener"
         on={opts.hooks} set={(v) => set({ hooks: v })} onConfig={() => setHookCfg(!hookCfg)} configActive={hookCfg} />
       {opts.hooks && hookCfg && <HookConfig opts={opts} set={set} />}
-
-      <div className="label" style={{ margin: '16px 0 10px' }}>Publish to · via Zernio</div>
-      <div className="plats">
-        {PLATFORMS.map((p) => <PlatPill key={p.id} {...p} on={opts.platforms[p.id]} onClick={() => togglePlat(p.id)} />)}
-      </div>
     </Panel>
   );
 }
@@ -247,14 +241,12 @@ function SummaryBar({ opts, ready, count, onCreate }) {
     opts.subtitles && (opts.subMode + ' subs'),
     opts.hooks && 'hooks',
   ].filter(Boolean);
-  const plats = Object.entries(opts.platforms).filter(([, v]) => v).map(([k]) => ({ tiktok: 'TikTok', ig: 'Reels', yt: 'Shorts' }[k]));
   return (
     <div className="summary">
       <div>
-        <div className="s-main">{ready ? `ClippyMe will create ~${count} clip${count === 1 ? '' : 's'}` : 'Add a source to get started'}</div>
+        <div className="s-main">{ready ? (opts.clipsAuto ? 'Ready — ClippyMe picks the best clips' : `Ready — aiming for ~${count} clips`) : 'Add a source to get started'}</div>
         <div className="s-sub">
           {chips.map((c) => <span key={c} className="chip">{c}</span>)}
-          {plats.length > 0 && <span className="chip" style={{ borderColor: 'rgba(10,129,217,.4)', color: 'var(--blue-300)' }}>→ {plats.join(' · ')}</span>}
         </div>
       </div>
       <div className="s-right">

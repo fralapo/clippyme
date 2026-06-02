@@ -43,6 +43,11 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
   const pct = failed ? 100 : Math.min(96, info.pct + clipBoost);
   const activeIdx = clips.length > 0 ? Math.max(info.idx, 4) : info.idx;
   const sourceLabel = media?.type === 'url' ? media.payload : (media?.payload?.name || media?.payload || 'your video');
+  // Honest phase word instead of a fabricated percentage (the backend streams
+  // logs, not a number — the bar below is a coarse estimate, the word is the
+  // ground truth from the detected step).
+  const STEP_WORD = { queued: 'queued', downloading: 'fetching', transcribing: 'transcribing', analyzing: 'scoring', processing: 'rendering' };
+  const phase = failed ? 'failed' : clips.length > 0 ? 'rendering' : (STEP_WORD[step] || 'working');
 
   return (
     <div className="container fade-in">
@@ -78,7 +83,7 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
           <Panel pad={true}>
             <div className="pbar-wrap">
               <div className="pbar"><i style={{ width: pct + '%', background: failed ? 'var(--danger)' : undefined }}></i></div>
-              <div className="pbar-pct tnum">{failed ? '—' : Math.round(pct) + '%'}</div>
+              <div className="pbar-pct" style={{ fontFamily: 'var(--font-mono)', fontSize: 13, letterSpacing: '.04em', minWidth: 110, color: failed ? 'var(--danger)' : 'var(--blue-300)' }}>{phase}</div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', marginBottom: 16, gap: 10 }}>
               <span className="label" style={{ textTransform: 'none', letterSpacing: 0, color: 'var(--fg-3)', fontFamily: 'var(--font-mono)' }}>

@@ -2,9 +2,7 @@
 // download + publish + captions) and multi-select for batch actions.
 import { useState } from 'react';
 import { Icon, Btn, Badge } from './primitives';
-import { clipVideoSrc, fmtDuration, downloadClip, reframeClip, composeClip } from './realApi';
-import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
-import { getApiUrl } from '../config';
+import { clipVideoSrc, fmtDuration, downloadClip, reframeClip, exportClip } from './realApi';
 
 function scoreTone(s) {
   if (s >= 80) return 'teal';
@@ -23,25 +21,12 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMo
   const doDownload = async (e) => {
     e.stopPropagation();
     if (downloading) return;
-    const toggles = state?.toggles ?? seedToggles(preselections);
-    const anyActive = Object.values(toggles || {}).some(Boolean);
-    if (!anyActive) { downloadClip(clip, index); return; }  // nothing to compose → raw
     setDownloading(true);
     try {
-      const hook = state?.hookParams ?? seedHookParams(clip, preselections);
-      const subs = state?.subtitleParams ?? seedSubtitleParams(preselections);
-      const { composed_url } = await composeClip(jobId, index, {
-        toggles,
-        hook_params: toggles.hook ? hook : {},
-        subtitle_params: toggles.subtitles ? subs : {},
-      });
-      const href = composed_url.startsWith('http') ? composed_url : `${getApiUrl(composed_url)}`;
-      const a = document.createElement('a');
-      a.href = href; a.download = `clip_${index + 1}.mp4`; a.style.display = 'none';
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      pushToast?.('success', 'Composed clip downloaded');
+      const kind = await exportClip(jobId, index, clip, state, preselections);
+      pushToast?.('success', kind === 'composed' ? 'Composed clip downloaded' : 'Clip downloaded');
     } catch {
-      pushToast?.('warn', 'Compose failed — downloading the raw clip');
+      pushToast?.('warn', 'Compose failed, downloaded the raw clip instead');
       downloadClip(clip, index);
     } finally {
       setDownloading(false);
@@ -97,13 +82,27 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMo
 export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUpdateClipState,
   doneIn, onBack, onPublish, onPublishAll, onCaptions, embedded, pushToast }) {
   const [selectMode, setSelectMode] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const visible = clips.map((c, i) => ({ c, i })).filter(({ i }) => !clipStates[i]?.deleted);
   const selectedIdx = visible.filter(({ i }) => clipStates[i]?.selected !== false).map(({ i }) => i);
   const topScore = clips.length ? Math.max(...clips.map((c) => Math.round(c.viral_score || 0))) : 0;
 
   const publishMany = (list) => onPublishAll(list.map(({ c, i }) => ({ ...c, _idx: i })));
-  const exportMany = (list) => list.forEach(({ c, i }) => downloadClip(c, i));
+  // Bulk export composes each clip (applying its toggles) just like the single
+  // download, sequentially so we don't spawn N ffmpeg jobs at once.
+  const exportMany = async (list) => {
+    if (exporting || !list.length) return;
+    setExporting(true);
+    let ok = 0;
+    for (const { c, i } of list) {
+      try { await exportClip(jobId, i, c, clipStates[i], preselections); ok += 1; }
+      catch { downloadClip(c, i); }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    setExporting(false);
+    pushToast?.('success', `Exported ${ok}/${list.length} clips`);
+  };
 
   return (
     <div className="container fade-in">
@@ -115,7 +114,7 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
           <Btn variant="secondary" size="sm" icon={selectMode ? 'x' : 'check-square'} onClick={() => setSelectMode((v) => !v)}>
             {selectMode ? 'Cancel' : 'Select'}
           </Btn>
-          {!selectMode && <Btn variant="secondary" size="sm" icon="download" onClick={() => exportMany(visible)}>Export all</Btn>}
+          {!selectMode && <Btn variant="secondary" size="sm" icon={exporting ? 'loader' : 'download'} disabled={exporting} onClick={() => exportMany(visible)}>{exporting ? 'Exporting…' : 'Export all'}</Btn>}
           {!selectMode && <Btn variant="grad" size="sm" icon="send" onClick={() => publishMany(visible)}>Publish all</Btn>}
         </div>
       </div>
@@ -125,8 +124,8 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
         <div className="actionbar">
           <span className="sel-n">{selectedIdx.length} selected</span>
           <div className="ab-right">
-            <Btn variant="secondary" size="sm" icon="download" disabled={!selectedIdx.length}
-              onClick={() => exportMany(visible.filter(({ i }) => clipStates[i]?.selected !== false))}>Export</Btn>
+            <Btn variant="secondary" size="sm" icon={exporting ? 'loader' : 'download'} disabled={!selectedIdx.length || exporting}
+              onClick={() => exportMany(visible.filter(({ i }) => clipStates[i]?.selected !== false))}>{exporting ? 'Exporting…' : 'Export'}</Btn>
             <Btn variant="grad" size="sm" icon="send" disabled={!selectedIdx.length}
               onClick={() => publishMany(visible.filter(({ i }) => clipStates[i]?.selected !== false))}>Publish {selectedIdx.length || ''}</Btn>
           </div>

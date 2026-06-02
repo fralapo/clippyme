@@ -2,6 +2,7 @@
 // the exact payloads the production components use, so the redesign talks to
 // the same endpoints with the same contracts.
 import { getApiUrl } from '../config';
+import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
 
 export function clipVideoSrc(clip, bust) {
   const url = clip?.video_url || '';
@@ -36,6 +37,27 @@ export async function composeClip(jobId, index, { toggles, hook_params, subtitle
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
   return res.json(); // { composed_url }
+}
+
+// Download a clip, composing first (subtitles/hook/smart-cut) when any toggle
+// is active for it, otherwise grabbing the raw clip. Shared by the per-clip
+// download button and bulk export. Returns 'composed' | 'raw'.
+export async function exportClip(jobId, index, clip, state, preselections) {
+  const toggles = state?.toggles ?? seedToggles(preselections);
+  const any = Object.values(toggles || {}).some(Boolean);
+  if (!any) { downloadClip(clip, index); return 'raw'; }
+  const hook = state?.hookParams ?? seedHookParams(clip, preselections);
+  const subs = state?.subtitleParams ?? seedSubtitleParams(preselections);
+  const { composed_url } = await composeClip(jobId, index, {
+    toggles,
+    hook_params: toggles.hook ? hook : {},
+    subtitle_params: toggles.subtitles ? subs : {},
+  });
+  const href = composed_url.startsWith('http') ? composed_url : getApiUrl(composed_url);
+  const a = document.createElement('a');
+  a.href = href; a.download = `clip_${index + 1}.mp4`; a.style.display = 'none';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  return 'composed';
 }
 
 export async function reframeClip(jobId, index, mode) {
