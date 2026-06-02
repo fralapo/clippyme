@@ -2,7 +2,7 @@
 import { useState, useRef } from 'react';
 import { Icon, Social, Btn, Panel, Segmented, Switch, Stepper, PlatPill, PLATFORMS } from './primitives';
 import { Hero } from './chrome';
-import { PRESETS, ASPECTS, SUBTITLE_PRESETS, LANGUAGES } from './data';
+import { PRESETS, SUBTITLE_PRESETS, LANGUAGES } from './data';
 
 function PresetCards({ active, onPick }) {
   return (
@@ -185,14 +185,21 @@ function OptionsPanel({ opts, set }) {
       <div className="label" style={{ marginBottom: 4 }}>Output</div>
       <div className="opt">
         <div className="oico"><Icon n="scissors" /></div>
-        <div className="otxt"><div className="ot">Clips per video</div><div className="od">How many shorts to cut</div></div>
-        <div className="r"><Stepper value={opts.clips} set={(v) => set({ clips: v })} /></div>
+        <div className="otxt">
+          <div className="ot">Clips per video</div>
+          <div className="od">{opts.clipsAuto ? 'Auto · ClippyMe picks the best number for the video' : 'Aim for a rough target (a hint, not a hard cap)'}</div>
+        </div>
+        <div className="r" style={{ gap: 9 }}>
+          {!opts.clipsAuto && <Stepper value={opts.clips} set={(v) => set({ clips: v })} />}
+          <Segmented value={opts.clipsAuto ? 'auto' : 'custom'}
+            onChange={(id) => set({ clipsAuto: id === 'auto' })}
+            options={[{ id: 'auto', label: 'Auto' }, { id: 'custom', label: 'Set' }]} />
+        </div>
       </div>
       <div className="opt">
         <div className="oico"><Icon n="crop" /></div>
-        <div className="otxt"><div className="ot">Aspect ratio</div><div className="od">Output frame</div></div>
-        <div className="r"><Segmented value={opts.aspect} onChange={(id) => set({ aspect: id })}
-          options={ASPECTS.map(([a]) => ({ id: a, label: a }))} /></div>
+        <div className="otxt"><div className="ot">Aspect ratio</div><div className="od">Vertical shorts — the only output format</div></div>
+        <div className="r"><span className="badge badge-blue">9:16</span></div>
       </div>
 
       <div className="label" style={{ margin: '16px 0 4px' }}>AI &amp; reframe</div>
@@ -232,7 +239,8 @@ function OptionsPanel({ opts, set }) {
 
 function SummaryBar({ opts, ready, count, onCreate }) {
   const chips = [
-    opts.aspect,
+    '9:16',
+    opts.clipsAuto ? 'auto clips' : `~${opts.clips} clips`,
     opts.detect ? 'viral detect' : 'whole video',
     opts.reframe && 'reframe',
     opts.smartcut && 'smart-cut',

@@ -13,7 +13,7 @@ import { ResultsView } from './results';
 import { PublishModal } from './publish';
 import { HistoryView, SettingsView, ApiKeyModal } from './views';
 import { CaptionEditModal } from './captions';
-import { optsToPreselections, restoreJob } from './realApi';
+import { optsToPreselections, restoreJob, cancelJob } from './realApi';
 
 import { useJobSubmission } from '../hooks/useJobSubmission';
 import { useJobPolling } from '../hooks/useJobPolling';
@@ -24,7 +24,7 @@ import { useSessionPersistence } from '../hooks/useSessionPersistence';
 
 const DEFAULT_OPTS = {
   mode: 'single', source: 'url', url: '', file: null, fileName: '', batch: '', batchFiles: [], instructions: '',
-  clips: 7, aspect: '9:16',
+  clipsAuto: true, clips: 7, aspect: '9:16',
   detect: true, reframe: true, smartcut: true, zoom: true,
   subtitles: true, subMode: 'karaoke', subPreset: 'hormozi_bold', subPosition: 'center',
   hooks: true, hookPos: 'top', hookSize: 'M',
@@ -143,21 +143,32 @@ export default function RedesignApp() {
 
   const startJob = () => {
     const pre = optsToPreselections(opts);
+    // The backend has no clip-count parameter — Gemini decides how many clips
+    // the video is worth. When the user opts out of Auto and sets a target, we
+    // pass it as a soft hint in the instructions (Gemini may still return more
+    // or fewer based on the content).
+    let instructions = opts.instructions || '';
+    if (!opts.clipsAuto) {
+      instructions = `${instructions} Aim for roughly ${opts.clips} clips.`.trim();
+    }
     if (opts.mode === 'single') {
       if (opts.source === 'url') {
         if (!opts.url.trim()) return;
-        handleProcess({ type: 'url', payload: opts.url.trim(), instructions: opts.instructions, preselections: pre });
+        handleProcess({ type: 'url', payload: opts.url.trim(), instructions, preselections: pre });
       } else {
         if (!opts.file) return;
-        handleProcess({ type: 'file', payload: opts.file, instructions: opts.instructions, preselections: pre });
+        handleProcess({ type: 'file', payload: opts.file, instructions, preselections: pre });
       }
     } else {
       const urls = opts.batch.split('\n').map((l) => l.trim()).filter(Boolean);
-      handleBatchProcess({ urls, files: opts.batchFiles, instructions: opts.instructions, preselections: pre });
+      handleBatchProcess({ urls, files: opts.batchFiles, instructions, preselections: pre });
     }
   };
 
   const resetToCreate = () => {
+    // If a job is still running, actually cancel it on the backend instead of
+    // just dropping our local handle (which would leave it churning).
+    if (status === 'processing' && jobId) cancelJob(jobId);
     setStatus('idle'); setJobId(null); setResults(null); setLogs([]); setProcessingMedia(null);
     setCurrentStep(null); setViewingHistory(false); setTab('create');
     try { localStorage.removeItem('clippyme_session'); } catch { /* */ }
