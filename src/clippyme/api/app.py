@@ -80,7 +80,7 @@ save_persistent_config(load_persistent_config())
 # Configuration
 # Default to 1 if not set, but user can set higher for powerful servers
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
-MAX_FILE_SIZE_MB = 2048  # 2GB limit
+MAX_FILE_SIZE_MB = int(os.environ.get("MAX_FILE_SIZE_MB", "2048"))
 # Default retention is 30 days — the frontend History tab is the
 # authoritative source of truth for what the user considers "done".
 # Aggressive auto-purge was destroying clips behind the user's back
@@ -809,7 +809,7 @@ async def list_zernio_accounts(request: Request):
 
 
 @app.post("/api/publish/{job_id}/{clip_index}")
-async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishRequest):
+async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishRequest, request: Request):
     """Upload a clip to Zernio and create a post on the requested platforms.
 
     If req.compose_first is True, the clip is freshly composed (Smart Cut →
@@ -817,6 +817,7 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     /api/compose. Otherwise we look for an existing composed_clip_{i}.mp4
     on disk and fall back to the base clip.
     """
+    require_trusted_config_request(request)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     job_dir = os.path.join(OUTPUT_DIR, job_id)
