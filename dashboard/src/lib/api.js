@@ -1,5 +1,15 @@
 import { getApiUrl } from '../config';
 
+async function throwFromResponse(res) {
+  const text = await res.text();
+  let msg = text;
+  try {
+    const parsed = JSON.parse(text);
+    msg = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail);
+  } catch {}
+  throw new Error(msg || `HTTP ${res.status}`);
+}
+
 export async function pollJob(jobId) {
   const res = await fetch(getApiUrl(`/api/status/${jobId}`));
   if (!res.ok) throw new Error('Status check failed');
@@ -50,6 +60,9 @@ export async function submitProcessJob(data, apiKey) {
     if (skipAnalysis) jsonBody.skip_analysis = true;
     body = JSON.stringify(jsonBody);
   } else {
+    if (data.payload?.size > 2048 * 1024 * 1024) {
+      throw new Error('File too large. Max size 2048MB');
+    }
     const formData = new FormData();
     formData.append('file', data.payload);
     if (reframeMode) formData.append('reframe_mode', reframeMode);
@@ -61,7 +74,7 @@ export async function submitProcessJob(data, apiKey) {
   }
 
   const res = await fetch(getApiUrl('/api/process'), { method: 'POST', headers, body });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) await throwFromResponse(res);
   return res.json();
 }
 
@@ -89,6 +102,6 @@ export async function submitBatchJob(data, apiKey) {
     headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
     body: JSON.stringify(batchBody),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) await throwFromResponse(res);
   return res.json();
 }
