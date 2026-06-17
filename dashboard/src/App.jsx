@@ -130,7 +130,6 @@ function App() {
       clipCount: data.result?.clips?.length || 0,
       cost: data.result?.cost_analysis?.total_cost || null,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, preselections, processingMedia, saveToHistory]);
 
   useJobPolling({
