@@ -10,6 +10,31 @@ requires-python = ">=3.11"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Light runtime subset needed by the host (non-integration) test suite.
+# The package's full runtime (requirements.txt) pulls the heavy CV/ML stack
+# (torch / mediapipe / opencv / ultralytics / scenedetect / faster-whisper),
+# which only the `integration`-marked Docker tests need. `pip install -e .`
+# alone installs NO runtime deps, so CI must install this group to collect the
+# host suite. Versions mirror requirements.txt; numpy/pydantic mirror
+# requirements.lock (normally transitive via torch/opencv — explicit here
+# because the heavy stack is intentionally absent on the host runner).
+[project.optional-dependencies]
+host-tests = [
+    "numpy==2.4.6",
+    "pydantic==2.13.4",
+    "fastapi==0.135.3",
+    "uvicorn==0.42.0",
+    "python-multipart==0.0.31",
+    "yt-dlp>=2026.3.17,<2027",
+    "google-genai>=1.70.0,<2.0.0",
+    "python-dotenv==1.2.2",
+    "Pillow>=12.2.0,<13",
+    "requests>=2.32,<3",
+    "json-repair>=0.30",
+    "psutil==7.0.0",
+    "tqdm==4.67.3",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
