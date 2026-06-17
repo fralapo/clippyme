@@ -18,7 +18,18 @@ _HEAVY_DEPS = ("ultralytics", "cv2", "mediapipe", "scenedetect")
 
 
 def _heavy_runtime_available() -> bool:
-    return all(importlib.util.find_spec(dep) is not None for dep in _HEAVY_DEPS)
+    if not all(importlib.util.find_spec(dep) is not None for dep in _HEAVY_DEPS):
+        return False
+    # Presence isn't enough: main.py uses the legacy ``mediapipe.solutions`` API
+    # (pinned 0.10.14). Newer host wheels (e.g. 0.10.35, the only one with a
+    # Windows build) drop that attribute, so collecting the pipeline tests would
+    # crash on import. Treat a wrong-API mediapipe as "runtime unavailable" so
+    # the host suite stays green; the Docker image (0.10.14) passes this check.
+    try:
+        import mediapipe  # noqa: PLC0415
+        return hasattr(mediapipe, "solutions")
+    except Exception:
+        return False
 
 
 # When the runtime is missing, don't even try to collect the pipeline tests
