@@ -89,6 +89,31 @@ def audio_sync_seek_args(video_start_time: float, min_offset: float = 0.05) -> l
     return ["-ss", f"{video_start_time:.3f}"]
 
 
+def reconcile_fps(reader_fps: float, scene_fps: float, tol: float = 0.1) -> float:
+    """Choose the frame rate to encode at, given the OpenCV reader's rate and the
+    scene-detector's rate for the same file.
+
+    The reframe loop decodes frames with OpenCV and re-emits them at a fixed
+    ``-r``; if the encoder rate doesn't match the *reader's* rate the output
+    drifts against the stream-copied audio. PySceneDetect and OpenCV can disagree
+    (e.g. 29.97 vs 30.0). Policy (Autocrop-vertical's "read fps from the same
+    backend that reads the frames" learning, applied conservatively):
+
+    * reader invalid (≤0) → fall back to ``scene_fps``;
+    * scene invalid (≤0) → use ``reader_fps``;
+    * the two **diverge** beyond ``tol`` → trust ``reader_fps`` (the frame source);
+    * otherwise (within ``tol``) → keep ``scene_fps`` so the common case stays
+      byte-identical to the prior behaviour.
+    """
+    if reader_fps is None or reader_fps <= 0:
+        return scene_fps
+    if scene_fps is None or scene_fps <= 0:
+        return reader_fps
+    if abs(reader_fps - scene_fps) > tol:
+        return reader_fps
+    return scene_fps
+
+
 def probe_stream_start_time(video_path: str, stream: str = "v:0") -> float:
     """ffprobe a stream's ``start_time`` in seconds (0.0 if unavailable).
 

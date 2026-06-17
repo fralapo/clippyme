@@ -54,7 +54,7 @@ clip/reframe render path, and is what this study ports.
 | **Medium** | `-pix_fmt yuv420p` on the two bare libx264 encoders | ✅ implemented | reframe raw-frame encoder + main.py source-slice cut; guarantees universal decode even when later 420p passes are skipped. |
 | **Medium** | Corrupt/failed-frame resilience | ✅ implemented | try/except in the reframe render loop → duplicate last good frame; preserves frame count → no A/V drift. |
 | **Medium** | `-vsync cfr` on reframe encoder + cut | ✅ implemented | Locks constant output rate; pairs with the VFR fix. |
-| Low | fps cross-check (cv2 ↔ PySceneDetect) | ⏸ deferred | Subsumed: VFR normalize + CFR output remove the drift this guarded against. A hard assert could be added later. |
+| **Medium** | fps cross-check (cv2 ↔ PySceneDetect) | ✅ implemented | `reconcile_fps`: frames are decoded by OpenCV, so the encoder `-r` follows the cv2 reader when it diverges from the detector (>0.1 fps); within tolerance the detector value is kept (byte-identical). Fixes slow A/V drift on CFR files where VFR-normalize never fires. |
 | Low | Hardware encoder (NVENC/VideoToolbox) | ⏸ deferred | ClippyMe encodes in a Linux/Docker container where libx264 is the portable choice; HW detect adds surface for marginal CPU savings off the product axis. Documented, not wired. |
 | Low | `--quality`/`--ratio`/`--plan-only` CLI knobs | ⏸ deferred | ClippyMe's ratio/quality are driven by the dashboard + per-stage tuning, not CLI flags; not a fit. |
 
@@ -104,9 +104,11 @@ no-op boundaries, and the never-raise contract.
   rewritten; the static-crop algorithm was *not* adopted (ClippyMe's is better).
   Only the orthogonal robustness layer was added, in the same inline-ffmpeg +
   pure-helper-module style already used across the pipeline.
-- **fps-source mismatch (concern #3).** Rather than re-plumb every fps read, the
-  VFR normalize + CFR-locked output neutralize the drift the mismatch could
-  cause. Noted as a deferred hardening (an explicit cv2-vs-PySceneDetect assert).
+- **fps-source mismatch (concern #3).** Closed by `reconcile_fps`: VFR normalize +
+  CFR-locked output cover variable-rate sources, and on a *CFR* file where the
+  detector and the cv2 reader disagree the encoder now follows the reader (the
+  backend that actually decodes the frames being written). Conservative: only a
+  divergence beyond 0.1 fps overrides, so the common case stays byte-identical.
 - **`_render_global_smooth` opt-in path** shares the same single-write model; the
   corrupt-frame guard was extended to its pass-2 render loop too (follow-up
   commit), so both render paths now duplicate the last good frame rather than
@@ -139,9 +141,9 @@ no-op boundaries, and the never-raise contract.
 
 ## 6. Verification
 
-- Host pure-helper suite: `pytest tests/pipeline/test_media_probe.py` → **31 passed**.
-- Full host (non-integration) suite: `pytest -m "not integration"` → **279 passed,
-  2 skipped** (248 prior baseline + 31 new) — no regression.
+- Host pure-helper suite: `pytest tests/pipeline/test_media_probe.py` → **36 passed**.
+- Full host (non-integration) suite: `pytest -m "not integration"` → **284 passed,
+  2 skipped** (248 prior baseline + 36 new) — no regression.
 - Integration suite in Docker:
   `docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration"`
   → **13 passed, 290 deselected** — reframe.py imports (cv2/mediapipe) and the

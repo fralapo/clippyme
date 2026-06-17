@@ -14,6 +14,7 @@ from clippyme.pipeline.media_probe import (
     parse_start_time,
     probe_is_variable_frame_rate,
     probe_stream_start_time,
+    reconcile_fps,
 )
 
 
@@ -105,6 +106,35 @@ def test_audio_sync_seek_args_noop_for_negative_or_none():
 def test_audio_sync_seek_args_custom_min_offset():
     assert audio_sync_seek_args(0.1, min_offset=0.2) == []
     assert audio_sync_seek_args(0.3, min_offset=0.2) == ["-ss", "0.300"]
+
+
+# --- reconcile_fps ------------------------------------------------------------
+
+def test_reconcile_fps_keeps_scene_fps_when_within_tolerance():
+    # 29.97 vs 30.0 differ by 0.03 < 0.1 → keep detector value (byte-identical).
+    assert reconcile_fps(29.97, 30.0) == 30.0
+
+
+def test_reconcile_fps_prefers_reader_on_divergence():
+    # 25 vs 30 is a real disagreement → trust the cv2 reader (the frame source).
+    assert reconcile_fps(25.0, 30.0) == 25.0
+
+
+def test_reconcile_fps_falls_back_to_scene_when_reader_invalid():
+    assert reconcile_fps(0.0, 30.0) == 30.0
+    assert reconcile_fps(-1.0, 30.0) == 30.0
+    assert reconcile_fps(None, 30.0) == 30.0
+
+
+def test_reconcile_fps_uses_reader_when_scene_invalid():
+    assert reconcile_fps(30.0, 0.0) == 30.0
+    assert reconcile_fps(30.0, None) == 30.0
+
+
+def test_reconcile_fps_respects_custom_tolerance():
+    # 0.3 gap: kept at tol=0.5, overridden at tol=0.1.
+    assert reconcile_fps(30.3, 30.0, tol=0.5) == 30.0
+    assert reconcile_fps(30.3, 30.0, tol=0.1) == 30.3
 
 
 # --- probe_* never-raise contract --------------------------------------------
