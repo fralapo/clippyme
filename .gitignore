@@ -55,3 +55,6 @@ skills-lock.json
 
 docs/superpowers/
 fonts/NotoColorEmoji.ttf
+
+# pip --user installs leaking from container `docker compose run` into mounted /app
+.local/
