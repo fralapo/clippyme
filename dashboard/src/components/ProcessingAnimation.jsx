@@ -54,11 +54,15 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
   useEffect(() => {
     if (isYouTube && iframeRef.current && videoSrc) {
       const iframeWindow = iframeRef.current.contentWindow;
+      // Target the YouTube embed origin explicitly — never '*' — so the
+      // IPC command can't be delivered to a different document if the iframe
+      // navigates away.
+      const YT_ORIGIN = 'https://www.youtube.com';
       if (isSyncedPlaying) {
-        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [syncedTime, true] }), '*');
-        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), '*');
+        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'seekTo', args: [syncedTime, true] }), YT_ORIGIN);
+        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'playVideo', args: [] }), YT_ORIGIN);
       } else {
-        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), '*');
+        iframeWindow.postMessage(JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }), YT_ORIGIN);
       }
     }
   }, [syncedTime, isSyncedPlaying, isYouTube, videoSrc, syncTrigger]);

@@ -1,9 +1,14 @@
+# CV/ML stack is pinned-exact for reproducible Docker builds. torch 2.11 /
+# mediapipe 0.10.14 are aging; UPGRADE PROCEDURE (do in Docker, one bump at a
+# time, then run `pytest -m integration`): bump torch>=2.4 + matching
+# torchvision, rebuild the CUDA image, verify YOLO + MediaPipe load and a clip
+# reframes correctly before committing the new pin.
 scenedetect==0.6.7.1
 ultralytics==8.4.33
 torch==2.11.0
 torchvision==0.26.0
 tqdm==4.67.3
-yt-dlp>=2026.3.17
+yt-dlp>=2026.3.17,<2027
 faster-whisper==1.2.1
 # Capped below 2.0 so an unattended rebuild can't pull a breaking major
 # release of the SDK (gemini_service / gemini_parser depend on the 1.x API).
@@ -12,8 +17,11 @@ python-dotenv==1.2.2
 mediapipe==0.10.14
 fastapi==0.135.3
 uvicorn==0.42.0
-python-multipart==0.0.22
-Pillow==12.2.0
+# 0.0.31 fixes CVE-2026-40347/42561/53538/53539/53540 (multipart parser DoS).
+python-multipart==0.0.31
+# Fonts/emoji rendering in subtitles.py + hooks.py assume the Pillow 12.x
+# FreeType/OTF API. Allow patch/minor security updates, block the next major.
+Pillow>=12.2.0,<13
 # Used by social_publisher.py for the Zernio REST client (presign upload,
 # scheduled-post lookup, post creation). Standard library `urllib` would
 # work but `requests` gives us session reuse + better error messages.
@@ -26,6 +34,12 @@ psutil==7.0.0
 # Python 3.11+, released Oct 2025) is a drop-in faster alternative —
 # swap only if profiling shows the parse step is >5% of request time.
 json-repair>=0.30
+# Optional: speaker diarization via pyannote.audio. main.py:_diarize_with_pyannote
+# imports it lazily and skips with a soft warning if absent, so it is intentionally
+# NOT installed by default (it pulls torchaudio + a gated HF model download).
+# Enable by installing manually: `pip install pyannote.audio` + set HF_TOKEN.
+# Deepgram's built-in diarization (DEEPGRAM_DIARIZE=true) covers the cloud path.
+#
 # Note: auto-editor is NOT a pip dep. It's installed as a Nim binary
 # (v30.x track) by the Dockerfile from GitHub releases, and kept up-to-date
 # at runtime by auto_editor_updater.py. The legacy v29.x PyPI release is

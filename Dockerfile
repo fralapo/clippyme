@@ -22,25 +22,29 @@ RUN apt-get update && \
     python3.11 python3.11-venv python3.11-dev python3.11-distutils \
     ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
     curl unzip ca-certificates && \
-    curl -fsSL https://deno.land/install.sh | sh && \
+    curl -fsSL https://deno.land/install.sh | sh -s v2.8.3 && \
     mv /root/.deno/bin/deno /usr/local/bin/ && \
     rm -rf /root/.deno && \
     ln -sf /usr/bin/python3.11 /usr/bin/python && \
     ln -sf /usr/bin/python3.11 /usr/bin/python3 && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.11 && \
     rm -rf /var/lib/apt/lists/* && \
-    # Install latest auto-editor Nim binary (v30.x track). The runtime
-    # updater (auto_editor_updater.py) keeps it fresh after build.
+    # Install a PINNED auto-editor Nim binary (v30.x track) with sha256
+    # verification, so a re-tagged/tampered GitHub asset can't slip in at build
+    # time. The runtime updater (auto_editor_updater.py) keeps it fresh after
+    # build; bump AE_VERSION + the digests together when updating the pin.
+    AE_VERSION=30.5.0 && \
     ARCH=$(uname -m) && \
     case "$ARCH" in \
-      x86_64)  AE_ASSET=auto-editor-linux-x86_64 ;; \
-      aarch64) AE_ASSET=auto-editor-linux-aarch64 ;; \
+      x86_64)  AE_ASSET=auto-editor-linux-x86_64;  AE_SHA=673e69b096d740736364f34669e864505294441f5ec9188642b33e24b07cf147 ;; \
+      aarch64) AE_ASSET=auto-editor-linux-aarch64; AE_SHA=0c54d2cbc617fd369dae434eb62156557877da47c60fd8b2018b65b481166a4e ;; \
       *) echo "Unsupported arch $ARCH for auto-editor binary"; exit 1 ;; \
     esac && \
     curl -fsSL -o /usr/local/bin/auto-editor \
-      "https://github.com/WyattBlue/auto-editor/releases/latest/download/$AE_ASSET" && \
+      "https://github.com/WyattBlue/auto-editor/releases/download/${AE_VERSION}/$AE_ASSET" && \
+    echo "$AE_SHA  /usr/local/bin/auto-editor" | sha256sum -c - && \
     chmod +x /usr/local/bin/auto-editor && \
-    /usr/local/bin/auto-editor --version || echo "auto-editor install check failed (non-fatal)"
+    (/usr/local/bin/auto-editor --version || echo "auto-editor version check failed (non-fatal)")
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -54,22 +58,26 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
     curl unzip ca-certificates && \
-    curl -fsSL https://deno.land/install.sh | sh && \
+    curl -fsSL https://deno.land/install.sh | sh -s v2.8.3 && \
     mv /root/.deno/bin/deno /usr/local/bin/ && \
     rm -rf /root/.deno && \
     rm -rf /var/lib/apt/lists/* && \
-    # Install latest auto-editor Nim binary (v30.x track). The runtime
-    # updater (auto_editor_updater.py) keeps it fresh after build.
+    # Install a PINNED auto-editor Nim binary (v30.x track) with sha256
+    # verification, so a re-tagged/tampered GitHub asset can't slip in at build
+    # time. The runtime updater (auto_editor_updater.py) keeps it fresh after
+    # build; bump AE_VERSION + the digests together when updating the pin.
+    AE_VERSION=30.5.0 && \
     ARCH=$(uname -m) && \
     case "$ARCH" in \
-      x86_64)  AE_ASSET=auto-editor-linux-x86_64 ;; \
-      aarch64) AE_ASSET=auto-editor-linux-aarch64 ;; \
+      x86_64)  AE_ASSET=auto-editor-linux-x86_64;  AE_SHA=673e69b096d740736364f34669e864505294441f5ec9188642b33e24b07cf147 ;; \
+      aarch64) AE_ASSET=auto-editor-linux-aarch64; AE_SHA=0c54d2cbc617fd369dae434eb62156557877da47c60fd8b2018b65b481166a4e ;; \
       *) echo "Unsupported arch $ARCH for auto-editor binary"; exit 1 ;; \
     esac && \
     curl -fsSL -o /usr/local/bin/auto-editor \
-      "https://github.com/WyattBlue/auto-editor/releases/latest/download/$AE_ASSET" && \
+      "https://github.com/WyattBlue/auto-editor/releases/download/${AE_VERSION}/$AE_ASSET" && \
+    echo "$AE_SHA  /usr/local/bin/auto-editor" | sha256sum -c - && \
     chmod +x /usr/local/bin/auto-editor && \
-    /usr/local/bin/auto-editor --version || echo "auto-editor install check failed (non-fatal)"
+    (/usr/local/bin/auto-editor --version || echo "auto-editor version check failed (non-fatal)")
 
 # ============================================================
 # Stage 3: Final image
@@ -93,13 +101,16 @@ ENV PATH=/app/data/bin:$PATH
 # Build with:   docker compose build --build-arg ENABLE_WHISPER_DIARIZE=1
 ARG GPU_RUNTIME
 ARG ENABLE_WHISPER_DIARIZE=0
-COPY requirements.txt .
+# Install from the fully-pinned lock for reproducible builds (regenerate with
+# `uv pip compile requirements.txt ... -o requirements.lock`). requirements.txt
+# is copied too for reference/diagnostics.
+COPY requirements.lock requirements.txt ./
 # BuildKit cache mount: pip's download cache lives in the mount (shared across
 # rebuilds) and is NOT baked into the image layer, so we get fast rebuilds
 # without the image bloat that dropping --no-cache-dir would otherwise cause.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    pip install -r requirements.txt && \
+    pip install -r requirements.lock && \
     if [ "$GPU_RUNTIME" = "nvidia" ]; then \
         pip install nvidia-cublas-cu12 && \
         SITE=$(python -c "import site; print(site.getsitepackages()[0])") && \
@@ -109,8 +120,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     fi && \
     if [ "$ENABLE_WHISPER_DIARIZE" = "1" ]; then \
         pip install 'pyannote.audio>=3.1'; \
-    fi && \
-    pip install --upgrade yt-dlp
+    fi
+# NOTE: do NOT `pip install --upgrade yt-dlp` here — that would un-pin yt-dlp
+# from requirements.lock and pull whatever the latest (unverified) release is at
+# build time, breaking reproducibility and opening a supply-chain window. yt-dlp
+# is pinned in the lock (yt-dlp>=2026.3.17,<2027); bump it by regenerating the
+# lock so the change is reviewed, not silently fetched on every rebuild.
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \

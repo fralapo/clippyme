@@ -27,7 +27,13 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "UPLOAD_DIR", str(uploads))
     monkeypatch.setattr(app_module, "OUTPUT_DIR", str(outputs))
     monkeypatch.setattr(app_module, "MAX_FILE_SIZE_MB", 0)  # any byte trips the limit
-    return TestClient(app_module.app), uploads, outputs
+    # /api/process now enforces the trusted-origin gate (CSRF defence); send a
+    # default allow-listed Origin so the TestClient is treated like the browser.
+    return (
+        TestClient(app_module.app, headers={"Origin": "http://localhost:5175"}),
+        uploads,
+        outputs,
+    )
 
 
 def test_oversize_upload_returns_413_and_cleans_up(client):

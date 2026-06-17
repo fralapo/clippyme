@@ -15,10 +15,25 @@ const PLAT = {
   yt: { platform: 'youtube', acct: 'youtube', icon: 'youtube', label: 'Shorts' },
 };
 
+// Local YYYY-MM-DD for `start_date`, offset by `addDays`. Used to give each
+// clip in a batch its own day so a per-platform daily posting cap (e.g.
+// YouTube's 5/day) doesn't reject the tail of the batch.
+function localDatePlus(addDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + addDays);
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
 function PubRow({ clip, idx, st, plats }) {
+  // `st` is either a status string or { state, error } so we can surface the
+  // real failure reason instead of a bare "failed".
+  const status = typeof st === 'object' && st ? st.state : st;
+  const errMsg = typeof st === 'object' && st ? st.error : null;
   const tasks = Object.keys(plats).filter((k) => plats[k]);
-  const done = st === 'done';
-  const error = st === 'error';
+  const done = status === 'done';
+  const error = status === 'error';
   return (
     <div className={'pubrow' + (done ? ' done' : '')}>
       <div className="pthumb" style={{ background: '#000', overflow: 'hidden' }}>
@@ -31,12 +46,13 @@ function PubRow({ clip, idx, st, plats }) {
           {tasks.map((p) => (
             <div className="pp" key={p}>
               <Social n={PLAT[p].icon} color={done ? '02C5BF' : '7E7E8F'} size={13} />
-              <div className="ptrack"><i className={p} style={{ width: done ? '100%' : st === 'uploading' ? '70%' : '0%', transition: 'width .4s' }}></i></div>
+              <div className="ptrack"><i className={p} style={{ width: done ? '100%' : status === 'uploading' ? '70%' : '0%', transition: 'width .4s' }}></i></div>
             </div>
           ))}
-          <span className={'pstat' + (done ? ' done' : st === 'uploading' ? '' : ' wait')}
-            style={error ? { color: 'var(--danger)' } : undefined}>
-            {error ? 'failed' : done ? 'live' : st === 'uploading' ? 'uploading' : 'queued'}
+          <span className={'pstat' + (done ? ' done' : status === 'uploading' ? '' : ' wait')}
+            style={error ? { color: 'var(--danger)' } : undefined}
+            title={error && errMsg ? errMsg : undefined}>
+            {error ? (errMsg ? `failed: ${errMsg.slice(0, 60)}` : 'failed') : done ? 'live' : status === 'uploading' ? 'uploading' : 'queued'}
           </span>
         </div>
       </div>
@@ -56,6 +72,13 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
 
   useEffect(() => { getZernio().then(setZernio).catch(() => setZernio({ configured: false })); }, []);
 
+  // Accessibility: close on Escape so keyboard users aren't trapped.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const accounts = zernio?.accounts || {};
   const toggle = (k) => setPlats((p) => ({ ...p, [k]: !p[k] }));
   const platTargets = () => Object.keys(plats)
@@ -64,7 +87,11 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   const targets = platTargets();
   const ready = zernio?.configured && targets.length > 0;
 
-  const buildBody = (clip, idx) => {
+  // `batchPos` is the clip's position within this batch (0-based). When
+  // scheduling, each clip gets its own day (start_date = today + batchPos) so
+  // a per-platform daily cap doesn't reject the tail of the batch — replicates
+  // the one-clip-per-day spacing from the original publisher.
+  const buildBody = (clip, idx, batchPos = 0) => {
     const cs = clipStates[idx] || {};
     const toggles = cs.toggles ?? seedToggles(preselections);
     const any = Object.values(toggles).some(Boolean);
@@ -76,6 +103,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
       caption: (caption && caption.trim()) || title,
       platforms: targets,
       schedule_mode: schedule ? 'auto' : 'now',
+      ...(schedule ? { start_date: localDatePlus(batchPos) } : {}),
       timezone: zernio?.timezone || 'Europe/Rome',
       tiktok_settings: plats.tiktok && accounts.tiktok ? {
         privacy_level: 'PUBLIC_TO_EVERYONE', allow_comment: true, allow_duet: true,
@@ -88,17 +116,19 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   const run = async () => {
     setStage('uploading');
     const init = {};
-    clips.forEach((c) => { init[c._idx] = 'uploading'; });
+    clips.forEach((c) => { init[c._idx] = { state: 'uploading' }; });
     setProgress(init);
-    const results = await Promise.allSettled(clips.map(async (clip) => {
+    const results = await Promise.allSettled(clips.map(async (clip, batchPos) => {
       const idx = clip._idx;
       try {
-        await publishClip(jobId, idx, buildBody(clip, idx));
-        setProgress((p) => ({ ...p, [idx]: 'done' }));
+        await publishClip(jobId, idx, buildBody(clip, idx, batchPos));
+        setProgress((p) => ({ ...p, [idx]: { state: 'done' } }));
         onPublished?.(idx);
         return true;
       } catch (e) {
-        setProgress((p) => ({ ...p, [idx]: 'error' }));
+        // Surface the real reason (e.g. a Zernio daily-limit 429) instead of a
+        // bare "failed", so the user knows to retry that platform tomorrow.
+        setProgress((p) => ({ ...p, [idx]: { state: 'error', error: e?.message || 'Publish failed' } }));
         return false;
       }
     }));
@@ -115,13 +145,14 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
 
   return (
     <div className="overlay" onClick={onClose}>
-      <div className={'modal' + (all ? ' wide' : '')} onClick={(e) => e.stopPropagation()}>
+      <div className={'modal' + (all ? ' wide' : '')} onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true" aria-labelledby="publish-modal-title">
         <div className="modal-head">
           <div>
-            <h3>{title}</h3>
+            <h3 id="publish-modal-title">{title}</h3>
             {stage === 'uploading' && <div className="mh-sub">uploading concurrently · daily-limit checks server-side</div>}
           </div>
-          <button className="x" onClick={onClose}><Icon n="x" /></button>
+          <button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button>
         </div>
 
         {stage === 'setup' && (

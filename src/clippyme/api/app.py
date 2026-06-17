@@ -18,15 +18,26 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("clippyme")
+
+# The pinned dependency set (faster-whisper, mediapipe, etc.) is only tested on
+# Python 3.11+. Warn loudly rather than failing with a cryptic import error on
+# an older interpreter.
+if sys.version_info < (3, 11):
+    logger.warning(
+        "ClippyMe requires Python 3.11+. Detected %s — imports may fail or behave unexpectedly.",
+        ".".join(map(str, sys.version_info[:3])),
+    )
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
-from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd
+from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd, _pick_latest_metadata
 from clippyme.domain.compose import compose_layers
+from clippyme.domain.errors import ClippyMeError
 from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
 from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
 from clippyme.domain.url_utils import filename_from_video_url
@@ -41,6 +52,7 @@ from clippyme.api.schemas import (
 )
 from clippyme.api.security import (
     ALLOWED_ORIGINS,
+    enforce_rate_limit,
     is_trusted_client_host,
     is_trusted_origin,
     parse_allowed_origins,
@@ -120,17 +132,68 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Add OWASP-recommended hardening headers to every response.
+
+    - nosniff: block MIME-confusion attacks on served media/JSON.
+    - frame-ancestors/X-Frame-Options: clickjacking defence.
+    - Referrer-Policy: don't leak full URLs (job ids) to third parties.
+    - CSP default-src 'none': the API serves JSON + media consumed by the
+      separate Vite frontend; it should never itself be a script/HTML host.
+    Ref: OWASP Secure Headers Project.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    return response
+
+
+@app.exception_handler(ClippyMeError)
+async def _clippyme_error_handler(request: Request, exc: ClippyMeError):
+    """Map domain exceptions to HTTP responses so domain modules don't need
+    to import FastAPI's HTTPException."""
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+
+
+@app.exception_handler(Exception)
+async def _unhandled_error_handler(request: Request, exc: Exception):
+    """Catch-all so a stray exception never leaks a traceback / internal path
+    to the client. FastAPI's HTTPException is handled separately and is not
+    affected by this."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-Gemini-Key"],
 )
 
-# Mount static files for serving videos
-app.mount("/videos", StaticFiles(directory=OUTPUT_DIR), name="videos")
+# Mount static files for serving videos.
+# The output directory also holds *_metadata.json (full transcripts + AI
+# analysis) and source_*.mp4 (the raw 16:9 slices). Those are internal
+# artifacts and must NOT be publicly downloadable — only the rendered clips,
+# composed clips, covers and thumbnails are user-facing. SafeStaticFiles
+# 404s the sensitive patterns while serving everything else as before.
+class SafeStaticFiles(StaticFiles):
+    _BLOCKED_SUFFIXES = ("_metadata.json",)
+    _BLOCKED_PREFIXES = ("source_",)
+
+    async def get_response(self, path, scope):
+        leaf = os.path.basename(path.replace("\\", "/"))
+        if leaf.endswith(self._BLOCKED_SUFFIXES) or leaf.startswith(self._BLOCKED_PREFIXES):
+            raise HTTPException(status_code=404, detail="Not found")
+        return await super().get_response(path, scope)
+
+
+app.mount("/videos", SafeStaticFiles(directory=OUTPUT_DIR), name="videos")
 
 # Mount static files for serving thumbnails
 THUMBNAILS_DIR = os.path.join(OUTPUT_DIR, "thumbnails")
@@ -192,7 +255,11 @@ async def run_job(job_id, job_data):
             cwd=os.getcwd()
         )
         jobs[job_id]['process'] = process
-        
+        # The env (with the Gemini API key) is now captured by the child
+        # process; drop it from the in-memory job dict so the secret doesn't
+        # linger in application state for the lifetime of the job.
+        jobs[job_id].pop('env', None)
+
         # We need to capture logs in a thread because Popen isn't async
         t_log = threading.Thread(target=enqueue_output, args=(process.stdout, job_id, jobs))
         t_log.daemon = True
@@ -237,10 +304,15 @@ async def process_endpoint(
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None)
 ):
+    # CSRF/origin gate so a malicious page can't trigger compute jobs against
+    # a locally-running backend. Same trust model as the config endpoints.
+    require_trusted_config_request(request)
+    # ~20 single-job submissions/min per client; compute-heavy, so throttle.
+    enforce_rate_limit(request, "process", capacity=20, refill_per_sec=20 / 60)
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
-    
+
     # Handle JSON body via ProcessRequest for URL payloads. Pydantic
     # enforces the reframe_mode regex and the instructions length cap
     # before we hand anything to build_main_cmd. Multipart uploads keep
@@ -286,7 +358,7 @@ async def process_endpoint(
         # an uploaded file path.
         try:
             ProcessRequest.model_validate({
-                "url": "file://upload",
+                "url": "https://upload.invalid/local",
                 "reframe_mode": reframe_mode or None,
                 "aspect": aspect or None,
                 "language": language or None,
@@ -313,8 +385,17 @@ async def process_endpoint(
         # discard the client-supplied filename (path traversal risk) and only
         # preserve a sanitized extension whitelisted to known media formats.
         raw_ext = os.path.splitext(file.filename or "")[1].lower()
-        safe_ext = raw_ext if raw_ext in {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"} else ".mp4"
-        input_path = os.path.join(UPLOAD_DIR, f"{job_id}{safe_ext}")
+        allowed_ext = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
+        if raw_ext not in allowed_ext:
+            # Reject unknown extensions explicitly instead of silently
+            # treating them as .mp4 (which produced confusing downstream
+            # ffmpeg failures on non-video uploads).
+            shutil.rmtree(job_output_dir, ignore_errors=True)
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type. Allowed: .mp4, .mov, .mkv, .webm, .m4v, .avi",
+            )
+        input_path = os.path.join(UPLOAD_DIR, f"{job_id}{raw_ext}")
         try:
             await stream_upload_within_limit(file, input_path, MAX_FILE_SIZE_MB * 1024 * 1024)
         except FileTooLarge as exc:
@@ -361,6 +442,9 @@ async def process_endpoint(
 @app.post("/api/batch")
 async def batch_process(req: BatchRequest, request: Request):
     """Submit multiple URLs for batch processing. Each URL becomes a separate job."""
+    require_trusted_config_request(request)
+    # Each batch can enqueue up to 20 jobs, so limit batch calls more tightly.
+    enforce_rate_limit(request, "batch", capacity=10, refill_per_sec=10 / 60)
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
@@ -432,8 +516,9 @@ async def get_status(job_id: str):
     }
 
 @app.post("/api/cancel/{job_id}")
-async def cancel_job(job_id: str):
+async def cancel_job(job_id: str, request: Request):
     """Cancel a running job by killing its subprocess."""
+    require_trusted_config_request(request)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     if job_id not in jobs:
@@ -468,10 +553,13 @@ async def get_config(request: Request):
     """Return current active configuration (keys are partially masked for safety)."""
     require_trusted_config_request(request)
     config = load_persistent_config()
+    # Secret keys are never returned verbatim — even short values are masked so
+    # a brief key can't leak. Non-secret flags (model/provider) pass through.
+    secret_keys = {"GEMINI_API_KEY", "HF_TOKEN", "DEEPGRAM_API_KEY", "YOUTUBE_COOKIES"}
     masked = {}
     for k, v in config.items():
-        if v and len(v) > 8:
-            masked[k] = f"{v[:4]}...{v[-4:]}"
+        if k in secret_keys and v:
+            masked[k] = f"{v[:4]}...{v[-4:]}" if len(v) > 8 else "********"
         else:
             masked[k] = v
     return masked
@@ -538,8 +626,10 @@ async def delete_cookies(request: Request):
 from clippyme.domain.smartcut import smart_cut
 
 @app.post("/api/smartcut/{job_id}/{clip_index}")
-async def smart_cut_clip(job_id: str, clip_index: int):
+async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
     """Generate a smart-cut version of a clip (silences + filler words removed)."""
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "smartcut", capacity=20, refill_per_sec=20 / 60)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     if job_id not in jobs:
@@ -559,7 +649,7 @@ async def smart_cut_clip(job_id: str, clip_index: int):
 
 
 @app.post("/api/reframe/{job_id}/{clip_index}")
-async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
+async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, request: Request):
     """Switch a clip between reframe modes (auto ↔ disabled) after generation.
 
     Requires the per-clip 16:9 source slice (``source_<clip>.mp4``) to still
@@ -568,6 +658,8 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
     run used. Updates metadata.json and the in-memory job state so the
     dashboard picks up the new video URL on the next poll.
     """
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "reframe", capacity=20, refill_per_sec=20 / 60)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job_id")
     mode = (req.reframe_mode or "auto").strip().lower()
@@ -650,10 +742,12 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
 
     output_text = (stdout_data or b"").decode(errors="replace")
     if proc.returncode != 0:
+        # Full subprocess output is logged server-side only — never returned to
+        # the client, which would leak filesystem paths / tracebacks / env.
         logger.error("Reframe failed (code %s):\n%s", proc.returncode, output_text[-2000:])
         raise HTTPException(
             status_code=500,
-            detail=f"Reframe failed (exit {proc.returncode}). Last output: {output_text[-400:]}",
+            detail="Reframe failed. Check server logs for details.",
         )
 
     # Cache-busting suffix so the <video> element reloads.
@@ -695,13 +789,15 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest):
 
 
 @app.get("/api/history")
-async def list_history():
+async def list_history(request: Request):
     """Scan output/ for past jobs with metadata files."""
+    require_trusted_config_request(request)
     return {"jobs": scan_history(OUTPUT_DIR)}
 
 @app.delete("/api/history/{job_id}")
-async def delete_history(job_id: str):
+async def delete_history(job_id: str, request: Request):
     """Delete a job's output directory and all its files."""
+    require_trusted_config_request(request)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     job_dir = os.path.join(OUTPUT_DIR, job_id)
@@ -714,8 +810,10 @@ async def delete_history(job_id: str):
     return {"success": True}
 
 @app.post("/api/compose/{job_id}/{clip_index}")
-async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
+async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, request: Request):
     """Compose a final video from active toggle layers (Smart Cut → Hook → Subtitles)."""
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "compose", capacity=30, refill_per_sec=30 / 60)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
 
@@ -723,12 +821,12 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
     if not os.path.isdir(job_dir):
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Find metadata
-    metadata_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
-    if not metadata_files:
+    # Find metadata (latest by mtime, not filesystem glob order)
+    metadata_path = _pick_latest_metadata(job_dir)
+    if not metadata_path:
         raise HTTPException(status_code=404, detail="No metadata found")
 
-    with open(metadata_files[0]) as f:
+    with open(metadata_path, encoding="utf-8") as f:
         metadata = json.load(f)
 
     clips = metadata.get("shorts", [])
@@ -740,7 +838,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
     # Resolve the base clip filename (same logic as other endpoints)
     clip_filename = filename_from_video_url(clip_info.get("video_url"))
     if not clip_filename:
-        base_name = os.path.basename(metadata_files[0]).replace("_metadata.json", "")
+        base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
         clip_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
     base_clip = os.path.join(job_dir, clip_filename)
 
@@ -759,7 +857,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest):
             subtitle_params=req.subtitle_params,
         )
         return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
-    except HTTPException:
+    except (HTTPException, ClippyMeError):
         raise
     except Exception as e:
         logger.error("Compose error for job %s clip %d: %s", job_id, clip_index, e)
@@ -818,6 +916,8 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     on disk and fall back to the base clip.
     """
     require_trusted_config_request(request)
+    # Throttle uploads so a runaway "publish all" can't exhaust Zernio quota.
+    enforce_rate_limit(request, "publish", capacity=30, refill_per_sec=30 / 60)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     job_dir = os.path.join(OUTPUT_DIR, job_id)
@@ -829,10 +929,10 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     if not api_key:
         raise HTTPException(status_code=400, detail="Zernio API key not configured")
 
-    metadata_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
-    if not metadata_files:
+    metadata_path = _pick_latest_metadata(job_dir)
+    if not metadata_path:
         raise HTTPException(status_code=404, detail="No metadata found")
-    with open(metadata_files[0]) as f:
+    with open(metadata_path, encoding="utf-8") as f:
         metadata = json.load(f)
     clips = metadata.get("shorts", [])
     if clip_index < 0 or clip_index >= len(clips):
@@ -843,7 +943,7 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     # cache-busting query strings left behind by old reframe responses.
     base_filename = filename_from_video_url(clip_info.get("video_url"))
     if not base_filename:
-        base_name = os.path.basename(metadata_files[0]).replace("_metadata.json", "")
+        base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
         base_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
     base_clip = os.path.join(job_dir, base_filename)
 
@@ -871,6 +971,8 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
                 subtitle_params=req.subtitle_params or {},
             )
             upload_path = os.path.join(job_dir, composed_filename)
+        except ClippyMeError:
+            raise
         except Exception as e:
             logger.error("publish: compose_layers failed for %s/%d: %s", job_id, clip_index, e)
             raise HTTPException(status_code=500, detail=f"Compose before publish failed: {e}")
@@ -921,8 +1023,9 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
 
 
 @app.post("/api/history/{job_id}/restore")
-async def restore_job(job_id: str):
+async def restore_job(job_id: str, request: Request):
     """Restore a past job into the in-memory jobs dict so edit/hook/subtitle endpoints work."""
+    require_trusted_config_request(request)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     job_dir = os.path.join(OUTPUT_DIR, job_id)

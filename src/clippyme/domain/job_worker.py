@@ -64,10 +64,15 @@ def make_workers(
                 # sweeps in that case so a stale mtime can't trigger
                 # a bulk delete behind the user's back.
                 if job_retention_seconds > 0:
-                    # OUTPUT_DIR: purge stale job folders
+                    from clippyme.domain.history_service import is_valid_job_id
+                    # OUTPUT_DIR: purge stale job folders. Only ever delete
+                    # directories whose name is a valid job id — never a
+                    # symlink, the thumbnails dir, or a hand-placed folder.
                     for job_id in os.listdir(output_dir):
                         job_path = os.path.join(output_dir, job_id)
-                        if os.path.isdir(job_path):
+                        if not is_valid_job_id(job_id):
+                            continue
+                        if os.path.isdir(job_path) and not os.path.islink(job_path):
                             if now - os.path.getmtime(job_path) > job_retention_seconds:
                                 logger.info("Purging old job: %s", job_id)
                                 shutil.rmtree(job_path, ignore_errors=True)

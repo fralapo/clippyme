@@ -312,6 +312,11 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
 
     # Apply overrides
     if font_name:
+        # Same guard as burn_subtitles: a font name is interpolated verbatim
+        # into the ASS [V4+ Styles] block, so reject anything outside the safe
+        # alphabet to prevent ASS-directive injection into the style line.
+        if not _FONT_NAME_RE.match(font_name):
+            raise ValueError(f"invalid font_name: {font_name!r}")
         style["font"] = font_name
     if font_color:
         style["text_color"] = font_color
@@ -398,6 +403,10 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         for w in group:
             duration_cs = max(1, int((w['end'] - w['start']) * 100))
             text = w['word'].strip()
+            # Strip ASS override-block braces from transcript text so a word
+            # token like "{\pos(0,0)}" can't smuggle libass directives into
+            # the Dialogue event (ASR can echo adversarial on-screen/audio text).
+            text = text.replace('{', '').replace('}', '')
             if style["uppercase"]:
                 text = text.upper()
             karaoke_parts.append(f"{{\\k{duration_cs}}}{text}")

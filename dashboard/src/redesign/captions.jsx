@@ -1,5 +1,5 @@
 // ClippyMe redesign — CaptionEditModal: live 9:16 preview that updates as you edit.
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Icon, Btn, Segmented } from './primitives';
 import { CLIP_GRADS, SUBTITLE_PRESETS } from './data';
 
@@ -13,6 +13,12 @@ export function CaptionEditModal({ clip, idx, initial, preselections, onClose, o
     initial?.hookParams?.text || clip.viral_hook_text || clip.hook_text || '',
   );
 
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const save = () => onSave({
     toggles: { ...(initial?.toggles || {}), subtitles: true, hook: !!hookText.trim() },
     subtitleParams: { ...(initial?.subtitleParams || {}), mode, preset, position },
@@ -25,10 +31,11 @@ export function CaptionEditModal({ clip, idx, initial, preselections, onClose, o
 
   return (
     <div className="overlay" onClick={onClose}>
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
+      <div className="modal wide" onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true" aria-labelledby="captions-modal-title">
         <div className="modal-head">
-          <div><h3>Edit captions</h3><div className="mh-sub">{clip.title}</div></div>
-          <button className="x" onClick={onClose}><Icon n="x" /></button>
+          <div><h3 id="captions-modal-title">Edit captions</h3><div className="mh-sub">{clip.title}</div></div>
+          <button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button>
         </div>
         <div className="modal-body" style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 20 }}>
           <div className="clip" style={{ cursor: 'default' }}>

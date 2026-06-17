@@ -9,7 +9,7 @@ import logging
 import os
 import shutil
 
-from fastapi import HTTPException
+from clippyme.domain.errors import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,7 @@ async def _apply_subtitles(
             ),
         )
         if not success:
-            raise HTTPException(status_code=400, detail="No words found for this clip range.")
+            raise ValidationError("No words found for this clip range.")
         await loop.run_in_executor(
             None,
             burn_subtitles,
@@ -147,7 +147,7 @@ async def _apply_subtitles(
             None, generate_srt, transcript, clip_start, clip_end, srt_path
         )
         if not success:
-            raise HTTPException(status_code=400, detail="No words found for this clip range.")
+            raise ValidationError("No words found for this clip range.")
         await loop.run_in_executor(
             None,
             lambda: burn_subtitles(

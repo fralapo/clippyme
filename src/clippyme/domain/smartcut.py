@@ -623,7 +623,11 @@ def _render_with_ffmpeg(
         concat_list = os.path.join(temp_dir, "concat.txt")
         with open(concat_list, "w") as f:
             for seg_path in segment_files:
-                f.write(f"file '{seg_path.replace(chr(92), '/')}'\n")
+                # ffmpeg concat demuxer wraps each path in single quotes; a "'"
+                # in the path (e.g. an unusual TMPDIR) would break the line, so
+                # escape it as the standard '\'' sequence.
+                safe = seg_path.replace(chr(92), '/').replace("'", "'\\''")
+                f.write(f"file '{safe}'\n")
 
         rc, _, stderr = _run([
             "ffmpeg", "-y",

@@ -49,6 +49,11 @@ def filename_from_video_url(video_url: Optional[str]) -> str:
     for sep in ("/", "\\"):
         if sep in cleaned:
             cleaned = cleaned.rsplit(sep, 1)[-1]
+    # Path-traversal guard: the result is joined with a job directory by
+    # callers, so a final component of "." / ".." (or anything that still
+    # carries a separator / null byte) must never escape that directory.
+    if cleaned in (".", "..") or "/" in cleaned or "\\" in cleaned or "\x00" in cleaned:
+        return ""
     return cleaned
 
 

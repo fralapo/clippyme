@@ -4,17 +4,31 @@
 import { getApiUrl } from '../config';
 import { seedToggles, seedHookParams, seedSubtitleParams } from '../lib/seedClipParams';
 
+// Only http/https absolute URLs are honoured as-is; anything else (javascript:,
+// data:, blob:, or a bare "httpfoo:" that slips past a startsWith check) is
+// treated as a relative path and resolved against our own backend. This stops
+// a malicious/compromised API response from injecting a scheme that executes
+// when set as an <a href> / <video src>.
+function safeResolveUrl(url) {
+  const raw = url || '';
+  try {
+    const u = new URL(raw, window.location.origin);
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      // Absolute http(s) → keep; relative → getApiUrl maps to backend.
+      return /^https?:\/\//i.test(raw) ? raw : getApiUrl(raw);
+    }
+  } catch { /* fall through to backend-relative */ }
+  return getApiUrl(raw);
+}
+
 export function clipVideoSrc(clip, bust) {
-  const url = clip?.video_url || '';
-  const full = url.startsWith('http') ? url : getApiUrl(url);
+  const full = safeResolveUrl(clip?.video_url || '');
   return bust ? `${full}${full.includes('?') ? '&' : '?'}v=${bust}` : full;
 }
 
 export function downloadClip(clip, index) {
   const a = document.createElement('a');
-  a.href = clip.video_url && clip.video_url.startsWith('http')
-    ? clip.video_url
-    : `${window.location.origin}${clip.video_url || ''}`;
+  a.href = safeResolveUrl(clip.video_url || '');
   a.download = `clip_${index + 1}.mp4`;
   a.style.display = 'none';
   document.body.appendChild(a);
@@ -53,7 +67,7 @@ export async function exportClip(jobId, index, clip, state, preselections) {
     hook_params: toggles.hook ? hook : {},
     subtitle_params: toggles.subtitles ? subs : {},
   });
-  const href = composed_url.startsWith('http') ? composed_url : getApiUrl(composed_url);
+  const href = safeResolveUrl(composed_url);
   const a = document.createElement('a');
   a.href = href; a.download = `clip_${index + 1}.mp4`; a.style.display = 'none';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);

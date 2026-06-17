@@ -11,9 +11,11 @@ logger = logging.getLogger("clippyme")
 # Strict UUID4 pattern: 8-4-4-4-12 hex with the version/variant nibbles
 # fixed (4xxx and [89ab]xxx). Rejects degenerate values like 36 hyphens
 # that the loose `[0-9a-fA-F-]{36}` regex used to accept.
+# Lowercase-only: uuid.uuid4() always emits lowercase, so rejecting uppercase
+# stops two case-variant IDs from mapping to the same directory on
+# case-insensitive filesystems (macOS/Windows) and referencing another job.
 _JOB_ID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
-    re.IGNORECASE,
 )
 
 

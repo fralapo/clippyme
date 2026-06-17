@@ -6,6 +6,25 @@ from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerif/NotoSerif-Bold.ttf"
 
+# Hard cap for runtime font downloads — defends against a hostile/compromised
+# mirror serving a multi-GB payload (or a decompression bomb) into memory.
+_FONT_MAX_BYTES = 25 * 1024 * 1024
+_FONT_HTTP_TIMEOUT = 30
+
+
+def _download_capped(req, out_path):
+    """Stream a urllib request to disk, aborting past _FONT_MAX_BYTES."""
+    with urllib.request.urlopen(req, timeout=_FONT_HTTP_TIMEOUT) as response, open(out_path, "wb") as out_file:
+        total = 0
+        while True:
+            chunk = response.read(64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _FONT_MAX_BYTES:
+                raise RuntimeError("font download exceeded size cap")
+            out_file.write(chunk)
+
 # Resolve bundled fonts dir by walking up from __file__ (→ repo-root/fonts).
 # A bare CWD-relative "fonts" broke for any caller not launched from the
 # repo root (reframe subprocess, tests, ad-hoc CLI from /tmp). Env override
@@ -28,8 +47,7 @@ def download_font_if_needed():
         print(f"⬇️ Downloading font from {FONT_URL}...")
         try:
             req = urllib.request.Request(FONT_URL, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req) as response, open(FONT_PATH, "wb") as out_file:
-                out_file.write(response.read())
+            _download_capped(req, FONT_PATH)
             print("✅ Font downloaded.")
         except Exception as e:
             print(f"❌ Failed to download font: {e}")
@@ -46,8 +64,7 @@ def download_emoji_font_if_needed():
         print(f"Downloading emoji font...")
         try:
             req = urllib.request.Request(EMOJI_FONT_URL, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req) as response, open(EMOJI_FONT_PATH, "wb") as out_file:
-                out_file.write(response.read())
+            _download_capped(req, EMOJI_FONT_PATH)
             print("Emoji font downloaded.")
         except Exception as e:
             print(f"Failed to download emoji font: {e}")

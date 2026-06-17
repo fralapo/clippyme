@@ -103,9 +103,24 @@ def _versions_equal(a: Optional[str], b: Optional[str]) -> bool:
     return a.strip().lstrip("v") == b.strip().lstrip("v")
 
 
+# Upper bound on the downloaded binary — the real asset is ~30-50 MB; this
+# stops a hijacked/compromised mirror from streaming an unbounded payload.
+MAX_BINARY_BYTES = 200 * 1024 * 1024
+# Executable magic numbers we accept (Linux ELF, macOS Mach-O variants).
+_EXEC_MAGICS = (
+    b"\x7fELF",
+    b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe",  # Mach-O 64/32 LE
+    b"\xfe\xed\xfa\xcf", b"\xfe\xed\xfa\xce",  # Mach-O 64/32 BE
+    b"\xca\xfe\xba\xbe",                        # Mach-O universal (fat)
+)
+
+
 def _download_binary(asset_name: str, target_path: str) -> bool:
     """Atomically download the binary to `target_path`. Returns True on success."""
     url = f"{GITHUB_DOWNLOAD_BASE}/{asset_name}"
+    if not url.lower().startswith("https://"):
+        logger.warning("auto-editor updater: refusing non-https download URL")
+        return False
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
     fd, tmp_path = tempfile.mkstemp(prefix="ae-", dir=os.path.dirname(target_path))
@@ -114,9 +129,24 @@ def _download_binary(asset_name: str, target_path: str) -> bool:
         req = urllib.request.Request(
             url, headers={"User-Agent": "ClippyMe-AutoEditorUpdater/1.0"}
         )
+        total = 0
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT * 4) as resp:
             with open(tmp_path, "wb") as f:
-                shutil.copyfileobj(resp, f)
+                while True:
+                    chunk = resp.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_BINARY_BYTES:
+                        raise RuntimeError("download exceeded size cap")
+                    f.write(chunk)
+        # Reject anything that isn't a native executable before we chmod +x it.
+        with open(tmp_path, "rb") as f:
+            head = f.read(4)
+        if not any(head.startswith(m) for m in _EXEC_MAGICS):
+            logger.warning("auto-editor updater: downloaded file is not an executable (magic=%r)", head)
+            os.remove(tmp_path)
+            return False
         os.chmod(tmp_path, 0o755)
         # Sanity check: must be executable and report a version
         try:

@@ -11,7 +11,7 @@ ClippyMe is a self-hosted AI video platform that transforms long-form videos (Yo
 All Python backend code lives under `src/clippyme/` (src-layout, installed via `pip install -e .`):
 
 - `src/clippyme/api/` — FastAPI app (`app.py`), `schemas.py`, `security.py`
-- `src/clippyme/pipeline/` — `main.py` orchestrator, `deepgram_transcribe.py`, `gemini_parser.py`, `gemini_service.py`
+- `src/clippyme/pipeline/` — `main.py` orchestrator (~800 LOC, was 2216), `deepgram_transcribe.py`, `gemini_parser.py`, `gemini_service.py`, plus extracted stages: `transcribe_cache.py`, `download.py`, `scene_detection.py`, `postprocess.py`, `diarization.py`, `hardware.py` (DEVICE/Whisper-model selection), `reframe.py` (cv2/YOLO/MediaPipe core: `process_video_to_vertical` + `SmoothedCameraman`/`SpeakerTracker`/`DetectionSmoother` + face/person detection; `ASPECT_RATIO` is a module global `main` sets per-job via `reframe.ASPECT_RATIO = ...`), and pure-math `reframe_ops.py`. `main` re-exports the reframe classes for back-compat. Verify pipeline changes with `docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration"`.
 - `src/clippyme/domain/` — `compose.py`, `clip_endpoints.py`, `job_results.py`, `job_artifacts.py`, `job_worker.py`, `history_service.py`, `subtitles.py`, `smartcut.py`, `hooks.py`
 - `src/clippyme/integrations/` — `social_publisher.py`, `auto_editor_updater.py`
 - `src/clippyme/storage/` — `config_store.py`

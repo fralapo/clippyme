@@ -63,6 +63,41 @@ def _safe_zernio_base_url() -> str:
     return raw
 
 
+def _reject_internal_upload_url(url: str) -> None:
+    """Raise ZernioError unless `url` is HTTPS pointing at a public host.
+
+    SSRF guard for the presigned-PUT step. Best-effort: unresolvable hosts are
+    allowed (the PUT will simply fail), private/loopback/link-local/reserved
+    targets are rejected.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme.lower() != "https":
+        raise ZernioError(f"refusing non-https upload URL: {parsed.scheme!r}")
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ZernioError("upload URL has no host")
+    candidates = set()
+    try:
+        candidates.add(ipaddress.ip_address(host))
+    except ValueError:
+        try:
+            for info in socket.getaddrinfo(host, None):
+                try:
+                    candidates.add(ipaddress.ip_address(info[4][0]))
+                except ValueError:
+                    continue
+        except (socket.gaierror, UnicodeError):
+            return
+    for ip in candidates:
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            raise ZernioError("upload URL resolves to a non-public address")
+
+
 ZERNIO_BASE_URL = _safe_zernio_base_url()
 DEFAULT_TIMEZONE = os.environ.get("ZERNIO_DEFAULT_TZ", "Europe/Rome")
 HTTP_TIMEOUT_SECONDS = int(os.environ.get("ZERNIO_HTTP_TIMEOUT", "60"))
@@ -159,7 +194,14 @@ class ZernioClient:
         return self._request("POST", "/media/presign", json=body)
 
     def upload_to_presigned(self, upload_url: str, file_path: str, content_type: str = "video/mp4") -> None:
-        """PUT the file to the presigned URL. Plain HTTP, no Authorization header."""
+        """PUT the file to the presigned URL. Plain HTTP, no Authorization header.
+
+        The URL comes from Zernio's presign response. We validate it (HTTPS +
+        non-internal host) before issuing the PUT so a compromised/rogue API
+        response can't turn this into an SSRF write to an internal address
+        (cloud metadata endpoints, LAN services, etc.).
+        """
+        _reject_internal_upload_url(upload_url)
         with open(file_path, "rb") as f:
             try:
                 r = requests.put(
