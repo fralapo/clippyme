@@ -24,6 +24,7 @@ from clippyme.pipeline.media_probe import (
     audio_sync_seek_args,
     probe_is_variable_frame_rate,
     probe_stream_start_time,
+    reconcile_fps,
 )
 from clippyme.pipeline.reframe_ops import (
     OneEuroFilter,
@@ -972,7 +973,19 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         print("   🎯 Reframe mode: AUTO — face tracking + dynamic 9:16 crop.")
     print("   Step 1: Detecting scenes...")
     scenes, fps = detect_scenes(input_video)
-    
+
+    # fps reconciliation (Autocrop-vertical learning): the frames written below
+    # are decoded by OpenCV, so the encoder's -r must match OpenCV's reported rate.
+    # PySceneDetect can disagree (e.g. 29.97 vs 30); on a genuine divergence trust
+    # the cv2 reader. Within tolerance the detector value is kept → byte-identical.
+    _probe_cap = cv2.VideoCapture(input_video)
+    _cv2_fps = _probe_cap.get(cv2.CAP_PROP_FPS)
+    _probe_cap.release()
+    _reconciled_fps = reconcile_fps(_cv2_fps, fps)
+    if _reconciled_fps != fps:
+        print(f"   ⏱️  fps reconciled: detector={fps:.4f} → cv2 reader={_reconciled_fps:.4f}")
+    fps = _reconciled_fps
+
     if not scenes:
         print("   ❌ No scenes were detected. Using full video as one scene.")
         # If scene detection fails or finds nothing, treat whole video as one scene
