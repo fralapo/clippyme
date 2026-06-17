@@ -1,3 +1,8 @@
+# CV/ML stack is pinned-exact for reproducible Docker builds. torch 2.11 /
+# mediapipe 0.10.14 are aging; UPGRADE PROCEDURE (do in Docker, one bump at a
+# time, then run `pytest -m integration`): bump torch>=2.4 + matching
+# torchvision, rebuild the CUDA image, verify YOLO + MediaPipe load and a clip
+# reframes correctly before committing the new pin.
 scenedetect==0.6.7.1
 ultralytics==8.4.33
 torch==2.11.0

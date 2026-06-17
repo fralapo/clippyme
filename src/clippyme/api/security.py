@@ -1,7 +1,8 @@
 """Trust/origin helpers for ClippyMe config endpoints."""
 import ipaddress
 import os
-from typing import List, Optional
+import time
+from typing import Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, Request
 
@@ -60,3 +61,38 @@ def require_trusted_config_request(request: Request) -> None:
         return
 
     raise HTTPException(status_code=403, detail="Config access requires a trusted local origin.")
+
+
+# --- in-process rate limiting ----------------------------------------------
+# Dependency-free per-client token bucket. Protects the compute-heavy endpoints
+# (process/batch/publish) from a flood that would exhaust the job queue or
+# Zernio quota. Status polling is intentionally NOT limited. State is in-memory
+# (single-process self-host model); not shared across replicas.
+_rate_state: Dict[Tuple[str, str], Tuple[float, float]] = {}
+
+
+def _rate_limit_allow(key: Tuple[str, str], capacity: float, refill_per_sec: float, now: float) -> bool:
+    """Token-bucket check. Returns True if a token was available (and consumed)."""
+    tokens, last = _rate_state.get(key, (capacity, now))
+    tokens = min(capacity, tokens + max(0.0, now - last) * refill_per_sec)
+    if tokens < 1.0:
+        _rate_state[key] = (tokens, now)
+        return False
+    _rate_state[key] = (tokens - 1.0, now)
+    return True
+
+
+def enforce_rate_limit(request: Request, bucket: str, capacity: float, refill_per_sec: float) -> None:
+    """Raise HTTP 429 when the per-client bucket is empty.
+
+    Disabled by setting RATE_LIMIT_ENABLED=0 (e.g. for load tests). Keyed by
+    client IP + bucket name so different endpoints don't share a budget.
+    """
+    if os.environ.get("RATE_LIMIT_ENABLED", "1") != "1":
+        return
+    client_host = request.client.host if request.client else "unknown"
+    if not _rate_limit_allow((bucket, client_host), capacity, refill_per_sec, time.monotonic()):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Please slow down and retry shortly.",
+        )

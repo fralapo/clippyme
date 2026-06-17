@@ -138,3 +138,55 @@ def test_require_trusted_request_rejects_when_no_client():
     with pytest.raises(HTTPException) as exc:
         require_trusted_config_request(req)
     assert exc.value.status_code == 403
+
+
+# --- rate limiting ---------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clear_rate_state():
+    security._rate_state.clear()
+    yield
+    security._rate_state.clear()
+
+
+def test_rate_limit_allows_until_capacity_then_blocks():
+    key = ("bucket", "1.2.3.4")
+    # capacity 3, no refill within the same instant
+    assert security._rate_limit_allow(key, 3, 0.0, now=100.0) is True
+    assert security._rate_limit_allow(key, 3, 0.0, now=100.0) is True
+    assert security._rate_limit_allow(key, 3, 0.0, now=100.0) is True
+    assert security._rate_limit_allow(key, 3, 0.0, now=100.0) is False
+
+
+def test_rate_limit_refills_over_time():
+    key = ("bucket", "1.2.3.4")
+    assert security._rate_limit_allow(key, 1, 1.0, now=0.0) is True
+    assert security._rate_limit_allow(key, 1, 1.0, now=0.0) is False
+    # one second later, one token refilled
+    assert security._rate_limit_allow(key, 1, 1.0, now=1.0) is True
+
+
+def test_rate_limit_isolated_per_client_and_bucket():
+    assert security._rate_limit_allow(("a", "ip1"), 1, 0.0, now=0.0) is True
+    assert security._rate_limit_allow(("a", "ip1"), 1, 0.0, now=0.0) is False
+    # different client → fresh bucket
+    assert security._rate_limit_allow(("a", "ip2"), 1, 0.0, now=0.0) is True
+    # different bucket, same client → fresh
+    assert security._rate_limit_allow(("b", "ip1"), 1, 0.0, now=0.0) is True
+
+
+def test_enforce_rate_limit_raises_429(monkeypatch):
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "1")
+    req = _FakeRequest(client_host="9.9.9.9")
+    security.enforce_rate_limit(req, "process", capacity=1, refill_per_sec=0.0)
+    with pytest.raises(HTTPException) as exc:
+        security.enforce_rate_limit(req, "process", capacity=1, refill_per_sec=0.0)
+    assert exc.value.status_code == 429
+
+
+def test_enforce_rate_limit_disabled_via_env(monkeypatch):
+    monkeypatch.setenv("RATE_LIMIT_ENABLED", "0")
+    req = _FakeRequest(client_host="9.9.9.9")
+    # Never raises when disabled, regardless of how many calls.
+    for _ in range(50):
+        security.enforce_rate_limit(req, "process", capacity=1, refill_per_sec=0.0)

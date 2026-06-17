@@ -51,6 +51,7 @@ from clippyme.api.schemas import (
 )
 from clippyme.api.security import (
     ALLOWED_ORIGINS,
+    enforce_rate_limit,
     is_trusted_client_host,
     is_trusted_origin,
     parse_allowed_origins,
@@ -247,10 +248,12 @@ async def process_endpoint(
     file: Optional[UploadFile] = File(None),
     url: Optional[str] = Form(None)
 ):
+    # ~20 single-job submissions/min per client; compute-heavy, so throttle.
+    enforce_rate_limit(request, "process", capacity=20, refill_per_sec=20 / 60)
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
-    
+
     # Handle JSON body via ProcessRequest for URL payloads. Pydantic
     # enforces the reframe_mode regex and the instructions length cap
     # before we hand anything to build_main_cmd. Multipart uploads keep
@@ -380,6 +383,8 @@ async def process_endpoint(
 @app.post("/api/batch")
 async def batch_process(req: BatchRequest, request: Request):
     """Submit multiple URLs for batch processing. Each URL becomes a separate job."""
+    # Each batch can enqueue up to 20 jobs, so limit batch calls more tightly.
+    enforce_rate_limit(request, "batch", capacity=10, refill_per_sec=10 / 60)
     api_key = request.headers.get("X-Gemini-Key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
@@ -837,6 +842,8 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     on disk and fall back to the base clip.
     """
     require_trusted_config_request(request)
+    # Throttle uploads so a runaway "publish all" can't exhaust Zernio quota.
+    enforce_rate_limit(request, "publish", capacity=30, refill_per_sec=30 / 60)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     job_dir = os.path.join(OUTPUT_DIR, job_id)
