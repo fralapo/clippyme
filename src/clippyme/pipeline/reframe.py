@@ -66,6 +66,17 @@ face_mesh = mp_face_mesh.FaceMesh(
     min_tracking_confidence=0.5,
 )
 
+# MediaPipe FaceMesh mouth landmark indices (inner lips + corners). Defined here
+# because compute_mouth_aspect_ratio was extracted from main.py during the
+# refactor; without these the MAR call raised NameError on every frame, silently
+# disabling active-speaker selection (the exception was swallowed by the
+# corrupt-frame guard → ~37% duplicated frames).
+_MOUTH_TOP = 13
+_MOUTH_BOTTOM = 14
+_MOUTH_LEFT = 78
+_MOUTH_RIGHT = 308
+
+
 def compute_mouth_aspect_ratio(frame_bgr, face_box) -> float | None:
     """
     Crops the face region and runs FaceMesh to extract the Mouth Aspect Ratio
@@ -213,9 +224,14 @@ class SmoothedCameraman:
         self.current_zoom = 1.0
         self.target_zoom = 1.0
 
-        # Safe zones (dead-band to kill jitter)
-        self.safe_zone_radius_x = self.max_crop_width * 0.20
-        self.safe_zone_radius_y = self.max_crop_height * 0.15
+        # Safe zones (dead-band to kill jitter). Tunable via env (fraction of the
+        # max crop dimension). The old X=0.20 default let a talking head drift up
+        # to 20% off-center before the camera reacted, which read as poor framing
+        # on single-speaker shots. Measured sweep on a real clip (tmp/reframe_eval)
+        # found X=0.05 / Y=0.08 cut centering error ~30% with *lower* jerk (tighter
+        # tracking, not jitter), so those are the new defaults; raise to loosen.
+        self.safe_zone_radius_x = self.max_crop_width * float(os.getenv("REFRAME_DEADZONE_X", "0.05"))
+        self.safe_zone_radius_y = self.max_crop_height * float(os.getenv("REFRAME_DEADZONE_Y", "0.08"))
 
         # Lost-subject recovery: when no target arrives for a while (speaker
         # leaves / long occlusion), hold then ease back to the source center
@@ -1144,6 +1160,10 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                     last_output_frame = output_frame
                 except Exception:
                     dropped_frames += 1
+                    if os.environ.get('REFRAME_DEBUG_EXC') and dropped_frames <= 5:
+                        import traceback
+                        print(f"   🐛 frame {frame_number} ({current_strategy}) failed:", file=sys.stderr)
+                        traceback.print_exc()
                     if last_output_frame is not None:
                         output_frame = last_output_frame
                     else:
