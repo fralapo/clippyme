@@ -534,3 +534,50 @@ def test_trajectory_method_preserves_none_gaps():
     out = ro.build_smoothed_trajectory(targets, sids, 5, 2, 1000, 1000, method="kalman")
     assert out[10] is None and out[11] is None and out[12] is None
     assert len(out) == 23
+
+
+# --- stationary_lock (AutoFlip-style per-scene tripod) -----------------------
+
+def test_stationary_lock_pins_near_static_scene_to_median():
+    xs = [500.0, 502.0, 498.0, 501.0]
+    ys = [500.0, 501.0, 499.0, 500.0]
+    x2, y2, locked = ro.stationary_lock(xs, ys, 1000, 1000, threshold=0.15)
+    assert locked
+    # within snap_center_dist of centre (500) → snapped exactly to centre
+    assert x2 == [500.0] * 4 and y2 == [500.0] * 4
+
+
+def test_stationary_lock_keeps_moving_scene_untouched():
+    xs = [100.0, 400.0, 700.0, 950.0]   # span 850 > 0.15*1000
+    ys = [500.0, 500.0, 500.0, 500.0]
+    x2, y2, locked = ro.stationary_lock(xs, ys, 1000, 1000, threshold=0.15)
+    assert not locked
+    assert x2 == xs and y2 == ys          # unchanged → path stays as tracked
+
+
+def test_stationary_lock_offcenter_static_locks_without_snap():
+    xs = [200.0, 201.0, 199.0]            # static but far from centre 500
+    ys = [500.0, 500.0, 500.0]
+    x2, _y2, locked = ro.stationary_lock(xs, ys, 1000, 1000,
+                                         threshold=0.15, snap_center_dist=0.10)
+    assert locked
+    assert x2[0] == 200.0                  # median, not snapped to centre
+
+
+def test_build_trajectory_stationary_threshold_zero_is_noop():
+    """threshold 0.0 must leave the smoothed path identical (default behaviour)."""
+    targets = _ramp_targets(20)
+    sids = [0] * 20
+    base = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000)
+    same = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000,
+                                        stationary_threshold=0.0)
+    assert base == same
+
+
+def test_build_trajectory_locks_a_static_segment():
+    targets = [(500.0, 500.0, 1.0)] * 20   # perfectly static scene
+    sids = [0] * 20
+    out = ro.build_smoothed_trajectory(targets, sids, 7, 2, 1000, 1000,
+                                       stationary_threshold=0.15)
+    cxs = {round(cx, 3) for (cx, _cy, _z) in out}
+    assert cxs == {500.0}                   # all frames pinned to one point

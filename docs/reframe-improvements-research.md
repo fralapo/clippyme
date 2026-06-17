@@ -96,6 +96,51 @@ rule-of-thirds/lead-room framing, (d) audio fusion. The applied changes are
 correct and on-architecture; the items above are the next increments, not
 replacements.
 
+---
+
+## Deep dive: AutoFlip internals (extracted) + what was implemented
+
+Pulled the concrete AutoFlip configuration from the MediaPipe docs:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `motion_stabilization_threshold_percent` | `0.5` | scene held steady if all focus objects stay within this fraction of the frame |
+| `snap_center_max_distance_percent` | (unset) | snap the locked viewpoint to exact centre if within this of centre |
+| `salient_point_bound` | `0.499` | keep salient points inside the crop |
+| `max_scene_size` | `600` | scene buffer cap (frames) |
+| Camera path | — | **L2** Euclidean-norm fit of a low-degree polynomial to the bounding boxes (not L1) |
+| SignalFusing scores | face 0.85–0.9 > human 0.75–0.8 > object 0.1–0.2 | per-class saliency weight |
+| Padding | `blur_cv_size: 200` | blurred-frame fill when content can't be covered |
+
+Two corrections to the first-pass notes above: AutoFlip's reframer path is **L2
+polynomial**, which ClippyMe's savgol global-smooth already approximates (so the
+L1 idea is a *nice-to-have*, not a gap); and AutoFlip's face>human>object
+weighting matches ClippyMe's existing face-over-person-box priority.
+
+**Implemented (this pass):** AutoFlip's stationary lock + center-snap, as the
+host-tested pure helper `reframe_ops.stationary_lock`, wired into
+`build_smoothed_trajectory` and exposed as `REFRAME_STATIONARY_THRESH` /
+`REFRAME_SNAP_CENTER` (opt-in, default off → byte-identical).
+
+### Measured (clip_3, scorer = re-detect faces in output; lower fitness better)
+
+| config | cx_err | jerk | coverage | fitness |
+|---|---|---|---|---|
+| streaming default (shipped) | 0.129 | 0.055 | 0.719 | **3.80** |
+| global-smooth (savgol) | **0.078** | 0.073 | **0.763** | 3.90 |
+| global-smooth + stationary 0.15 | 0.099 | 0.069 | 0.757 | 3.87 |
+
+**Reading the numbers honestly:** global-smooth frames *much* better (centering
+error ~40% lower, higher coverage — confirmed by eye at t=5s, where the speaker
+goes from hard-left to well-centred). Its higher "jerk" is the camera faithfully
+holding a moving subject, not jitter; the scorer's heavy jerk weight is what
+makes it rank below the streaming default, so the fitness *under*-rates it. The
+stationary lock does what AutoFlip intends — trims jerk on near-static scenes —
+for a small net gain. Conclusion: keep streaming as the fast default; recommend
+`REFRAME_GLOBAL_SMOOTH=1` (optionally `+ REFRAME_STATIONARY_THRESH=0.15`) as the
+quality preset. The lesson is that an output-only proxy metric can't fully
+referee tracking-vs-stillness — final camera *feel* still needs a human view.
+
 ## Sources
 - AutoFlip — <https://research.google/blog/autoflip-an-open-source-framework-for-intelligent-video-reframing/>, <https://github.com/google/mediapipe/blob/master/docs/solutions/autoflip.md>
 - L1 optimal camera paths — <https://research.google.com/pubs/archive/37041.pdf>

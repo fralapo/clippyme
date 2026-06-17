@@ -510,10 +510,46 @@ def _smooth_axis(values, method: str, window: int, polyorder: int,
     return np.clip(out, lo, hi)
 
 
+def stationary_lock(xs, ys, frame_w: float, frame_h: float,
+                    threshold: float = 0.15, snap_center_dist: float = 0.10):
+    """AutoFlip-style per-scene "stationary" decision for one scene segment.
+
+    Ported from Google AutoFlip's ``motion_stabilization_threshold_percent`` +
+    ``snap_center_max_distance_percent`` (see docs/reframe-improvements-research.md).
+    If the camera target barely moves across the whole scene — its span on *both*
+    axes stays within ``threshold`` of the frame dimension — the scene is treated
+    as a locked-tripod shot: every frame is pinned to the segment's median target
+    instead of micro-tracking detector jitter. If that lock point is also within
+    ``snap_center_dist`` of the frame centre on an axis, it snaps to exact centre
+    for cleaner framing.
+
+    ``xs``/``ys`` are the (already smoothed + clamped) per-frame target arrays for
+    one scene. Returns ``(xs2, ys2, locked)`` — when not locked the inputs are
+    returned unchanged so the streaming/smoothed path is byte-identical.
+    """
+    n = len(xs)
+    if n == 0:
+        return xs, ys, False
+    x_span = float(max(xs) - min(xs))
+    y_span = float(max(ys) - min(ys))
+    if x_span > threshold * frame_w or y_span > threshold * frame_h:
+        return xs, ys, False  # subject moves too much → keep tracking
+
+    lock_x = float(np.median(xs))
+    lock_y = float(np.median(ys))
+    if abs(lock_x - frame_w / 2.0) <= snap_center_dist * frame_w:
+        lock_x = frame_w / 2.0
+    if abs(lock_y - frame_h / 2.0) <= snap_center_dist * frame_h:
+        lock_y = frame_h / 2.0
+    return [lock_x] * n, [lock_y] * n, True
+
+
 def build_smoothed_trajectory(targets, scene_ids, window: int, polyorder: int,
                               x_max: float, y_max: float,
                               min_zoom: float = 1.0, max_zoom: float = 1.6,
-                              method: str = "savgol"):
+                              method: str = "savgol",
+                              stationary_threshold: float = 0.0,
+                              snap_center_dist: float = 0.10):
     """Smooth a recorded ``(cx, cy, zoom)`` camera trajectory, per scene segment.
 
     ``targets[i]`` is the raw per-frame camera target (or ``None`` for frames
@@ -546,6 +582,13 @@ def build_smoothed_trajectory(targets, scene_ids, window: int, polyorder: int,
         xs = _smooth_axis([t[0] for t in seg], method, window, polyorder, 0.0, x_max)
         ys = _smooth_axis([t[1] for t in seg], method, window, polyorder, 0.0, y_max)
         zs = smooth_and_clamp([t[2] for t in seg], window, polyorder, min_zoom, max_zoom)
+        # AutoFlip-style stationary lock: a near-static scene is pinned to a fixed
+        # viewpoint (tripod) instead of tracking jitter. Opt-in (threshold > 0);
+        # at 0.0 this is a no-op so the smoothed path stays byte-identical.
+        if stationary_threshold > 0.0:
+            xs, ys, _locked = stationary_lock(
+                list(xs), list(ys), x_max, y_max,
+                threshold=stationary_threshold, snap_center_dist=snap_center_dist)
         for k in range(j - i):
             out[i + k] = (float(xs[k]), float(ys[k]), float(zs[k]))
         i = j

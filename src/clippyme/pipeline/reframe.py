@@ -884,10 +884,14 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     # mfahsold/montage-ai; default stays savgol so behaviour is unchanged unless
     # opted in via REFRAME_GLOBAL_METHOD.
     global_method = os.getenv("REFRAME_GLOBAL_METHOD", "savgol").strip().lower()
+    # AutoFlip-style per-scene stationary lock (opt-in). 0.0 = off (no-op).
+    stationary_thresh = float(os.getenv("REFRAME_STATIONARY_THRESH", "0.0"))
+    snap_center_dist = float(os.getenv("REFRAME_SNAP_CENTER", "0.10"))
     smoothed = build_smoothed_trajectory(
         targets, scene_ids, window=win, polyorder=2,
         x_max=original_width, y_max=original_height,
         min_zoom=1.0, max_zoom=1.6, method=global_method,
+        stationary_threshold=stationary_thresh, snap_center_dist=snap_center_dist,
     )
 
     # --- Pass 2: render from the smoothed trajectory -----------------------
