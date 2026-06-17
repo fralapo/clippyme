@@ -69,6 +69,11 @@ class ProcessRequest(BaseModel):
     language: Optional[str] = Field(None, max_length=16)
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
+    # Optional per-job Gemini model override. Validated against the gemini-
+    # family prefix + safe charset (build_main_cmd.GEMINI_MODEL_RE) before it's
+    # appended as --model to the pipeline argv. When omitted, the pipeline uses
+    # GEMINI_MODEL from env / Settings (default gemini-2.5-flash).
+    model: Optional[str] = Field(None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$")
 
 
 class BatchRequest(BaseModel):
@@ -90,6 +95,8 @@ class BatchRequest(BaseModel):
     language: Optional[str] = Field(None, max_length=16)
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
+    # Per-batch Gemini model override (applies to every job in the batch).
+    model: Optional[str] = Field(None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$")
 
 
 class ConfigUpdateRequest(BaseModel):

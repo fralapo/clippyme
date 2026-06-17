@@ -21,6 +21,7 @@ export function useJobPolling({
   isActive,
   onResult,
   onCompleted,
+  onStopped,
   onCancelled,
   onFailed,
   onProgress,
@@ -53,6 +54,10 @@ export function useJobPolling({
         if (data.status === 'completed') {
           onCompleted(data);
           return; // stop polling
+        } else if (data.status === 'stopped') {
+          // Graceful early stop — terminal, but keeps the finished clips.
+          (onStopped || onCompleted)(data);
+          return;
         } else if (data.status === 'cancelled') {
           onCancelled();
           return;

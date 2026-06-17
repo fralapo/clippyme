@@ -59,6 +59,37 @@ def test_reframe_mode_auto_is_omitted():
     assert "--reframe-mode" not in cmd
 
 
+# --- per-job model override ------------------------------------------------
+
+def test_model_forwarded_when_valid():
+    cmd = build_main_cmd(url="https://x.com/v", output_dir="o", model="gemini-2.5-pro")
+    assert cmd[cmd.index("--model") + 1] == "gemini-2.5-pro"
+
+
+def test_model_omitted_when_none_or_blank():
+    assert "--model" not in build_main_cmd(url="https://x.com/v", output_dir="o")
+    assert "--model" not in build_main_cmd(url="https://x.com/v", output_dir="o", model="")
+    assert "--model" not in build_main_cmd(url="https://x.com/v", output_dir="o", model="   ")
+
+
+def test_model_future_gemini_family_accepted():
+    # Live discovery surfaces newer families; the boundary guard must allow them.
+    cmd = build_main_cmd(url="https://x.com/v", output_dir="o", model="gemini-3-pro")
+    assert cmd[cmd.index("--model") + 1] == "gemini-3-pro"
+
+
+@pytest.mark.parametrize("bad", [
+    "gpt-4o",                 # wrong family
+    "gemini",                 # no suffix
+    "gemini-2.5-pro; rm -rf", # shell metachars
+    "--inject",               # argv injection
+    "gemini-" + "x" * 100,    # over length cap
+])
+def test_model_rejects_invalid(bad):
+    with pytest.raises(ValueError):
+        build_main_cmd(url="https://x.com/v", output_dir="o", model=bad)
+
+
 def test_language_multi_is_omitted():
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", language="multi")
     assert "--language" not in cmd

@@ -260,6 +260,10 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
     // global audiences. Restored from localStorage v3+ so a user who picks
     // 'en' or 'it' explicitly doesn't have to re-select on every mount.
     const [preLanguage, setPreLanguage] = useState(persisted.preLanguage ?? 'multi');
+    // Per-job Gemini model override. '' = use the global Settings model
+    // (default gemini-2.5-flash). Lets the user pick a stronger/cheaper model
+    // for THIS run without touching Settings.
+    const [preModel, setPreModel] = useState(persisted.preModel ?? '');
 
     // Subtle Ken Burns zoom (1.0→1.05x) applied to each clip. Default ON
     // because it noticeably improves retention on static-shot content.
@@ -294,6 +298,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                     preHookPosition,
                     preHookSize,
                     preLanguage,
+                    preModel,
                     preSubtleZoom,
                     preAiDetection,
                 })
@@ -318,6 +323,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
         preHookPosition,
         preHookSize,
         preLanguage,
+        preModel,
         preSubtleZoom,
         preAiDetection,
     ]);
@@ -347,6 +353,8 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                 : null,
             hook: preHook ? { position: preHookPosition, size: preHookSize } : null,
             language: preLanguage && preLanguage !== 'multi' ? preLanguage : undefined,
+            // Per-job LLM override ('' → backend uses the global Settings model).
+            model: preModel || undefined,
             // Backend flags — inverted from the positive UI labels.
             no_zoom: !preSubtleZoom,
             skip_analysis: !preAiDetection,
@@ -735,6 +743,37 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                                         Leave on <span className="text-zinc-400">Multi</span> for mixed-language videos.
                                         Pick a single language when you know the video is only in one —
                                         it improves transcription accuracy and speaker diarization.
+                                    </p>
+                                </div>
+
+                                {/* AI model override — which Gemini model detects the
+                                    viral moments. Default uses the global Settings model;
+                                    pick Pro for sharper picks or Flash-Lite for cheapest.
+                                    The full live model list lives in Settings. */}
+                                <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <label htmlFor="clip-model" className="type-label !text-zinc-300">
+                                            AI model
+                                        </label>
+                                        <span className="type-mono text-[9px] text-zinc-600 normal-case tracking-normal">
+                                            {preModel ? `This job · ${preModel}` : 'Default (Settings)'}
+                                        </span>
+                                    </div>
+                                    <select
+                                        id="clip-model"
+                                        value={preModel}
+                                        onChange={(e) => setPreModel(e.target.value)}
+                                        className="w-full bg-white/[0.02] border border-white/[0.08] hover:border-white/[0.16] focus:border-[oklch(74%_0.175_62)]/55 text-zinc-200 text-[12px] font-mono uppercase tracking-[0.1em] px-3 h-9 rounded-[3px] cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[oklch(74%_0.175_62)]/45 appearance-none"
+                                    >
+                                        <option value="" className="bg-[oklch(9%_0.006_260)]">Default (use Settings)</option>
+                                        <option value="gemini-2.5-flash" className="bg-[oklch(9%_0.006_260)]">Gemini 2.5 Flash · balanced</option>
+                                        <option value="gemini-2.5-pro" className="bg-[oklch(9%_0.006_260)]">Gemini 2.5 Pro · sharpest</option>
+                                        <option value="gemini-2.5-flash-lite" className="bg-[oklch(9%_0.006_260)]">Gemini 2.5 Flash-Lite · cheapest</option>
+                                    </select>
+                                    <p className="text-[10px] text-zinc-600 leading-snug">
+                                        Overrides the model for <span className="text-zinc-400">this run only</span>.
+                                        Newer models (Gemini 3+) appear automatically under
+                                        <span className="text-zinc-400"> Settings → AI model</span> once your key has access.
                                     </p>
                                 </div>
 

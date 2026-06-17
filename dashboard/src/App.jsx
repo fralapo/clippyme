@@ -101,36 +101,51 @@ function App() {
     if (apiKey) localStorage.setItem('gemini_key', apiKey);
   }, [apiKey]);
 
-  useJobPolling({
-    jobId,
-    isActive: status === 'processing',
-    onResult: setResults,
-    onCompleted: (data) => {
-      setStatus('complete');
+  // Shared "job reached a terminal state with clips" handler — used both for a
+  // normal completion AND a graceful early stop (status==='stopped'), since both
+  // land the user in the editable History viewer with whatever clips finished.
+  const finishJob = useCallback((data, { confetti = true } = {}) => {
+    setStatus('complete');
+    if (confetti) {
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3000);
-      // Auto-switch to History tab once the job is done — Create is only
-      // for launching, History hosts both the list AND the viewer for
-      // completed jobs. This also matches the "delete from history while
-      // looking at Create" bug: Create never shows results anymore, so
-      // there's no stale view to worry about.
-      setActiveTab('history');
-      // Auto-apply smartcut pre-selection: fire-and-forget so files are ready at download time
-      if (preselections?.smartcut && data.result?.clips) {
-        data.result.clips.forEach((clip, i) => {
-          fetch(getApiUrl(`/api/smartcut/${jobId}/${i}`), { method: 'POST' })
-            .catch(err => console.warn('Pre-smartcut failed for clip', i, err));
-        });
-      }
-      saveToHistory({
-        jobId,
-        status: 'complete',
-        timestamp: Date.now(),
-        source: processingMedia?.type === 'url' ? processingMedia.payload : processingMedia?.payload?.name || 'Local file',
-        sourceType: processingMedia?.type || 'file',
-        clipCount: data.result?.clips?.length || 0,
-        cost: data.result?.cost_analysis?.total_cost || null,
+    }
+    // Auto-switch to History tab once the job is done — Create is only
+    // for launching, History hosts both the list AND the viewer for
+    // completed jobs.
+    setActiveTab('history');
+    // Auto-apply smartcut pre-selection: fire-and-forget so files are ready at download time
+    if (preselections?.smartcut && data.result?.clips) {
+      data.result.clips.forEach((clip, i) => {
+        fetch(getApiUrl(`/api/smartcut/${jobId}/${i}`), { method: 'POST' })
+          .catch(err => console.warn('Pre-smartcut failed for clip', i, err));
       });
+    }
+    saveToHistory({
+      jobId,
+      status: 'complete',
+      timestamp: Date.now(),
+      source: processingMedia?.type === 'url' ? processingMedia.payload : processingMedia?.payload?.name || 'Local file',
+      sourceType: processingMedia?.type || 'file',
+      clipCount: data.result?.clips?.length || 0,
+      cost: data.result?.cost_analysis?.total_cost || null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, preselections, processingMedia, saveToHistory]);
+
+  useJobPolling({
+    jobId,
+    // Keep polling while paused too — so a resume → completion is still picked
+    // up, and the live clip grid keeps refreshing the moment work resumes.
+    isActive: status === 'processing' || status === 'paused',
+    onResult: setResults,
+    onCompleted: (data) => finishJob(data, { confetti: true }),
+    // Graceful stop: keep the clips that finished, no celebratory confetti.
+    onStopped: (data) => {
+      finishJob(data, { confetti: false });
+      import('sonner').then(({ toast }) =>
+        toast.info(`Stopped early — kept ${data.result?.clips?.length || 0} finished clip(s)`)
+      ).catch(() => {});
     },
     onCancelled: () => {
       setStatus('idle');
@@ -234,6 +249,16 @@ function App() {
         status={status}
         jobId={jobId}
         onReset={handleReset}
+        onPaused={() => setStatus('paused')}
+        onResumed={() => setStatus('processing')}
+        onStopped={() => {
+          // Graceful stop fired — let the polling loop (still active while
+          // 'processing') observe backend status 'stopped' and drive the
+          // transition to the editable viewer via finishJob/onStopped.
+          import('sonner').then(({ toast }) =>
+            toast.message('Stopping… keeping clips finished so far')
+          ).catch(() => {});
+        }}
         onCancelled={() => {
           setStatus('idle');
           setJobId(null);
@@ -377,28 +402,62 @@ function App() {
               />
             )}
 
-            {/* Step 2: Processing / error (no clips yet) + Step 2b: partial results */}
-            {((status === 'processing' || status === 'error') && !results?.clips?.length) ||
-            (status === 'processing' && results?.clips?.length > 0) ? (
-              <ProcessingView
-                status={status}
-                currentStep={currentStep}
-                processingMedia={processingMedia}
-                results={results}
-                jobId={jobId}
-                preselections={preselections}
-                syncedTime={syncedTime}
-                isSyncedPlaying={isSyncedPlaying}
-                syncTrigger={syncTrigger}
-                logs={logs}
-                logsVisible={logsVisible}
-                onLogsToggle={() => setLogsVisible(!logsVisible)}
-                onClipPlay={handleClipPlay}
-                onClipPause={handleClipPause}
-                onRetry={handleProcess}
-                onReset={handleReset}
-              />
-            ) : null}
+            {/* Step 2 (no clips yet): processing animation / pipeline / logs / error.
+                Step 2b (clips streaming in): the FULL editable ResultsGrid so the
+                user can view, toggle, disable/delete and even publish clips that
+                have already finished while later ones are still rendering. The
+                grid is status-aware (live source preview + "waiting" headline)
+                and `paused` keeps it mounted too. */}
+            {(() => {
+              const isLive = status === 'processing' || status === 'paused';
+              if (isLive && results?.clips?.length > 0) {
+                return (
+                  <div className="animate-fade-in">
+                    <ResultsGrid
+                      results={results}
+                      status={status}
+                      jobId={jobId}
+                      preselections={preselections}
+                      processingMedia={processingMedia}
+                      syncedTime={syncedTime}
+                      isSyncedPlaying={isSyncedPlaying}
+                      syncTrigger={syncTrigger}
+                      logs={logs}
+                      logsVisible={logsVisible}
+                      onLogsToggle={() => setLogsVisible(!logsVisible)}
+                      onClipPlay={handleClipPlay}
+                      onClipPause={handleClipPause}
+                      onRetry={handleProcess}
+                      clipStates={clipStates}
+                      onUpdateClipState={updateClipState}
+                    />
+                  </div>
+                );
+              }
+              if (isLive || status === 'error') {
+                return (
+                  <ProcessingView
+                    status={status}
+                    currentStep={currentStep}
+                    processingMedia={processingMedia}
+                    results={results}
+                    jobId={jobId}
+                    preselections={preselections}
+                    syncedTime={syncedTime}
+                    isSyncedPlaying={isSyncedPlaying}
+                    syncTrigger={syncTrigger}
+                    logs={logs}
+                    logsVisible={logsVisible}
+                    onLogsToggle={() => setLogsVisible(!logsVisible)}
+                    onClipPlay={handleClipPlay}
+                    onClipPause={handleClipPause}
+                    onRetry={handleProcess}
+                    onReset={handleReset}
+                  />
+                );
+              }
+              return null;
+            })()}
           </div>
         )}
       </main>

@@ -694,6 +694,10 @@ if __name__ == '__main__':
                              "transcription accuracy AND speaker diarization reliability.")
     parser.add_argument('--aspect', choices=['9:16', '1:1', '16:9'], default='9:16',
                         help="Output aspect ratio: 9:16 vertical (default), 1:1 square, or 16:9 horizontal.")
+    parser.add_argument('--model', type=str, default=None,
+                        help="Override the Gemini model for viral detection on THIS job (e.g. "
+                             "'gemini-2.5-pro', 'gemini-3-pro'). When unset, the pipeline uses "
+                             "GEMINI_MODEL from env / Settings (default gemini-2.5-flash).")
 
     args = parser.parse_args()
 
@@ -707,6 +711,13 @@ if __name__ == '__main__':
     reframe.ASPECT_RATIO = {'9:16': 9 / 16, '1:1': 1.0, '16:9': 16 / 9}.get(args.aspect, 9 / 16)
     if args.aspect != '9:16':
         print(f"📐 Aspect ratio: {args.aspect} ({reframe.ASPECT_RATIO:.3f})")
+
+    # Per-job Gemini model override — set the env BEFORE get_viral_clips, which
+    # reads GEMINI_MODEL at call time (main.py get_viral_clips). Lets the user
+    # pick a different model per run without changing the global Settings value.
+    if args.model:
+        os.environ["GEMINI_MODEL"] = args.model
+        print(f"🤖  Gemini model override: {args.model}")
 
     # Per-job language override — propagate to the env BEFORE any transcription
     # call so deepgram_transcribe.transcribe_with_deepgram reads the user's

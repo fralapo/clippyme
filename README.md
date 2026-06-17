@@ -62,6 +62,12 @@ Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish), **Hook** text overlay (Pillow + emoji), **Subtitles** (6 ASS karaoke presets or classic SRT, pixel-faithful frontend preview).
 7. **Publish or schedule** to TikTok / Instagram / YouTube via **Zernio**, with a SmartScheduler that picks Italian-prime-time slots, avoids same-day collisions, and handles per-platform daily-limit 429s by skipping exhausted platforms across a batch.
 
+While a job runs you stay in control:
+
+- **Edit clips as they finish** — completed clips stream into the full editor (toggles, disable/delete, publish) while later ones are still rendering; no need to wait for the whole job.
+- **Pause / Resume / Stop** — suspend and resume the running job, **Stop & keep** to end early but retain the clips finished so far, or **Discard** to kill and delete everything.
+- **Pick the AI model per job** — override the Gemini model for a single run from the Clip Options panel (or set the default, with live model discovery, in Settings).
+
 ---
 
 ## Stack
@@ -204,10 +210,13 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/process` | Single video (URL or upload). Accepts `reframe_mode`. |
+| `POST` | `/api/process` | Single video (URL or upload). Accepts `reframe_mode`, per-job `model`. |
 | `POST` | `/api/batch` | Up to 20 URLs in one shot. |
-| `GET` | `/api/status/{job_id}` | Live status + logs + result. |
-| `POST` | `/api/cancel/{job_id}` | Kill the subprocess. |
+| `GET` | `/api/status/{job_id}` | Live status + logs + result (clips stream in as they finish). |
+| `POST` | `/api/pause/{job_id}` | Suspend the running job (resume-able). |
+| `POST` | `/api/resume/{job_id}` | Resume a paused job. |
+| `POST` | `/api/stop/{job_id}` | Stop early but **keep the clips finished so far**. |
+| `POST` | `/api/cancel/{job_id}` | Kill the subprocess **and discard all output**. |
 | `POST` | `/api/compose/{job_id}/{clip_index}` | Compose Smart Cut + Hook + Subtitles on demand. |
 | `POST` | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut a single clip. |
 | `POST` | `/api/reframe/{job_id}/{clip_index}` | Switch a clip's reframe mode. |

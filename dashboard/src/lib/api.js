@@ -50,6 +50,9 @@ export async function submitProcessJob(data, apiKey) {
   const aspect = data.preselections?.aspect;
   const noZoom = data.preselections?.no_zoom === true;
   const skipAnalysis = data.preselections?.skip_analysis === true;
+  // Per-job Gemini model override (optional). Validated server-side against the
+  // gemini- family prefix; omitted → backend uses the global Settings model.
+  const model = (data.preselections?.model || '').trim();
 
   if (data.type === 'url') {
     headers['Content-Type'] = 'application/json';
@@ -60,6 +63,7 @@ export async function submitProcessJob(data, apiKey) {
     if (language) jsonBody.language = language;
     if (noZoom) jsonBody.no_zoom = true;
     if (skipAnalysis) jsonBody.skip_analysis = true;
+    if (model) jsonBody.model = model;
     body = JSON.stringify(jsonBody);
   } else {
     if (data.payload?.size > 2048 * 1024 * 1024) {
@@ -72,6 +76,7 @@ export async function submitProcessJob(data, apiKey) {
     if (language) formData.append('language', language);
     if (noZoom) formData.append('no_zoom', 'true');
     if (skipAnalysis) formData.append('skip_analysis', 'true');
+    if (model) formData.append('model', model);
     body = formData;
   }
 
@@ -99,6 +104,7 @@ export async function submitBatchJob(data, apiKey) {
   if (language) batchBody.language = language;
   if (data.preselections?.no_zoom === true) batchBody.no_zoom = true;
   if (data.preselections?.skip_analysis === true) batchBody.skip_analysis = true;
+  if ((data.preselections?.model || '').trim()) batchBody.model = data.preselections.model.trim();
   const res = await fetch(getApiUrl('/api/batch'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },

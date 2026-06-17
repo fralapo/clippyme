@@ -171,6 +171,9 @@ Components land in `src/components/ui/`. They use Tailwind v4 class syntax — v
 ## Key Patterns
 
 - **Job queue**: In-memory async queue in `app.py`. Jobs submitted via `POST /api/process`, polled via `GET /api/status/{job_id}`.
+- **Job control (pause / resume / stop / cancel)** — `clippyme.domain.job_control` owns the state machine. Statuses: `queued → processing ⇄ paused → {completed, failed, cancelled, stopped}`. Pure transition guards (`can_pause/can_resume/can_stop/can_cancel/should_skip_dispatch`) are host-unit-tested; `suspend_tree`/`resume_tree` use **psutil** (already a dep) to signal the whole subprocess tree (children-first suspend, parent-first resume) — cross-platform (SIGSTOP/SIGCONT on Linux, SuspendThread on Windows), unlike `os.kill(SIGSTOP)`. `/api/pause`+`/api/resume` suspend/resume; `/api/stop` is a **graceful** stop that kills the subprocess but promotes the partial result to final (`run_job`'s post-loop sees status `stopped` and keeps the clips); `/api/cancel` is the **hard discard** (kill + `rmtree`). The pipeline subprocess has no IPC, so a kill is the only mid-run stop — there is no clean inter-clip boundary. `run_job` has a pre-dispatch guard (`should_skip_dispatch`) so a job cancelled/stopped while still `queued` never launches. Frontend controls live in `TopNav.jsx` (Pause/Resume + **Stop & keep** + **Discard**); `useJobPolling` treats backend `stopped` as terminal-with-clips and routes to the editable viewer.
+- **Live editable clips during processing**: the backend already streams partial clips (`load_partial_result` with `only_ready=True`). The Create tab now renders the **full `ResultsGrid`** (with `clipStates`/`onUpdateClipState`) as soon as `results.clips.length > 0` while `status` is `processing`/`paused`, so finished clips are viewable + editable + publishable while later ones still render. `ProcessingView` is shown only in the no-clips-yet phase.
+- **Per-job LLM model override**: the Gemini model for viral detection is global (Settings → `GEMINI_MODEL`) but can be overridden **per job** via `ProcessRequest.model`/`BatchRequest.model` → `build_main_cmd(model=...)` → `--model` CLI arg → `main.py` sets `os.environ["GEMINI_MODEL"]` before `get_viral_clips` (mirrors the `--language` override). Validated at the boundary by `job_results.GEMINI_MODEL_RE` (`^gemini-[A-Za-z0-9.\-]{1,64}$` — blocks argv injection; allows future `gemini-3*`). Frontend: a quick-picker in MediaInput's Clip Options (`preselections.model`) + the live-discovery dropdown in Settings (`/api/config/models`, allow-list prefixes `gemini-2.5-`/`gemini-3` in `gemini_service.py`). Unknown models fall through to a `$0.00` "Pricing not available" cost note (`main.py:MODEL_PRICING`).
 - **Batch processing**: `POST /api/batch` accepts up to 20 URLs, creates one job per URL, and returns the list of `job_id`s. The frontend polls each job individually via `GET /api/status/{job_id}` and aggregates progress client-side. Supports `reframe_mode` parameter.
 - **Mixed batch (URLs + files)**: The frontend `useJobSubmission.handleBatchProcess` supports both. URLs are submitted in one shot to `/api/batch`; each file is submitted individually to `/api/process`. The hook then unifies polling across all returned `job_id`s using `/api/status/{job_id}`, aggregating progress until every job reaches a terminal state. No backend change is needed for mixed batches.
 - **Compose endpoint**: `POST /api/compose/{job_id}/{clip_index}` accepts `toggles` (smartcut/hook/subtitles booleans), `hook_params`, `subtitle_params`. Composes layers in order: Smart Cut → Hook → Subtitles. Returns `composed_url`. Cleans up intermediate files.
@@ -189,6 +192,7 @@ python -m clippyme.pipeline.main <url_or_path> [options]
   --instructions "focus on hooks"        # Directive injected into Gemini prompt
   --no-zoom                              # Disable Ken Burns auto-zoom (1.0→1.05x)
   --reframe-mode auto|disabled           # Auto face tracking or 4:3 crop with black bars
+  --model gemini-2.5-pro                 # Override the Gemini model for THIS job (else GEMINI_MODEL)
 ```
 
 ## API Endpoints
@@ -204,7 +208,10 @@ python -m clippyme.pipeline.main <url_or_path> [options]
 | POST | `/api/config/cookies` | Upload persistent cookies file |
 | GET | `/api/config/cookies/status` | Check if cookies are configured |
 | DELETE | `/api/config/cookies` | Remove cookies file |
-| POST | `/api/cancel/{job_id}` | Cancel a running job |
+| POST | `/api/cancel/{job_id}` | Cancel a running job (hard kill **+ delete all output**) |
+| POST | `/api/pause/{job_id}` | Suspend the job's process tree → status `paused` |
+| POST | `/api/resume/{job_id}` | Resume a paused job → status `processing` |
+| POST | `/api/stop/{job_id}` | Graceful stop: kill subprocess but **keep finished clips** → status `stopped` |
 | GET | `/api/history` | List past jobs |
 | POST | `/api/history/{job_id}/restore` | Restore job to memory |
 | DELETE | `/api/history/{job_id}` | Delete job from disk |

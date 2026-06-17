@@ -4,9 +4,18 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 
 ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled"})
 MAX_INSTRUCTIONS_LEN = 2000
+
+# Per-job Gemini model override must look like a real Gemini model id. We don't
+# pin an exact allow-list here (newer families like gemini-3* ship continuously
+# and are surfaced via live discovery), but we DO enforce the family prefix +
+# a safe charset so the value can't smuggle argv flags or shell metacharacters
+# into the pipeline subprocess. The Settings discovery dropdown is the canonical
+# source of valid ids; this is the boundary guard.
+GEMINI_MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]{1,64}$")
 
 # Languages we explicitly allow the frontend to request for Deepgram.
 # Keep this aligned with Nova-3's supported single-language codes:
@@ -32,10 +41,15 @@ def build_main_cmd(
     no_zoom: bool = False,
     skip_analysis: bool = False,
     aspect: str | None = None,
+    model: str | None = None,
 ) -> list[str]:
     """Build a `python -u -m clippyme.pipeline.main ...` command line for a single processing job."""
     if reframe_mode is not None and reframe_mode not in ALLOWED_REFRAME_MODES:
         raise ValueError(f"invalid reframe_mode: {reframe_mode!r}")
+    if model is not None:
+        model = model.strip()
+        if model and not GEMINI_MODEL_RE.match(model):
+            raise ValueError(f"invalid model: {model!r}")
     if aspect is not None and aspect not in ("9:16", "1:1", "16:9"):
         raise ValueError(f"invalid aspect: {aspect!r}")
     if instructions is not None and len(instructions) > MAX_INSTRUCTIONS_LEN:
@@ -73,6 +87,8 @@ def build_main_cmd(
         cmd.append("--no-zoom")
     if skip_analysis:
         cmd.append("--skip-analysis")
+    if model and model.strip():
+        cmd.extend(["--model", model.strip()])
     return cmd
 
 

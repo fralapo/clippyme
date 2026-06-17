@@ -41,6 +41,7 @@ from clippyme.domain.errors import ClippyMeError
 from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
 from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
 from clippyme.domain.url_utils import filename_from_video_url
+from clippyme.domain import job_control
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
@@ -241,6 +242,13 @@ async def run_job(job_id, job_data):
     except Exception as exc:
         logger.warning("Could not merge persistent config into job env for %s: %s", job_id, exc)
 
+    # Pre-dispatch guard: a job cancelled/stopped while still ``queued`` must
+    # never launch its subprocess (closes the race noted in job_control).
+    if job_control.should_skip_dispatch(jobs[job_id].get('status', '')):
+        logger.info("Skipping dispatch for already-terminated job %s (%s)",
+                    job_id, jobs[job_id].get('status'))
+        return
+
     jobs[job_id]['status'] = 'processing'
     jobs[job_id]['logs'].append("Job started by worker.")
     jobs[job_id]['process'] = None  # Will hold Popen reference for cancel
@@ -278,6 +286,15 @@ async def run_job(job_id, job_data):
 
         if jobs[job_id]['status'] == 'cancelled':
             jobs[job_id]['logs'].append("Process terminated (cancelled).")
+        elif jobs[job_id]['status'] == 'stopped':
+            # Graceful early stop: the subprocess was killed but we KEEP whatever
+            # clips finished rendering. Promote the partial result to final so
+            # the UI shows them as a normal (editable/publishable) result set.
+            partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
+            if partial:
+                jobs[job_id]['result'] = partial
+            n = len((jobs[job_id].get('result') or {}).get('clips', []) or [])
+            jobs[job_id]['logs'].append(f"Process stopped by user; kept {n} finished clip(s).")
         elif returncode == 0:
             jobs[job_id]['status'] = 'completed'
             jobs[job_id]['logs'].append("Process finished successfully.")
@@ -324,6 +341,7 @@ async def process_endpoint(
     language = None
     no_zoom = False
     skip_analysis = False
+    model = None
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         try:
@@ -340,6 +358,7 @@ async def process_endpoint(
         language = validated.language
         no_zoom = bool(validated.no_zoom)
         skip_analysis = bool(validated.skip_analysis)
+        model = validated.model
 
     # For multipart/form-data uploads, extract reframe_mode + language from form fields
     if "multipart/form-data" in content_type:
@@ -353,6 +372,7 @@ async def process_endpoint(
         instructions = form.get("instructions", instructions)
         no_zoom = str(form.get("no_zoom", "")).lower() in {"1", "true", "yes"} or no_zoom
         skip_analysis = str(form.get("skip_analysis", "")).lower() in {"1", "true", "yes"} or skip_analysis
+        model = form.get("model", model) or None
         # Validate the multipart values through the same schema for
         # consistency — we drop the url requirement since we're using
         # an uploaded file path.
@@ -365,6 +385,7 @@ async def process_endpoint(
                 "instructions": instructions or None,
                 "no_zoom": no_zoom,
                 "skip_analysis": skip_analysis,
+                "model": model or None,
             })
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors())
@@ -416,6 +437,7 @@ async def process_endpoint(
             language=language,
             no_zoom=no_zoom,
             skip_analysis=skip_analysis,
+            model=model,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -471,6 +493,7 @@ async def batch_process(req: BatchRequest, request: Request):
                 language=getattr(req, "language", None),
                 no_zoom=bool(getattr(req, "no_zoom", False)),
                 skip_analysis=bool(getattr(req, "skip_analysis", False)),
+                model=getattr(req, "model", None),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
@@ -525,28 +548,132 @@ async def cancel_job(job_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Job not found")
 
     job = jobs[job_id]
-    if job['status'] not in ('processing', 'queued'):
+    if not job_control.can_cancel(job['status']):
         raise HTTPException(status_code=400, detail="Job is not running")
 
+    # A paused job's tree is suspended — resume it first so .kill() is delivered
+    # and the OS can reap it (a stopped process can ignore signals on some OSes).
     proc = job.get('process')
     if proc and proc.poll() is None:
-        import signal
+        if job['status'] == 'paused':
+            try:
+                job_control.resume_tree(proc.pid)
+            except Exception:
+                pass
         try:
             proc.kill()
             proc.wait(timeout=5)
         except Exception:
             pass
 
+    # Set status BEFORE rmtree so the run_job post-loop sees 'cancelled' and
+    # skips the failed/completed branches.
     job['status'] = 'cancelled'
     job['logs'].append("Job cancelled by user.")
     logger.info("Job %s cancelled by user", job_id)
 
-    # Cleanup output dir
+    # Cleanup output dir (discard all partial output).
     output_dir = job.get('output_dir', '')
     if output_dir and os.path.isdir(output_dir):
         shutil.rmtree(output_dir, ignore_errors=True)
 
     return {"success": True, "status": "cancelled"}
+
+
+@app.post("/api/pause/{job_id}")
+async def pause_job(job_id: str, request: Request):
+    """Suspend a running job's process tree (SIGSTOP/SuspendThread via psutil)."""
+    require_trusted_config_request(request)
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[job_id]
+    if not job_control.can_pause(job['status']):
+        raise HTTPException(status_code=400, detail="Job cannot be paused")
+
+    proc = job.get('process')
+    if not (proc and proc.poll() is None):
+        raise HTTPException(status_code=409, detail="Job has no running process")
+
+    n = await asyncio.to_thread(job_control.suspend_tree, proc.pid)
+    job['status'] = 'paused'
+    job['logs'].append(f"Job paused by user ({n} process(es) suspended).")
+    logger.info("Job %s paused (%d procs)", job_id, n)
+    return {"success": True, "status": "paused"}
+
+
+@app.post("/api/resume/{job_id}")
+async def resume_job(job_id: str, request: Request):
+    """Resume a paused job's process tree."""
+    require_trusted_config_request(request)
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[job_id]
+    if not job_control.can_resume(job['status']):
+        raise HTTPException(status_code=400, detail="Job is not paused")
+
+    proc = job.get('process')
+    if not (proc and proc.poll() is None):
+        raise HTTPException(status_code=409, detail="Job has no running process")
+
+    n = await asyncio.to_thread(job_control.resume_tree, proc.pid)
+    job['status'] = 'processing'
+    job['logs'].append(f"Job resumed by user ({n} process(es) resumed).")
+    logger.info("Job %s resumed (%d procs)", job_id, n)
+    return {"success": True, "status": "processing"}
+
+
+@app.post("/api/stop/{job_id}")
+async def stop_job(job_id: str, request: Request):
+    """Graceful stop: kill the subprocess but KEEP finished clips.
+
+    Unlike ``/api/cancel`` (hard discard), this promotes the partial result to
+    final so the user can still view/edit/publish the clips already rendered.
+    """
+    require_trusted_config_request(request)
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = jobs[job_id]
+    if not job_control.can_stop(job['status']):
+        raise HTTPException(status_code=400, detail="Job is not running")
+
+    # Set 'stopped' BEFORE killing so run_job's post-loop keeps the output
+    # instead of marking the killed process as 'failed'.
+    was_queued = job['status'] == 'queued'
+    job['status'] = 'stopped'
+
+    proc = job.get('process')
+    if proc and proc.poll() is None:
+        try:
+            job_control.resume_tree(proc.pid)  # ensure kill is delivered if paused
+        except Exception:
+            pass
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+        # Promote whatever finished to the final result immediately (the
+        # post-loop will also do this, but do it here so the response is fresh).
+        output_dir = job.get('output_dir', '')
+        partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
+        if partial:
+            job['result'] = partial
+
+    n = len((job.get('result') or {}).get('clips', []) or [])
+    msg = "Job stopped before processing started." if was_queued else \
+          f"Job stopped by user; kept {n} finished clip(s)."
+    job['logs'].append(msg)
+    logger.info("Job %s stopped by user (kept %d clips)", job_id, n)
+    return {"success": True, "status": "stopped", "kept_clips": n}
 
 @app.get("/api/config")
 async def get_config(request: Request):
