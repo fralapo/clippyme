@@ -133,6 +133,95 @@ def zoom_for_face_height(face_h: float, max_crop_h: float,
     return max(min_zoom, min(zoom, max_zoom))
 
 
+def advance_value_with_velocity(current: float, target: float, velocity: float,
+                                response: float, damping: float,
+                                max_velocity: float):
+    """Momentum / damped-spring smoother — returns ``(new_value, new_velocity)``.
+
+    ``velocity = velocity*damping + (target-current)*response``, clamped to
+    ``±max_velocity`` (a hard per-frame rate cap), then ``current + velocity``.
+    Unlike the EMA / 1€ smoothers this carries momentum, so it accelerates and
+    decelerates like a real operator and can never jump more than
+    ``max_velocity`` px/frame. Ported from KazKozDev/auto-vertical-reframe
+    (``advance_value_with_velocity``).
+    """
+    velocity = velocity * damping + (target - current) * response
+    if velocity > max_velocity:
+        velocity = max_velocity
+    elif velocity < -max_velocity:
+        velocity = -max_velocity
+    return current + velocity, velocity
+
+
+def limit_step(current: float, target: float, max_step: float) -> float:
+    """Clamp a move from ``current`` toward ``target`` to at most ``max_step``
+    per call — a hard per-frame pan-rate cap. Ported from
+    KazKozDev/auto-vertical-reframe (``limit_step``).
+    """
+    delta = target - current
+    if delta > max_step:
+        return current + max_step
+    if delta < -max_step:
+        return current - max_step
+    return target
+
+
+# --- subject ranking (ported from auto-vertical-reframe SubjectRankingModel) -
+
+# Hand-tuned linear fusion weights. A larger lock/tracking bonus than the
+# per-frame signals deliberately favours identity continuity over chasing
+# whoever momentarily scores highest — this is the anti-ping-pong recipe.
+_RANK_CLASS_BIAS = {
+    "person": 0.22, "dog": 0.12, "cat": 0.10, "car": 0.06,
+    "bicycle": 0.02, "motorcycle": 0.02, "bus": 0.01, "truck": 0.01,
+}
+_RANK_FEATURE_WEIGHTS = {
+    "det_conf": 1.35, "mask_presence": 0.95, "center_affinity": 0.55,
+    "face_presence": 0.48, "pose_presence": 0.34, "saliency_presence": 0.72,
+    "saliency_conf": 0.78, "tracking_match": 1.05, "lock_match": 1.30,
+    "speaker_active": 0.22, "size_logit": 0.26,
+}
+
+
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return lo if v < lo else hi if v > hi else v
+
+
+def rank_subject(*, cls_name: str, conf: float, mask_area: float, frame_area: float,
+                 dist_center: float, frame_diag: float, has_face: bool,
+                 has_pose: bool = False, saliency_confidence: float = 0.0,
+                 tracking_match: bool = False, lock_match: bool = False,
+                 speaker_active: bool = False) -> float:
+    """Linear subject-importance score fusing detection/size/center/face/
+    continuity/speaker signals. Higher = more likely the intended subject.
+
+    Direct port of KazKozDev/auto-vertical-reframe ``SubjectRankingModel``.
+    Callers pass whatever signals they have; absent ones default to off, so the
+    function degrades gracefully (ClippyMe has no masks/pose/saliency yet, so
+    those features simply contribute 0). The strong ``lock_match`` / ``tracking_match``
+    weights bias toward keeping the current subject, killing camera ping-pong.
+    """
+    norm_area = _clamp(mask_area / max(frame_area, 1.0), 0.0, 1.0)
+    center_affinity = 1.0 - _clamp(dist_center / max(frame_diag, 1.0), 0.0, 1.0)
+    features = {
+        "det_conf": _clamp(conf, 0.0, 1.0),
+        "mask_presence": math.sqrt(norm_area),
+        "center_affinity": center_affinity,
+        "face_presence": 1.0 if has_face else 0.0,
+        "pose_presence": 1.0 if has_pose else 0.0,
+        "saliency_presence": 1.0 if saliency_confidence > 0.0 else 0.0,
+        "saliency_conf": _clamp(saliency_confidence, 0.0, 1.0),
+        "tracking_match": 1.0 if tracking_match else 0.0,
+        "lock_match": 1.0 if lock_match else 0.0,
+        "speaker_active": 1.0 if speaker_active else 0.0,
+        "size_logit": math.log1p(norm_area * 250.0),
+    }
+    score = _RANK_CLASS_BIAS.get(cls_name, 0.0)
+    for name, value in features.items():
+        score += _RANK_FEATURE_WEIGHTS[name] * value
+    return score
+
+
 def asymmetric_zoom_step(current: float, target: float,
                          rate_in: float, rate_out: float) -> float:
     """Ease ``current`` toward ``target`` with direction-dependent speed.

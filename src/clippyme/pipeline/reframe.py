@@ -22,9 +22,11 @@ from ultralytics import YOLO
 from clippyme.pipeline.hardware import DEVICE
 from clippyme.pipeline.reframe_ops import (
     OneEuroFilter,
+    advance_value_with_velocity,
     asymmetric_zoom_step,
     build_smoothed_trajectory,
     drift_to_center,
+    limit_step,
     salient_crop_center,
     smooth_and_clamp,
     zoom_for_face_height,
@@ -221,12 +223,28 @@ class SmoothedCameraman:
         # Default keeps the proven two-speed EMA. The 1€ path follows fast
         # moves and damps jitter with a single principled tradeoff; enable it
         # to A/B test camera feel in an environment where output can be viewed.
-        self._use_euro = os.getenv("REFRAME_SMOOTHER", "").strip().lower() == "euro"
+        _smoother = os.getenv("REFRAME_SMOOTHER", "").strip().lower()
+        self._use_euro = _smoother == "euro"
+        self._use_spring = _smoother == "spring"
         if self._use_euro:
             mc = float(os.getenv("REFRAME_EURO_MINCUTOFF", "0.014"))
             beta = float(os.getenv("REFRAME_EURO_BETA", "0.0008"))
             self._euro_x = OneEuroFilter(min_cutoff=mc, beta=beta)
             self._euro_y = OneEuroFilter(min_cutoff=mc, beta=beta)
+
+        # Optional momentum / damped-spring smoother (REFRAME_SMOOTHER=spring):
+        # carries velocity for operator-like accel/decel, with a hard per-frame
+        # velocity cap. Ported from KazKozDev/auto-vertical-reframe.
+        if self._use_spring:
+            self._spring_resp = float(os.getenv("REFRAME_SPRING_RESPONSE", "0.18"))
+            self._spring_damp = float(os.getenv("REFRAME_SPRING_DAMPING", "0.82"))
+            self._vx = 0.0
+            self._vy = 0.0
+
+        # Hard per-frame pan-rate cap in px (applies to every smoother mode).
+        # 0 disables it (default). Also caps the spring's max velocity.
+        self._max_step_px = float(os.getenv("REFRAME_MAX_STEP_PX", "0"))
+        self._spring_maxv = self._max_step_px if self._max_step_px > 0 else self.max_crop_width * 0.05
 
     def update_target(self, face_box, is_person_box: bool = False):
         """
@@ -288,6 +306,9 @@ class SmoothedCameraman:
             if self._use_euro:
                 self._euro_x.reset()
                 self._euro_y.reset()
+            if self._use_spring:
+                self._vx = 0.0
+                self._vy = 0.0
         else:
             # Lost-subject recovery: once we've gone `lost_hold_frames` without
             # a fresh target, ease the TARGET toward the source center (and
@@ -305,6 +326,7 @@ class SmoothedCameraman:
                 if self.target_zoom > 1.0:
                     self.target_zoom = max(1.0, self.target_zoom - 0.01)
 
+            prev_center_x, prev_center_y = self.current_center_x, self.current_center_y
             if self._use_euro:
                 # Apply the dead-band on the target, then 1€-filter every frame
                 # (feeding the filter each frame keeps its velocity estimate live).
@@ -312,6 +334,16 @@ class SmoothedCameraman:
                 ty = self.target_center_y if abs(self.target_center_y - self.current_center_y) > self.safe_zone_radius_y else self.current_center_y
                 self.current_center_x = self._euro_x.filter(tx, 1.0)
                 self.current_center_y = self._euro_y.filter(ty, 1.0)
+            elif self._use_spring:
+                # Dead-band, then integrate a velocity-damped move toward target.
+                tx = self.target_center_x if abs(self.target_center_x - self.current_center_x) > self.safe_zone_radius_x else self.current_center_x
+                ty = self.target_center_y if abs(self.target_center_y - self.current_center_y) > self.safe_zone_radius_y else self.current_center_y
+                self.current_center_x, self._vx = advance_value_with_velocity(
+                    self.current_center_x, tx, self._vx,
+                    self._spring_resp, self._spring_damp, self._spring_maxv)
+                self.current_center_y, self._vy = advance_value_with_velocity(
+                    self.current_center_y, ty, self._vy,
+                    self._spring_resp, self._spring_damp, self._spring_maxv)
             else:
                 self.current_center_x = self._ease_axis(
                     self.current_center_x, self.target_center_x,
@@ -321,6 +353,11 @@ class SmoothedCameraman:
                     self.current_center_y, self.target_center_y,
                     self.safe_zone_radius_y, self.max_crop_height,
                 )
+            # Hard per-frame pan-rate cap (all modes; off when 0). Guarantees the
+            # camera never jumps more than REFRAME_MAX_STEP_PX px in one frame.
+            if self._max_step_px > 0:
+                self.current_center_x = limit_step(prev_center_x, self.current_center_x, self._max_step_px)
+                self.current_center_y = limit_step(prev_center_y, self.current_center_y, self._max_step_px)
             # Zoom animates more slowly than position to feel cinematic, and
             # asymmetrically: fast pull-back, slow push-in (smart-reframe port).
             if abs(self.target_zoom - self.current_zoom) > 0.01:

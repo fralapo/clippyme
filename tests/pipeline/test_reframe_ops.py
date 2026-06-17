@@ -271,3 +271,90 @@ def test_trajectory_clamps_to_bounds():
         assert 0.0 <= cx <= 1920
         assert 0.0 <= cy <= 1080
         assert 1.0 <= z <= 1.6
+
+
+# --- advance_value_with_velocity (momentum / damped-spring smoother) --------
+# Ported from KazKozDev/auto-vertical-reframe: a velocity-based camera smoother
+# with explicit per-frame velocity cap, distinct from the EMA / 1€ smoothers.
+
+def test_spring_first_step_moves_toward_target():
+    new, vel = ro.advance_value_with_velocity(0.0, 100.0, velocity=0.0,
+                                              response=0.2, damping=0.8, max_velocity=50.0)
+    assert 0.0 < new <= 50.0
+    assert vel > 0.0
+
+
+def test_spring_velocity_is_capped():
+    # Huge gap + high response would overshoot the cap → must clamp to max_velocity.
+    new, vel = ro.advance_value_with_velocity(0.0, 10000.0, velocity=0.0,
+                                              response=0.9, damping=0.9, max_velocity=30.0)
+    assert vel == pytest.approx(30.0)
+    assert new == pytest.approx(30.0)
+
+
+def test_spring_converges_to_target():
+    cur, vel = 0.0, 0.0
+    for _ in range(500):
+        cur, vel = ro.advance_value_with_velocity(cur, 250.0, vel,
+                                                  response=0.2, damping=0.7, max_velocity=40.0)
+    assert cur == pytest.approx(250.0, abs=0.5)
+    assert vel == pytest.approx(0.0, abs=0.5)
+
+
+def test_spring_damping_decays_velocity_at_target():
+    # At target, the (target-current) term is 0, so velocity decays by `damping`.
+    _, vel = ro.advance_value_with_velocity(100.0, 100.0, velocity=20.0,
+                                            response=0.2, damping=0.5, max_velocity=50.0)
+    assert vel == pytest.approx(10.0)
+
+
+# --- limit_step (hard per-frame pan-rate cap) -------------------------------
+
+def test_limit_step_within_cap_returns_target():
+    assert ro.limit_step(100.0, 105.0, max_step=10.0) == 105.0
+
+
+def test_limit_step_clamps_positive_delta():
+    assert ro.limit_step(100.0, 200.0, max_step=10.0) == 110.0
+
+
+def test_limit_step_clamps_negative_delta():
+    assert ro.limit_step(100.0, 0.0, max_step=10.0) == 90.0
+
+
+# --- rank_subject (subject ranking model port) ------------------------------
+
+_BASE = dict(cls_name="person", conf=0.8, mask_area=10000.0, frame_area=1_000_000.0,
+             dist_center=100.0, frame_diag=2200.0, has_face=True)
+
+
+def test_rank_person_beats_unknown_class():
+    person = ro.rank_subject(**_BASE)
+    other = ro.rank_subject(**{**_BASE, "cls_name": "truck"})
+    assert person > other
+
+
+def test_rank_center_affinity_raises_score():
+    near = ro.rank_subject(**{**_BASE, "dist_center": 50.0})
+    far = ro.rank_subject(**{**_BASE, "dist_center": 2000.0})
+    assert near > far
+
+
+def test_rank_lock_match_is_strong_bonus():
+    locked = ro.rank_subject(**_BASE, lock_match=True)
+    assert locked - ro.rank_subject(**_BASE) == pytest.approx(1.30, abs=1e-6)
+
+
+def test_rank_speaker_active_adds_weight():
+    talking = ro.rank_subject(**_BASE, speaker_active=True)
+    assert talking - ro.rank_subject(**_BASE) == pytest.approx(0.22, abs=1e-6)
+
+
+def test_rank_monotonic_in_confidence():
+    lo = ro.rank_subject(**{**_BASE, "conf": 0.2})
+    hi = ro.rank_subject(**{**_BASE, "conf": 0.95})
+    assert hi > lo
+
+
+def test_rank_no_face_lower_than_face():
+    assert ro.rank_subject(**{**_BASE, "has_face": False}) < ro.rank_subject(**_BASE)
