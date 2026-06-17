@@ -18,6 +18,16 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("clippyme")
+
+# The pinned dependency set (faster-whisper, mediapipe, etc.) is only tested on
+# Python 3.11+. Warn loudly rather than failing with a cryptic import error on
+# an older interpreter.
+if sys.version_info < (3, 11):
+    logger.warning(
+        "ClippyMe requires Python 3.11+. Detected %s — imports may fail or behave unexpectedly.",
+        ".".join(map(str, sys.version_info[:3])),
+    )
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
