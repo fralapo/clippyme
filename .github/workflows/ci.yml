@@ -36,11 +36,18 @@ jobs:
       - name: Run host test suite (excludes integration)
         run: pytest -m "not integration" -q
 
-      # Audit the declared dependencies for known CVEs. Non-blocking for now
-      # (|| true) so a freshly-disclosed CVE doesn't wedge unrelated PRs;
-      # drop the `|| true` once the dependency set is on a lock file.
+      # Audit the pinned tree for known CVEs. Now BLOCKING (we're on a lock
+      # file): a newly-disclosed CVE in any pinned dep fails CI so it gets
+      # reviewed before merge. Two IDs are explicitly ignored with rationale:
+      #   - CVE-2025-3000 (torch): fixed in 2.7.0; we pin 2.11.0 > fix, so the
+      #     pip-audit hit is a stale/over-broad OSV range (false positive).
+      #   - CVE-2026-24049 (wheel): build-time-only ReDoS in metadata parsing,
+      #     not reachable at runtime.
       - name: Dependency vulnerability scan (full pinned tree)
-        run: pip-audit -r requirements.lock --desc || true
+        run: >-
+          pip-audit -r requirements.lock --desc
+          --ignore-vuln CVE-2025-3000
+          --ignore-vuln CVE-2026-24049
 
   frontend:
     name: Frontend (build + lint)

@@ -120,8 +120,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     fi && \
     if [ "$ENABLE_WHISPER_DIARIZE" = "1" ]; then \
         pip install 'pyannote.audio>=3.1'; \
-    fi && \
-    pip install --upgrade yt-dlp
+    fi
+# NOTE: do NOT `pip install --upgrade yt-dlp` here — that would un-pin yt-dlp
+# from requirements.lock and pull whatever the latest (unverified) release is at
+# build time, breaking reproducibility and opening a supply-chain window. yt-dlp
+# is pinned in the lock (yt-dlp>=2026.3.17,<2027); bump it by regenerating the
+# lock so the change is reviewed, not silently fetched on every rebuild.
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
