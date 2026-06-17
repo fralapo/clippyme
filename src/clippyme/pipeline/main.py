@@ -29,52 +29,15 @@ load_dotenv()
 
 # --- Constants ---
 ASPECT_RATIO = 9 / 16
-CACHE_DIR = os.path.join("data", "cache")
-CACHE_TTL_DAYS = 7
-
-
-def _get_cache_path(url):
-    """Return cache file path for a URL, based on SHA256 hash."""
-    import hashlib
-    url_hash = hashlib.sha256(url.encode()).hexdigest()[:16]
-    return os.path.join(CACHE_DIR, f"{url_hash}_transcript.json")
-
-
-def _load_cached_transcript(url):
-    """Load a cached transcript if it exists and is not expired."""
-    cache_path = _get_cache_path(url)
-    if not os.path.exists(cache_path):
-        return None
-    try:
-        mtime = os.path.getmtime(cache_path)
-        if time.time() - mtime > CACHE_TTL_DAYS * 86400:
-            os.remove(cache_path)
-            return None
-        with open(cache_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        print(f"📦 Loaded cached transcript ({os.path.basename(cache_path)})")
-        return data
-    except Exception:
-        return None
-
-
-def _save_transcript_cache(url, transcript):
-    """Save transcript to cache atomically (tmp + replace)."""
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    cache_path = _get_cache_path(url)
-    tmp_path = cache_path + ".tmp"
-    try:
-        with open(tmp_path, 'w', encoding='utf-8') as f:
-            json.dump(transcript, f)
-        os.replace(tmp_path, cache_path)
-        print(f"💾 Transcript cached ({os.path.basename(cache_path)})")
-    except Exception as e:
-        if os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-        print(f"⚠️  Failed to cache transcript: {e}")
+# Transcript cache helpers live in a stdlib-only module (host-testable). Aliased
+# to the historical private names so the rest of main.py is unchanged.
+from clippyme.pipeline.transcribe_cache import (  # noqa: E402
+    CACHE_DIR,
+    CACHE_TTL_DAYS,
+    get_cache_path as _get_cache_path,
+    load_cached_transcript as _load_cached_transcript,
+    save_transcript_cache as _save_transcript_cache,
+)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Test if CUDA actually works for faster-whisper (needs libcublas via ctranslate2).
