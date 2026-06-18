@@ -75,11 +75,11 @@ export async function stopJob(jobId) {
   return res.json().catch(() => ({}));
 }
 
-export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params }) {
+export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params, logo_params }) {
   const res = await fetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ toggles, hook_params, subtitle_params }),
+    body: JSON.stringify({ toggles, hook_params, subtitle_params, logo_params }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -204,6 +204,48 @@ export async function deleteCookies() {
   return res.json().catch(() => ({}));
 }
 
+// --- Custom fonts (e.g. licensed Stratos) ---------------------------------
+export async function listFonts() {
+  const res = await fetch(getApiUrl('/api/config/fonts'));
+  if (!res.ok) return { fonts: [] };
+  return res.json();
+}
+
+export async function uploadFont(file) {
+  const fd = new FormData();
+  fd.append('font_file', file);
+  const res = await fetch(getApiUrl('/api/config/fonts'), { method: 'POST', body: fd });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Font upload failed'); }
+  return res.json().catch(() => ({}));
+}
+
+export async function deleteFont(name) {
+  const res = await fetch(getApiUrl(`/api/config/fonts/${encodeURIComponent(name)}`), { method: 'DELETE' });
+  if (!res.ok) throw new Error('Font remove failed');
+  return res.json().catch(() => ({}));
+}
+
+// --- Brand logo / watermark ------------------------------------------------
+export async function logoStatus() {
+  const res = await fetch(getApiUrl('/api/config/logo/status'));
+  if (!res.ok) return { configured: false };
+  return res.json();
+}
+
+export async function uploadLogo(file) {
+  const fd = new FormData();
+  fd.append('logo_file', file);
+  const res = await fetch(getApiUrl('/api/config/logo'), { method: 'POST', body: fd });
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Logo upload failed'); }
+  return res.json().catch(() => ({}));
+}
+
+export async function deleteLogo() {
+  const res = await fetch(getApiUrl('/api/config/logo'), { method: 'DELETE' });
+  if (!res.ok) throw new Error('Logo remove failed');
+  return res.json().catch(() => ({}));
+}
+
 export async function getZernio() {
   const res = await fetch(getApiUrl('/api/config/zernio'));
   if (!res.ok) return { configured: false };
@@ -252,6 +294,9 @@ export function optsToPreselections(opts) {
         }
       : false,
     hook: opts.hooks ? { position: opts.hookPos, size: opts.hookSize } : false,
+    // Logo overlay is a compose-time layer (not a process-time arg) — persisted
+    // here only so each generated clip inherits the toggle + placement default.
+    logo: opts.logo ? { position: opts.logoPos || 'top-right', size: opts.logoSize || 'M' } : false,
   };
 }
 

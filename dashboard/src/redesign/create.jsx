@@ -2,7 +2,8 @@
 import { useState, useRef } from 'react';
 import { Icon, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
 import { Hero } from './chrome';
-import { SUBTITLE_PRESETS, LANGUAGES, GEMINI_MODELS, SUB_FONTS, SUB_COLORS } from './data';
+import { SUBTITLE_PRESETS, LANGUAGES, GEMINI_MODELS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES } from './data';
+import { useFontList } from '../hooks/useFontList';
 
 function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelete, onSaveCurrent }) {
   const corner = { position: 'absolute', top: 12, left: 12, display: 'flex', gap: 8, zIndex: 2 };
@@ -164,6 +165,7 @@ function OptRow({ icon, label, desc, on, set, onConfig, configActive }) {
 }
 
 function SubConfig({ opts, set }) {
+  const fonts = useFontList();
   return (
     <div className="cfg-drawer fade-in">
       <div className="cf-row">
@@ -190,7 +192,7 @@ function SubConfig({ opts, set }) {
             <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
             <select className="sel" style={{ width: '100%' }} value={opts.subFont || 'Montserrat-Black'}
               onChange={(e) => set({ subFont: e.target.value })}>
-              {SUB_FONTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {fonts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </div>
           <div className="cf-row">
@@ -231,9 +233,33 @@ function HookConfig({ opts, set }) {
   );
 }
 
+function LogoConfig({ opts, set }) {
+  return (
+    <div className="cfg-drawer fade-in">
+      <div className="cf-row">
+        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
+        <div className="seg-grid">
+          {LOGO_POSITIONS.map(([v, l]) => (
+            <button key={v} type="button"
+              className={'seg-cell' + ((opts.logoPos || 'top-right') === v ? ' on' : '')}
+              onClick={() => set({ logoPos: v })}>{l}</button>
+          ))}
+        </div>
+      </div>
+      <div className="cf-row">
+        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Size</span>
+        <Segmented full value={opts.logoSize || 'M'} onChange={(id) => set({ logoSize: id })}
+          options={LOGO_SIZES.map(([v, l]) => ({ id: v, label: l }))} />
+      </div>
+      <div className="od" style={{ marginTop: 2 }}>Upload your logo PNG in Settings → Brand logo.</div>
+    </div>
+  );
+}
+
 function OptionsPanel({ opts, set }) {
   const [subCfg, setSubCfg] = useState(false);
   const [hookCfg, setHookCfg] = useState(false);
+  const [logoCfg, setLogoCfg] = useState(false);
   return (
     <Panel title="Recipe" sub="What ClippyMe makes from each video" icon="sliders-horizontal">
       <div className="label" style={{ marginBottom: 4 }}>Output</div>
@@ -298,6 +324,9 @@ function OptionsPanel({ opts, set }) {
       <OptRow icon="type" label="Text hooks" desc="Add a scroll-stopping opener"
         on={opts.hooks} set={(v) => set({ hooks: v })} onConfig={() => setHookCfg(!hookCfg)} configActive={hookCfg} />
       {opts.hooks && hookCfg && <HookConfig opts={opts} set={set} />}
+      <OptRow icon="stamp" label="Brand logo" desc="Burn your logo onto every clip"
+        on={opts.logo} set={(v) => set({ logo: v })} onConfig={() => setLogoCfg(!logoCfg)} configActive={logoCfg} />
+      {opts.logo && logoCfg && <LogoConfig opts={opts} set={set} />}
     </Panel>
   );
 }

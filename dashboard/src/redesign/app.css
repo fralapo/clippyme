@@ -173,6 +173,12 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .swatch:hover{border-color:var(--line-3)}
 .swatch.on{border-color:var(--brand-blue);box-shadow:0 0 0 2px rgba(10,129,217,.35)}
 
+/* Logo-position picker — 3-up grid of corner/center cells. */
+.seg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.seg-cell{padding:8px 6px;border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--bg-3);color:var(--fg-3);font-size:var(--text-xs);font-weight:600;cursor:pointer;transition:.12s}
+.seg-cell:hover{border-color:var(--line-3);color:var(--fg-1)}
+.seg-cell.on{border-color:var(--brand-blue);background:var(--bg-4);color:var(--fg-0);box-shadow:0 0 0 2px rgba(10,129,217,.3)}
+
 /* dropzone */
 .dropzone{border:1.5px dashed var(--line-2);border-radius:var(--r-md);padding:28px;text-align:center;color:var(--fg-3);font-size:var(--text-sm);cursor:pointer;transition:.15s}
 .dropzone:hover,.dropzone.drag{border-color:var(--brand-blue);color:var(--fg-2);background:rgba(10,129,217,.05)}

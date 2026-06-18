@@ -19,6 +19,43 @@ from clippyme.domain.subtitles import generate_ass_karaoke, generate_srt, burn_s
 
 _SIZE_MAP = {"S": 0.8, "M": 1.0, "L": 1.3}
 
+# Persisted brand logo (uploaded via /api/config/logo). Overridable for tests.
+LOGO_PATH = os.environ.get("CLIPPYME_LOGO_PATH") or os.path.join("data", "logo.png")
+# Logo size presets → width as a fraction of the video width.
+_LOGO_SIZE_MAP = {"S": 0.12, "M": 0.18, "L": 0.26}
+
+
+async def _apply_logo(
+    current_input: str,
+    job_dir: str,
+    clip_index: int,
+    logo_params: dict,
+    intermediate_files: list,
+) -> str:
+    from clippyme.domain.logo import add_logo_to_video, DEFAULT_POSITION
+
+    logo_output = os.path.join(job_dir, f"composed_logo_{clip_index}.mp4")
+    intermediate_files.append(logo_output)
+    lp = logo_params or {}
+    position = lp.get("position", DEFAULT_POSITION)
+    size = lp.get("size")
+    scale = lp.get("scale", _LOGO_SIZE_MAP.get(size, 0.18))
+    opacity = lp.get("opacity", 1.0)
+    margin = lp.get("margin", 0.04)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        add_logo_to_video,
+        current_input,
+        LOGO_PATH,
+        logo_output,
+        position,
+        scale,
+        opacity,
+        margin,
+    )
+    return logo_output
+
 
 async def _apply_smartcut(
     current_input: str,
@@ -199,6 +236,7 @@ async def compose_layers(
     toggles: dict,
     hook_params: dict,
     subtitle_params: dict,
+    logo_params: dict = None,
 ) -> str:
     """Run the active layer pipeline. Returns the final composed filename (basename).
 
@@ -292,6 +330,22 @@ async def compose_layers(
                 )
                 layers_applied.append("hook")
                 logger.info("compose_layers: ✓ hook → %s", os.path.basename(current_input))
+
+        # Logo absolutely last: a static brand mark that must sit on top of
+        # subtitles AND hook, on every kept frame. Silently skipped if the
+        # toggle is on but no logo has been uploaded yet.
+        if active.get("logo"):
+            if not os.path.exists(LOGO_PATH):
+                logger.warning(
+                    "compose_layers: logo toggle ON but no logo uploaded at %s "
+                    "— skipping logo layer.", LOGO_PATH,
+                )
+            else:
+                current_input = await _apply_logo(
+                    current_input, job_dir, clip_index, logo_params, intermediate_files
+                )
+                layers_applied.append("logo")
+                logger.info("compose_layers: ✓ logo → %s", os.path.basename(current_input))
 
         if os.path.abspath(current_input) != os.path.abspath(composed_path):
             shutil.copy2(current_input, composed_path)

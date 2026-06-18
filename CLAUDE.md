@@ -175,7 +175,11 @@ The redesign uses hand-rolled primitives in `dashboard/src/redesign/primitives.j
 - **Per-job LLM model override**: the Gemini model for viral detection is global (Settings → `GEMINI_MODEL`) but can be overridden **per job** via `ProcessRequest.model`/`BatchRequest.model` → `build_main_cmd(model=...)` → `--model` CLI arg → `main.py` sets `os.environ["GEMINI_MODEL"]` before `get_viral_clips` (mirrors the `--language` override). Validated at the boundary by `job_results.GEMINI_MODEL_RE` (`^gemini-[A-Za-z0-9.\-]{1,64}$` — blocks argv injection; allows future `gemini-3*`). Frontend: a quick-picker in MediaInput's Clip Options (`preselections.model`) + the live-discovery dropdown in Settings (`/api/config/models`, allow-list prefixes `gemini-2.5-`/`gemini-3` in `gemini_service.py`). Unknown models fall through to a `$0.00` "Pricing not available" cost note (`main.py:MODEL_PRICING`).
 - **Batch processing**: `POST /api/batch` accepts up to 20 URLs, creates one job per URL, and returns the list of `job_id`s. The frontend polls each job individually via `GET /api/status/{job_id}` and aggregates progress client-side. Supports `reframe_mode` parameter.
 - **Mixed batch (URLs + files)**: The frontend `useJobSubmission.handleBatchProcess` supports both. URLs are submitted in one shot to `/api/batch`; each file is submitted individually to `/api/process`. The hook then unifies polling across all returned `job_id`s using `/api/status/{job_id}`, aggregating progress until every job reaches a terminal state. No backend change is needed for mixed batches.
-- **Compose endpoint**: `POST /api/compose/{job_id}/{clip_index}` accepts `toggles` (smartcut/hook/subtitles booleans), `hook_params`, `subtitle_params`. Composes layers in order: **Subtitles → Smart Cut → Hook** (subtitle-drift-safe). Returns `composed_url`. Cleans up intermediate files.
+- **Compose endpoint**: `POST /api/compose/{job_id}/{clip_index}` accepts `toggles` (smartcut/hook/subtitles/**logo** booleans), `hook_params`, `subtitle_params`, **`logo_params`**. Composes layers in order: **Subtitles → Smart Cut → Hook → Logo** (subtitle-drift-safe; logo absolutely last so the brand mark sits on top of every other layer). Returns `composed_url`. Cleans up intermediate files.
+- **Brand assets** (client deliverables — e.g. ASCENSORE): a persistent **logo overlay** + **custom subtitle fonts**, both managed in Settings → *Brand assets*.
+  - **Logo** (`domain/logo.py:add_logo_to_video`): ffmpeg `overlay` of an uploaded transparent PNG (`data/logo.png`, set via `POST /api/config/logo`). Placement is a position preset (7 anchors: corners + edge-centers + center) × size preset (`S/M/L` → 0.12/0.18/0.26 of frame width) × opacity. Geometry helper `logo_overlay_xy` is pure (host-tested, no ffmpeg). The compose **logo** layer reads `LOGO_PATH` and skips silently if no logo is uploaded.
+  - **Custom fonts** (`subtitles.py:list_available_fonts` / `effective_fonts_dir`): user TTF/OTF uploads (`POST /api/config/fonts`) land in the writable `data/fonts/` volume; `effective_fonts_dir()` seeds it with copies of the bundled `fonts/` faces so a single `fontsdir` serves both (libass's `ass`/`subtitles` filter takes only one dir). Both burn branches pass `fontsdir`, so an uploaded face (e.g. a licensed **Stratos**) resolves at burn time. Upload validates the sfnt magic + the strict `_FONT_NAME_RE` (the stem becomes the libass font name injected into the ASS style). Frontend font dropdowns live-merge bundled + uploaded via `hooks/useFontList.js`.
+  - **Subtitle colours**: `SUB_COLORS` (classic-mode `font_color` swatches) leads with the ASCENSORE brand set — white `#FFFFFF` (judges), yellow `#FDE700` / purple `#581BBA` (contestants).
 - **Transcription cache**: `data/cache/` stores transcripts keyed by SHA256(url)[:16]. TTL 7 days, pruned by the background cleanup task.
 - **Hardware auto-detection**: CUDA/CPU fallback at runtime for faster-whisper and YOLOv8. No manual config needed.
 - **yt-dlp uses Deno** as JS runtime for YouTube bot-detection bypass.
@@ -207,6 +211,12 @@ python -m clippyme.pipeline.main <url_or_path> [options]
 | POST | `/api/config/cookies` | Upload persistent cookies file |
 | GET | `/api/config/cookies/status` | Check if cookies are configured |
 | DELETE | `/api/config/cookies` | Remove cookies file |
+| POST | `/api/config/logo` | Upload brand logo PNG (compose logo overlay) |
+| GET | `/api/config/logo/status` | Check if a logo is configured |
+| DELETE | `/api/config/logo` | Remove the brand logo |
+| GET | `/api/config/fonts` | List available subtitle fonts (bundled + uploaded) |
+| POST | `/api/config/fonts` | Upload a custom .ttf/.otf font (e.g. Stratos) |
+| DELETE | `/api/config/fonts/{name}` | Remove an uploaded font |
 | POST | `/api/cancel/{job_id}` | Cancel a running job (hard kill **+ delete all output**) |
 | POST | `/api/pause/{job_id}` | Suspend the job's process tree → status `paused` |
 | POST | `/api/resume/{job_id}` | Resume a paused job → status `processing` |

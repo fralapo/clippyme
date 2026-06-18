@@ -13,6 +13,15 @@ export function seedToggles(preselections) {
         smartcut: !!preselections?.smartcut,
         hook: !!preselections?.hook,
         subtitles: !!preselections?.subtitles,
+        logo: !!preselections?.logo,
+    };
+}
+
+export function seedLogoParams(preselections) {
+    const logo = preselections?.logo;
+    return {
+        position: logo?.position || 'top-right',
+        size: logo?.size || 'M',
     };
 }
 

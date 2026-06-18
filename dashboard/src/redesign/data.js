@@ -59,7 +59,19 @@ export const SUB_FONTS = [
 ];
 
 // Classic-mode subtitle colour swatches (sent as `font_color` hex).
-export const SUB_COLORS = ['#FFFFFF', '#FFE000', '#00FF66', '#00E5FF', '#FF4D6D', '#000000'];
+// First three are the ASCENSORE brand colours: white = judges,
+// yellow #FDE700 / purple #581BBA = contestants.
+export const SUB_COLORS = ['#FFFFFF', '#FDE700', '#581BBA', '#FFE000', '#00FF66', '#00E5FF', '#FF4D6D', '#000000'];
+
+// Brand-logo overlay placement (compose-time layer). Values match the
+// _POSITIONS keys in domain/logo.py.
+export const LOGO_POSITIONS = [
+  ['top-left', 'Top L'], ['top-center', 'Top C'], ['top-right', 'Top R'],
+  ['bottom-left', 'Bot L'], ['bottom-center', 'Bot C'], ['bottom-right', 'Bot R'],
+  ['center', 'Center'],
+];
+// Logo size presets → width fraction handled backend-side (_LOGO_SIZE_MAP).
+export const LOGO_SIZES = [['S', 'S'], ['M', 'M'], ['L', 'L']];
 
 export const SUBTITLE_PRESETS = [
   { id: 'classic_white', label: 'Classic', hi: '#FFFF00', style: { color: '#fff', fontFamily: 'Verdana, sans-serif', textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000' } },

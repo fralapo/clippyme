@@ -8,10 +8,11 @@
 // this one renders. The clip card shows a per-clip "processing" spinner.
 import { useState } from 'react';
 import { Icon, Btn, Segmented, Switch } from './primitives';
-import { SUBTITLE_PRESETS, SUB_FONTS, SUB_COLORS } from './data';
+import { SUBTITLE_PRESETS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES } from './data';
 import { useModalA11y } from './useModalA11y';
 import { clipPreviewSrc } from './realApi';
-import { seedSubtitleParams, seedHookParams } from '../lib/seedClipParams';
+import { useFontList } from '../hooks/useFontList';
+import { seedSubtitleParams, seedHookParams, seedLogoParams } from '../lib/seedClipParams';
 
 const REFRAME_OPTS = [
   { id: 'auto', label: 'Auto' },
@@ -32,6 +33,12 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
   const [smartcut, setSmartcut] = useState(t0.smartcut ?? !!pre.smartcut);
   const [subsOn, setSubsOn] = useState(t0.subtitles ?? !!pre.subtitles);
   const [hookOn, setHookOn] = useState(t0.hook ?? !!pre.hook);
+  const [logoOn, setLogoOn] = useState(t0.logo ?? !!pre.logo);
+
+  const lp0 = initial?.logoParams || seedLogoParams(preselections);
+  const [logoPos, setLogoPos] = useState(lp0.position || 'top-right');
+  const [logoSize, setLogoSize] = useState(lp0.size || 'M');
+  const fonts = useFontList();
 
   const [mode, setMode] = useState(sp.mode || preSubs.mode || 'karaoke');
   const [preset, setPreset] = useState(sp.preset || preSubs.preset || 'hormozi_bold');
@@ -45,7 +52,7 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
   const panelRef = useModalA11y(onClose);
 
   const reframeChanged = reframeMode !== baseMode;
-  const anyCompose = smartcut || subsOn || hookOn;
+  const anyCompose = smartcut || subsOn || hookOn || logoOn;
   const willReprocess = reframeChanged || anyCompose;
 
   // Non-blocking apply: seed the full param shape (font, size, offset_y, …) the
@@ -56,8 +63,9 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
     const subtitleParams = { ...seedSubtitleParams(preselections), ...sp, mode, preset, position,
       ...(mode === 'classic' ? { font: subFont, font_color: subColor } : {}) };
     const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), text: hookText };
-    const toggles = { smartcut, subtitles: subsOn, hook: hookOn };
-    onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams });
+    const logoParams = { position: logoPos, size: logoSize };
+    const toggles = { smartcut, subtitles: subsOn, hook: hookOn, logo: logoOn };
+    onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams });
   };
 
   const ps = SUBTITLE_PRESETS.find((p) => p.id === preset) || SUBTITLE_PRESETS[0];
@@ -127,7 +135,7 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
                     <div className="cf-row">
                       <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
                       <select className="sel" style={{ width: '100%' }} value={subFont} onChange={(e) => setSubFont(e.target.value)}>
-                        {SUB_FONTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        {fonts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                       </select>
                     </div>
                     <div className="cf-row">
@@ -166,6 +174,30 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
                       {hookText.split(' ').slice(0, 2).join(' ')} <span style={{ color: ps.hi }}>{hookText.split(' ').slice(2).join(' ') || 'NOW'}</span>
                     </span>
                   </div>
+                </div>
+              </div>
+            )}
+
+            <div className="edit-opt">
+              <div className="eo-ico"><Icon n="stamp" /></div>
+              <div className="eo-txt"><div className="eo-t">Brand logo</div><div className="eo-d">Burn your uploaded logo onto the clip</div></div>
+              <Switch on={logoOn} onChange={setLogoOn} />
+            </div>
+            {logoOn && (
+              <div className="cfg-drawer fade-in">
+                <div className="cf-row">
+                  <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
+                  <div className="seg-grid">
+                    {LOGO_POSITIONS.map(([v, l]) => (
+                      <button key={v} type="button" className={'seg-cell' + (logoPos === v ? ' on' : '')}
+                        onClick={() => setLogoPos(v)}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <div className="cf-row" style={{ marginBottom: 0 }}>
+                  <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Size</span>
+                  <Segmented full value={logoSize} onChange={setLogoSize}
+                    options={LOGO_SIZES.map(([v, l]) => ({ id: v, label: l }))} />
                 </div>
               </div>
             )}

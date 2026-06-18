@@ -754,6 +754,122 @@ async def delete_cookies(request: Request):
         os.remove(cookies_path)
     return {"status": "ok", "message": "Cookies removed"}
 
+
+# --- Custom fonts (e.g. a licensed Stratos TTF the client needs) -----------
+import re as _re_fonts
+from clippyme.domain.subtitles import (
+    list_available_fonts as _list_fonts,
+    USER_FONTS_DIR as _USER_FONTS_DIR,
+    _FONT_NAME_RE as _FONT_NAME_RE,
+    _FONT_EXTS as _FONT_EXTS,
+)
+
+FONT_MAX_BYTES = 20 * 1024 * 1024  # 20 MB hard cap per face
+# sfnt magic numbers: TrueType (0x00010000 / 'true'), OpenType ('OTTO'),
+# TrueType collection ('ttcf'). Reject anything that isn't a real font file.
+_FONT_MAGIC = (b"\x00\x01\x00\x00", b"OTTO", b"true", b"ttcf")
+
+
+@app.get("/api/config/fonts")
+async def list_fonts(request: Request):
+    """List every font face available for burn-in (bundled + user-uploaded)."""
+    require_trusted_config_request(request)
+    return {"fonts": _list_fonts()}
+
+
+@app.post("/api/config/fonts")
+async def upload_font(request: Request, font_file: UploadFile = File(...)):
+    """Upload and persist a .ttf/.otf font so it appears in the subtitle font
+    picker and resolves at burn time."""
+    require_trusted_config_request(request)
+    raw_name = os.path.basename(font_file.filename or "")
+    stem, ext = os.path.splitext(raw_name)
+    if ext.lower() not in _FONT_EXTS:
+        raise HTTPException(status_code=400, detail="Font must be .ttf, .otf or .ttc")
+    # The stem becomes the libass font name and is injected into an ASS style /
+    # ffmpeg filter, so it must pass the same strict allow-list as font_name.
+    if not _FONT_NAME_RE.match(stem):
+        raise HTTPException(status_code=400, detail="Invalid font name (use letters, digits, space, _ or -)")
+
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await font_file.read(64 * 1024):
+        total += len(chunk)
+        if total > FONT_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Font file too large (max 20 MB)")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+    if not content.startswith(_FONT_MAGIC):
+        raise HTTPException(status_code=400, detail="File is not a valid TrueType/OpenType font")
+
+    os.makedirs(_USER_FONTS_DIR, exist_ok=True)
+    dest = os.path.join(_USER_FONTS_DIR, f"{stem}{ext.lower()}")
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    with os.fdopen(fd, "wb") as f:
+        f.write(content)
+    return {"status": "ok", "name": stem, "fonts": _list_fonts()}
+
+
+@app.delete("/api/config/fonts/{name}")
+async def delete_font(name: str, request: Request):
+    """Remove an uploaded font face by name. Bundled faces cannot be deleted."""
+    require_trusted_config_request(request)
+    if not _FONT_NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid font name")
+    removed = False
+    for ext in _FONT_EXTS:
+        p = os.path.join(_USER_FONTS_DIR, f"{name}{ext}")
+        if os.path.exists(p):
+            os.remove(p)
+            removed = True
+    if not removed:
+        raise HTTPException(status_code=404, detail="Font not found")
+    return {"status": "ok", "fonts": _list_fonts()}
+
+
+# --- Brand logo / watermark overlay ----------------------------------------
+LOGO_MAX_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
+_LOGO_PATH = os.path.join("data", "logo.png")
+# PNG signature only — the overlay pipeline assumes RGBA PNG for clean alpha.
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+@app.get("/api/config/logo/status")
+async def logo_status(request: Request):
+    """Check whether a brand logo has been uploaded."""
+    require_trusted_config_request(request)
+    return {"configured": os.path.exists(_LOGO_PATH)}
+
+
+@app.post("/api/config/logo")
+async def upload_logo(request: Request, logo_file: UploadFile = File(...)):
+    """Upload and persist a transparent PNG logo used by the compose logo layer."""
+    require_trusted_config_request(request)
+    chunks: list[bytes] = []
+    total = 0
+    while chunk := await logo_file.read(64 * 1024):
+        total += len(chunk)
+        if total > LOGO_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Logo file too large (max 10 MB)")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+    if not content.startswith(_PNG_MAGIC):
+        raise HTTPException(status_code=400, detail="Logo must be a PNG (transparent recommended)")
+    os.makedirs("data", exist_ok=True)
+    fd = os.open(_LOGO_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
+    with os.fdopen(fd, "wb") as f:
+        f.write(content)
+    return {"status": "ok", "message": "Logo saved"}
+
+
+@app.delete("/api/config/logo")
+async def delete_logo(request: Request):
+    """Remove the persisted brand logo."""
+    require_trusted_config_request(request)
+    if os.path.exists(_LOGO_PATH):
+        os.remove(_LOGO_PATH)
+    return {"status": "ok", "message": "Logo removed"}
+
 from clippyme.domain.smartcut import smart_cut
 
 @app.post("/api/smartcut/{job_id}/{clip_index}")
@@ -986,6 +1102,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, reques
             toggles=req.toggles,
             hook_params=req.hook_params,
             subtitle_params=req.subtitle_params,
+            logo_params=req.logo_params,
         )
         return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
     except (HTTPException, ClippyMeError):
@@ -1100,6 +1217,7 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
                 toggles=req.toggles,
                 hook_params=req.hook_params or {},
                 subtitle_params=req.subtitle_params or {},
+                logo_params=req.logo_params or {},
             )
             upload_path = os.path.join(job_dir, composed_filename)
         except ClippyMeError:

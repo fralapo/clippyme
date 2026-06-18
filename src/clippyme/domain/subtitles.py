@@ -285,6 +285,47 @@ if not os.path.isdir(_DEFAULT_FONTS_DIR):
         _DEFAULT_FONTS_DIR = _cwd_fallback
 FONTS_DIR = os.environ.get("CLIPPYME_FONTS_DIR") or _DEFAULT_FONTS_DIR
 
+# Writable directory for user-uploaded fonts (e.g. a licensed Stratos TTF the
+# client needs). The bundled `fonts/` dir is part of the image/repo and is not
+# reliably writable by the non-root container user, so uploads land in the
+# `data/` volume instead. `effective_fonts_dir()` then merges both into a single
+# directory because libass's `ass`/`subtitles` filter only accepts one fontsdir.
+USER_FONTS_DIR = os.environ.get("CLIPPYME_USER_FONTS_DIR") or os.path.join("data", "fonts")
+_FONT_EXTS = (".ttf", ".otf", ".ttc")
+
+
+def list_available_fonts():
+    """Basenames (no extension) of every font face available for burn-in —
+    bundled + user-uploaded. Used by the GET /api/config/fonts endpoint to
+    populate the classic-subtitle font dropdown."""
+    names = set()
+    for d in (FONTS_DIR, USER_FONTS_DIR):
+        if d and os.path.isdir(d):
+            for fn in os.listdir(d):
+                if fn.lower().endswith(_FONT_EXTS):
+                    names.add(os.path.splitext(fn)[0])
+    return sorted(names)
+
+
+def effective_fonts_dir():
+    """Single directory libass should scan. Seeds the writable user-fonts dir
+    with copies of the bundled faces so uploaded + bundled fonts coexist behind
+    one `fontsdir` path. Falls back to the bundled dir if the user dir can't be
+    created/written (read-only host)."""
+    import shutil
+    try:
+        os.makedirs(USER_FONTS_DIR, exist_ok=True)
+        if os.path.isdir(FONTS_DIR) and os.path.abspath(FONTS_DIR) != os.path.abspath(USER_FONTS_DIR):
+            for fn in os.listdir(FONTS_DIR):
+                if not fn.lower().endswith(_FONT_EXTS):
+                    continue
+                dst = os.path.join(USER_FONTS_DIR, fn)
+                if not os.path.exists(dst):
+                    shutil.copy2(os.path.join(FONTS_DIR, fn), dst)
+        return USER_FONTS_DIR
+    except OSError:
+        return FONTS_DIR
+
 
 def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
                          preset="classic_white", mode="word_group",
@@ -495,11 +536,13 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
 
     safe_sub_path = _ffmpeg_filter_escape(srt_path.replace('\\', '/'))
     is_ass = srt_path.lower().endswith('.ass')
+    # Single dir libass scans (bundled + user-uploaded fonts merged). Used by
+    # both the ASS and SRT branches so an uploaded face (e.g. Stratos) resolves.
+    fonts_path = _ffmpeg_filter_escape(effective_fonts_dir().replace('\\', '/'))
 
     if is_ass:
         # ASS files have their own embedded styles (including karaoke tags).
         # Use the 'ass' filter with fontsdir so custom fonts are found.
-        fonts_path = _ffmpeg_filter_escape(FONTS_DIR.replace('\\', '/'))
         vf_filter = f"ass='{safe_sub_path}':fontsdir='{fonts_path}'"
     else:
         # SRT: build force_style for legacy subtitle rendering
@@ -543,7 +586,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
             f"MarginV={srt_margin_v},"
             f"Bold=1"
         )
-        vf_filter = f"subtitles='{safe_sub_path}':force_style='{style_string}'"
+        vf_filter = f"subtitles='{safe_sub_path}':fontsdir='{fonts_path}':force_style='{style_string}'"
 
     cmd = [
         'ffmpeg', '-y',

@@ -7,7 +7,9 @@ import { Hero } from './chrome';
 import {
   getConfig, saveConfig, getModels, cookiesStatus, uploadCookies, deleteCookies,
   getZernio, saveZernio, discoverZernioAccounts,
+  listFonts, uploadFont, deleteFont, logoStatus, uploadLogo, deleteLogo,
 } from './realApi';
+import { SUB_FONTS } from './data';
 
 // Curated fallback when live discovery is unavailable (no key yet / offline).
 // Mirrors the allow-list prefixes (gemini-2.5- / gemini-3) the backend accepts.
@@ -119,6 +121,8 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
   const [zKey, setZKey] = useState('');
   const [accts, setAccts] = useState({ tiktok: '', instagram: '', youtube: '' });
   const [cookies, setCookies] = useState(!!cookiesConfigured);
+  const [logoOn, setLogoOn] = useState(false);
+  const [fonts, setFonts] = useState([]);
   const [provider, setProvider] = useState('deepgram');
   const [model, setModel] = useState('');
   const [models, setModels] = useState(FALLBACK_MODELS);
@@ -151,6 +155,8 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
     }).catch(() => {});
     getZernio().then((z) => { setZernioState(z); if (z.accounts) setAccts({ tiktok: '', instagram: '', youtube: '', ...z.accounts }); }).catch(() => {});
     cookiesStatus().then((s) => setCookies(!!s.configured)).catch(() => {});
+    logoStatus().then((s) => setLogoOn(!!s.configured)).catch(() => {});
+    listFonts().then(({ fonts: f }) => setFonts(Array.isArray(f) ? f : [])).catch(() => {});
     // Mount-once bootstrap; loadModels reads the latest key via closure on call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -196,6 +202,30 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
   };
   const removeCookies = async () => {
     try { await deleteCookies(); setCookies(false); pushToast?.('info', 'Cookies removed'); }
+    catch { pushToast?.('error', 'Remove failed'); }
+  };
+
+  const onLogoFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try { await uploadLogo(f); setLogoOn(true); pushToast?.('success', 'Logo uploaded'); }
+    catch (err) { pushToast?.('error', String(err.message || 'Logo upload failed').slice(0, 80)); }
+  };
+  const removeLogo = async () => {
+    try { await deleteLogo(); setLogoOn(false); pushToast?.('info', 'Logo removed'); }
+    catch { pushToast?.('error', 'Remove failed'); }
+  };
+
+  // Only user-uploaded faces are deletable; bundled ones are part of the app.
+  const bundled = new Set(SUB_FONTS.map(([v]) => v));
+  const onFontFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try { const { fonts: nf } = await uploadFont(f); setFonts(nf || fonts); pushToast?.('success', 'Font added'); }
+    catch (err) { pushToast?.('error', String(err.message || 'Font upload failed').slice(0, 80)); }
+  };
+  const removeFont = async (name) => {
+    try { const { fonts: nf } = await deleteFont(name); setFonts(nf || fonts.filter((n) => n !== name)); pushToast?.('info', 'Font removed'); }
     catch { pushToast?.('error', 'Remove failed'); }
   };
 
@@ -256,6 +286,43 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
           <div style={{ display: 'flex', gap: 10 }}>
             <Btn variant="secondary" size="sm" icon="rss" onClick={discover}>Discover from Zernio</Btn>
             <Btn variant="primary" size="sm" icon="check" onClick={saveZernioCfg}>Save</Btn>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Brand assets" sub="Logo overlay + custom subtitle fonts" icon="stamp" style={{ marginBottom: 18 }}>
+        <div className="opt">
+          <div className="oico"><Icon n="image" /></div>
+          <div className="otxt"><div className="ot">Brand logo</div><div className="od">{logoOn ? 'Configured · burned on clips when the Logo layer is on' : 'Upload a transparent PNG to overlay on clips'}</div></div>
+          <div className="r" style={{ gap: 8 }}>
+            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+              <Icon n="upload" />Upload
+              <input type="file" accept="image/png,.png" hidden onChange={onLogoFile} />
+            </label>
+            {logoOn && <Btn variant="ghost" size="sm" icon="trash-2" onClick={removeLogo}>Remove</Btn>}
+          </div>
+        </div>
+        <div className="opt" style={{ borderBottom: 0, alignItems: 'flex-start' }}>
+          <div className="oico"><Icon n="baseline" /></div>
+          <div className="otxt" style={{ flex: 1 }}>
+            <div className="ot">Subtitle fonts</div>
+            <div className="od">Upload a .ttf/.otf (e.g. Stratos) to use in classic captions</div>
+            {fonts.filter((n) => !bundled.has(n)).length > 0 && (
+              <div className="s-sub" style={{ marginTop: 10 }}>
+                {fonts.filter((n) => !bundled.has(n)).map((n) => (
+                  <span key={n} className="chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    {n}
+                    <button type="button" className="mini" aria-label={`Remove ${n}`} title="Remove" onClick={() => removeFont(n)}><Icon n="x" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="r">
+            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+              <Icon n="upload" />Upload
+              <input type="file" accept=".ttf,.otf,.ttc,font/ttf,font/otf" hidden onChange={onFontFile} />
+            </label>
           </div>
         </div>
       </Panel>

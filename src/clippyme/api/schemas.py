@@ -162,8 +162,9 @@ class ComposeRequest(BaseModel):
     toggles: dict = {}
     hook_params: dict = {}
     subtitle_params: dict = {}
+    logo_params: dict = {}
 
-    @field_validator("hook_params", "subtitle_params")
+    @field_validator("hook_params", "subtitle_params", "logo_params")
     @classmethod
     def _bound_overlay(cls, v):
         return _validate_overlay_params(v)
@@ -223,8 +224,9 @@ class PublishRequest(BaseModel):
     toggles: Optional[dict] = None
     hook_params: Optional[dict] = None
     subtitle_params: Optional[dict] = None
+    logo_params: Optional[dict] = None
 
-    @field_validator("hook_params", "subtitle_params")
+    @field_validator("hook_params", "subtitle_params", "logo_params")
     @classmethod
     def _bound_overlay(cls, v):
         return _validate_overlay_params(v)
