@@ -12,7 +12,7 @@ import { ProcessingView } from './processing';
 import { ResultsView } from './results';
 import { PublishModal } from './publish';
 import { HistoryView, SettingsView, ApiKeyModal } from './views';
-import { CaptionEditModal } from './captions';
+import { EditClipModal } from './captions';
 import { optsToPreselections, restoreJob, cancelJob, pauseJob, resumeJob, stopJob } from './realApi';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from './presets';
 
@@ -89,7 +89,7 @@ export default function RedesignApp() {
   const [confetti, setConfetti] = useState(false);
   const [toasts, setToasts] = useState([]);
   const [publishClips, setPublishClips] = useState(null);
-  const [captionsClip, setCaptionsClip] = useState(null);
+  const [editClip, setEditClip] = useState(null);
   const [viewingHistory, setViewingHistory] = useState(false);
 
   const { history, saveToHistory, deleteFromHistory, clearHistory } = useHistory();
@@ -286,7 +286,7 @@ export default function RedesignApp() {
       {tab === 'create' && status === 'complete' && (
         <ResultsView clips={clips} jobId={jobId} preselections={preselections}
           clipStates={clipStates} onUpdateClipState={updateClipState} onBack={resetToCreate}
-          onPublish={openPublish} onPublishAll={openPublish} onCaptions={(c, i) => setCaptionsClip({ clip: c, idx: i })}
+          onPublish={openPublish} onPublishAll={openPublish} onEdit={(c, i) => setEditClip({ clip: c, idx: i })}
           pushToast={pushToast} />
       )}
 
@@ -303,7 +303,7 @@ export default function RedesignApp() {
           </div>
           <ResultsView clips={clips} jobId={jobId} preselections={preselections} embedded
             clipStates={clipStates} onUpdateClipState={updateClipState}
-            onPublish={openPublish} onPublishAll={openPublish} onCaptions={(c, i) => setCaptionsClip({ clip: c, idx: i })}
+            onPublish={openPublish} onPublishAll={openPublish} onEdit={(c, i) => setEditClip({ clip: c, idx: i })}
             pushToast={pushToast} />
         </div>
       )}
@@ -316,11 +316,13 @@ export default function RedesignApp() {
           onPublished={(idx) => updateClipState(idx, { publishedAt: Date.now() })}
           pushToast={pushToast} />
       )}
-      {captionsClip && (
-        <CaptionEditModal clip={captionsClip.clip} idx={captionsClip.idx}
-          initial={clipStates[captionsClip.idx]} preselections={preselections}
-          onClose={() => setCaptionsClip(null)}
-          onSave={(patch) => { updateClipState(captionsClip.idx, patch); setCaptionsClip(null); pushToast('success', 'Captions updated'); }} />
+      {editClip && (
+        <EditClipModal clip={editClip.clip} idx={editClip.idx} jobId={jobId}
+          initial={clipStates[editClip.idx]}
+          appliedMode={clipStates[editClip.idx]?.reframeMode || editClip.clip.reframe_mode || 'auto'}
+          preselections={preselections}
+          onClose={() => setEditClip(null)} pushToast={pushToast}
+          onSave={(patch) => { updateClipState(editClip.idx, patch); setEditClip(null); pushToast('success', 'Clip updated'); }} />
       )}
       {showKeyModal && <ApiKeyModal onClose={() => setShowKeyModal(false)} onGoToSettings={() => { setShowKeyModal(false); setTab('settings'); }} />}
 

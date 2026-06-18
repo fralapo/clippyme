@@ -26,6 +26,19 @@ export function clipVideoSrc(clip, bust) {
   return bust ? `${full}${full.includes('?') ? '&' : '?'}v=${bust}` : full;
 }
 
+// Source for the clip preview, honouring an applied edit. After "Apply &
+// reprocess": if layers were composed, a `previewUrl` (a separate composed
+// file) takes priority; otherwise we fall back to the raw/reframed clip with
+// the reframe cache-buster so a re-reframed clip re-fetches.
+export function clipPreviewSrc(clip, state) {
+  if (state?.previewUrl) {
+    const full = safeResolveUrl(state.previewUrl);
+    const b = state.previewBust;
+    return b ? `${full}${full.includes('?') ? '&' : '?'}v=${b}` : full;
+  }
+  return clipVideoSrc(clip, state?.reframeBust);
+}
+
 export function downloadClip(clip, index) {
   const a = document.createElement('a');
   a.href = safeResolveUrl(clip.video_url || '');

@@ -285,14 +285,23 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .clip.top{border-color:var(--line-3)}
 .clip.sel{border-color:var(--brand-blue);box-shadow:0 0 0 1px var(--brand-blue)}
 .clip-media{position:relative;aspect-ratio:9/16;display:flex;flex-direction:column;justify-content:space-between;padding:12px;overflow:hidden}
-.clip-media::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.4),transparent 26%,transparent 58%,rgba(0,0,0,.72));z-index:1}
-.clip-top{position:relative;z-index:3;display:flex;justify-content:space-between;align-items:flex-start}
+/* Decorative scrim sits ABOVE the <video> (z-index 0) but must NOT swallow
+   clicks — otherwise the native <video controls> play/seek bar is unreachable
+   and the player looks broken ("won't play"). pointer-events:none lets the
+   click fall through to the controls underneath. */
+.clip-media::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.4),transparent 26%,transparent 58%,rgba(0,0,0,.72));z-index:1;pointer-events:none}
+/* Info overlays are click-through for the same reason; interactive children
+   (none by default now) re-enable pointer-events explicitly. */
+.clip-top{position:relative;z-index:3;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none}
+.clip-top button{pointer-events:auto}
 .clip-check{width:24px;height:24px;border-radius:50%;border:1.5px solid rgba(255,255,255,.6);background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;color:transparent;backdrop-filter:blur(4px)}
 .clip.sel .clip-check{background:var(--brand-blue);border-color:var(--brand-blue);color:#fff}
 .clip-check svg{width:14px;height:14px}
 .clip-hook{position:relative;z-index:3;font-family:var(--font-display);text-transform:uppercase;font-size:21px;line-height:.98;color:#fff;text-shadow:0 2px 10px rgba(0,0,0,.55);text-align:center;margin:auto 0}
 .clip-hook .y{color:#ffe14d}
-.clip-bottom{position:relative;z-index:3}
+.clip-bottom{position:relative;z-index:3;pointer-events:none}
+.rf-badge{display:inline-flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:9px;letter-spacing:.08em;text-transform:uppercase;padding:4px 7px;border-radius:var(--r-pill);background:rgba(0,0,0,.6);color:#fff;backdrop-filter:blur(4px)}
+.rf-badge svg{width:11px;height:11px}
 .clip-sub{text-align:center;font-weight:800;font-size:12px;text-transform:uppercase;letter-spacing:.01em;color:#fff;text-shadow:0 1px 5px rgba(0,0,0,.75);margin-bottom:9px}
 .clip-sub b{color:var(--brand-cyan)}
 .dur{font-family:var(--font-mono);font-size:10.5px;background:rgba(0,0,0,.6);padding:3px 7px;border-radius:5px;color:#fff;display:inline-block}
@@ -302,11 +311,26 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .play svg{width:22px;height:22px;color:#111;margin-left:3px}
 .clip-foot{padding:11px 12px;display:flex;align-items:center;gap:8px}
 .clip-foot .ttl{font-size:12.5px;font-weight:600;color:var(--fg-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
-.mini{width:32px;height:32px;border-radius:var(--r-xs);display:flex;align-items:center;justify-content:center;background:var(--bg-3);border:1px solid var(--line-1);color:var(--fg-3);cursor:pointer;flex:none;transition:.12s}
+.mini{width:32px;height:32px;padding:0;font:inherit;border-radius:var(--r-xs);display:flex;align-items:center;justify-content:center;background:var(--bg-3);border:1px solid var(--line-1);color:var(--fg-3);cursor:pointer;flex:none;transition:.12s}
 .mini:hover{color:var(--fg-1);background:var(--bg-4);border-color:var(--line-2)}
 .mini svg{width:14px;height:14px}
 .clip-pub{position:relative;z-index:3;align-self:flex-start;display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;text-transform:uppercase;padding:4px 8px;border-radius:var(--r-pill);background:var(--success-bg);color:var(--brand-teal);border:1px solid rgba(2,197,191,.3)}
 .clip-pub svg{width:11px;height:11px}
+/* Primary per-clip action: opens the staged Edit modal (where reprocessing
+   happens behind an explicit Apply button — no auto-reprocess on every tweak). */
+.clip-edit{width:calc(100% - 24px);margin:11px 12px 0;padding:9px 12px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--fg-1);background:var(--bg-3);border:1px solid var(--line-2);border-radius:var(--r-sm);cursor:pointer;transition:.12s}
+.clip-edit:hover{background:var(--bg-4);border-color:var(--line-3)}
+.clip-edit svg{width:14px;height:14px}
+.clip-edit.busy{color:var(--blue-300);border-color:rgba(10,129,217,.4)}
+/* Edit modal: a labelled switch row (icon + name + description + toggle). */
+.edit-opt{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line-1)}
+.edit-opt:first-of-type{border-top:0}
+.edit-opt .eo-ico{width:34px;height:34px;flex:none;border-radius:var(--r-sm);background:var(--bg-3);border:1px solid var(--line-1);display:flex;align-items:center;justify-content:center;color:var(--fg-3)}
+.edit-opt .eo-ico svg{width:16px;height:16px}
+.edit-opt .eo-txt{flex:1;min-width:0}
+.edit-opt .eo-t{font-size:13px;font-weight:600;color:var(--fg-1)}
+.edit-opt .eo-d{font-size:11px;color:var(--fg-4);margin-top:1px}
+.edit-dirty{font-family:var(--font-mono);font-size:11px;color:var(--brand-amber);margin-right:auto;align-self:center}
 
 /* ============================================================ MODAL / SHEET */
 .overlay{position:fixed;inset:0;z-index:90;background:rgba(3,3,5,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;animation:fadein .18s ease both}

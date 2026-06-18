@@ -2,13 +2,17 @@
 // download + publish + captions) and multi-select for batch actions.
 import { useState } from 'react';
 import { Icon, Btn, Badge } from './primitives';
-import { clipVideoSrc, fmtDuration, downloadClip, reframeClip, exportClip } from './realApi';
+import { clipPreviewSrc, fmtDuration, downloadClip, exportClip } from './realApi';
 
-function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMode, onPublish, onCaptions, pushToast }) {
-  const [reframing, setReframing] = useState(false);
+const REFRAME_ICON = { auto: 'crop', object: 'layers', disabled: 'square' };
+const REFRAME_LABEL = { auto: 'Auto', object: 'Object', disabled: 'Off' };
+
+function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, selectMode, onPublish, pushToast }) {
   const [downloading, setDownloading] = useState(false);
   const selected = state?.selected !== false;
   const score = Math.round(clip.viral_score || 0);
+  // Read-only here — reframe mode is changed (and applied) inside the Edit
+  // modal, not by an instant click on the card.
   const mode = state?.reframeMode || clip.reframe_mode || 'auto';
   const title = clip.video_title_for_youtube_short || `Clip ${index + 1}`;
 
@@ -27,65 +31,49 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, selectMo
     }
   };
 
-  // Cycle through the three reframe modes: auto (face-track) → object
-  // (element crop) → disabled (letterbox bands) → auto.
-  const REFRAME_CYCLE = { auto: 'object', object: 'disabled', disabled: 'auto' };
-  const REFRAME_ICON = { auto: 'crop', object: 'layers', disabled: 'square' };
-  const cycleReframe = async (e) => {
-    e.stopPropagation();
-    if (reframing) return;
-    const next = REFRAME_CYCLE[mode] || 'auto';
-    setReframing(true);
-    try {
-      await reframeClip(jobId, index, next);
-      onUpdate(index, { reframeMode: next, reframeBust: Date.now() });
-      pushToast?.('success', `Reframe → ${next}`);
-    } catch (err) {
-      pushToast?.('error', err.status === 409 ? 'This clip is too old to reframe. Reprocess it.' : 'Reframe failed');
-    } finally {
-      setReframing(false);
-    }
-  };
-
   return (
     <div className={'clip' + (score >= 90 ? ' top' : '') + (selectMode && selected ? ' sel' : '')}
       onClick={() => selectMode && onUpdate(index, { selected: !selected })}>
       <div className="clip-media" style={{ padding: 0, background: '#000' }}>
-        <video src={clipVideoSrc(clip, state?.reframeBust)} controls={!selectMode} playsInline preload="metadata"
+        <video src={clipPreviewSrc(clip, state)} controls={!selectMode} playsInline preload="metadata"
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
         <div className="clip-top" style={{ padding: 10 }}>
           <span className="score"><Icon n="flame" style={{ width: 12, height: 12 }} />{score}</span>
           {selectMode
             ? <span className="clip-check"><Icon n="check" /></span>
-            : <button className={'cfg' + (mode !== 'disabled' ? ' active' : '')} title={`Reframe: ${mode} (click to cycle)`} onClick={cycleReframe}
-                style={{ position: 'relative', zIndex: 4, width: 30, height: 30, borderRadius: 'var(--r-sm)' }}>
-                <Icon n={reframing ? 'loader' : (REFRAME_ICON[mode] || 'crop')} />
-              </button>}
+            : <span className="rf-badge" title={`Reframe: ${REFRAME_LABEL[mode] || mode}`}>
+                <Icon n={REFRAME_ICON[mode] || 'crop'} />{REFRAME_LABEL[mode] || 'Auto'}
+              </span>}
         </div>
         <div className="clip-bottom" style={{ padding: 10 }}>
           {state?.publishedAt && <span className="clip-pub"><Icon n="check" />published</span>}
           <span className="dur" style={{ marginLeft: state?.publishedAt ? 8 : 0 }}>{fmtDuration(clip.start, clip.end)}</span>
         </div>
       </div>
+      {!selectMode && (
+        <button className="clip-edit" onClick={(e) => { e.stopPropagation(); onEdit(clip, index); }}
+          title="Set reframe, captions, smart cut & hook — then apply">
+          <Icon n="sliders-horizontal" />Edit &amp; reprocess
+        </button>
+      )}
       <div className="clip-foot">
         <span className="ttl" title={title}>{title}</span>
-        <span className="mini" title="Edit captions" onClick={(e) => { e.stopPropagation(); onCaptions(clip, index); }}><Icon n="captions" /></span>
-        <span className="mini" title="Download (applies active toggles)" onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></span>
-        <span className="mini" title="Publish" onClick={(e) => { e.stopPropagation(); onPublish({ ...clip, _idx: index }); }}><Icon n="send" /></span>
-        <span className="mini" title="Remove clip from the grid (file stays on disk)" onClick={(e) => {
+        <button type="button" className="mini" title="Download (applies your edits)" aria-label="Download clip" onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></button>
+        <button type="button" className="mini" title="Publish" aria-label="Publish clip" onClick={(e) => { e.stopPropagation(); onPublish({ ...clip, _idx: index }); }}><Icon n="send" /></button>
+        <button type="button" className="mini" title="Remove clip from the grid (file stays on disk)" aria-label="Remove clip" onClick={(e) => {
           e.stopPropagation();
           if (window.confirm('Remove this clip from the grid? The file stays on disk.')) {
             onUpdate(index, { deleted: true });
             pushToast?.('info', 'Clip removed');
           }
-        }}><Icon n="trash-2" /></span>
+        }}><Icon n="trash-2" /></button>
       </div>
     </div>
   );
 }
 
 export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUpdateClipState,
-  doneIn, onBack, onPublish, onPublishAll, onCaptions, embedded, pushToast }) {
+  doneIn, onBack, onPublish, onPublishAll, onEdit, embedded, pushToast }) {
   const [selectMode, setSelectMode] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -141,7 +129,7 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
         {visible.map(({ c, i }) => (
           <ClipCard key={c.original_index ?? i} clip={c} index={i} jobId={jobId}
             state={clipStates[i]} preselections={preselections} onUpdate={onUpdateClipState} selectMode={selectMode}
-            onPublish={onPublish} onCaptions={onCaptions} pushToast={pushToast} />
+            onPublish={onPublish} onEdit={onEdit} pushToast={pushToast} />
         ))}
       </div>
     </div>
