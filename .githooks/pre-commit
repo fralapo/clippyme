@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# ClippyMe secret-scan pre-commit hook.
+#
+# Blocks commits that would leak API keys, tokens, cookies, or local secret
+# files. Enable once per clone with:
+#
+#     git config core.hooksPath .githooks
+#
+# Bypass a single commit only when you are certain (e.g. a false positive):
+#
+#     git commit --no-verify
+#
+# Exit non-zero → commit aborted.
+set -euo pipefail
+
+# Only scan what is staged (added/changed lines), not the whole tree.
+staged_files=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged_files" ] && exit 0
+
+fail=0
+report() { echo "🚫 pre-commit: $1" >&2; fail=1; }
+
+# --- 1. Block sensitive files by path -------------------------------------
+# These hold real secrets and must never be committed (they are gitignored,
+# but a `git add -f` would slip them through).
+while IFS= read -r f; do
+  case "$f" in
+    data/cookies.txt|data/config.json|.env|*/cookies.txt)
+      report "refusing to commit secret file: $f" ;;
+    tmp/*)
+      report "refusing to commit from gitignored tmp/: $f" ;;
+  esac
+done <<< "$staged_files"
+
+# --- 2. Scan staged content for secret patterns ---------------------------
+# Token shapes: Google API key (AIza…), HuggingFace (hf_…), OpenAI (sk-…),
+# Deepgram (40-hex), Netscape cookie header, and generic "key=<long>" lines.
+patterns=(
+  'AIza[0-9A-Za-z_\-]{35}'
+  'hf_[A-Za-z0-9]{30,}'
+  'sk-[A-Za-z0-9]{20,}'
+  '# Netscape HTTP Cookie File'
+  '(DEEPGRAM|GEMINI|ZERNIO|HF)_API_KEY[[:space:]]*[=:][[:space:]]*[A-Za-z0-9_\-]{16,}'
+  'Token [a-f0-9]{32,}'
+)
+
+for f in $staged_files; do
+  # Skip binary blobs and this hook itself (its patterns are not secrets).
+  case "$f" in
+    .githooks/pre-commit) continue ;;
+  esac
+  git show ":$f" 2>/dev/null | grep -Iq . || continue   # -I: skip if binary
+  added=$(git diff --cached -U0 -- "$f" | grep '^+' | grep -v '^+++')
+  [ -z "$added" ] && continue
+  for p in "${patterns[@]}"; do
+    if printf '%s\n' "$added" | grep -Eq "$p"; then
+      report "possible secret in $f (pattern: ${p:0:24}…)"
+    fi
+  done
+done
+
+if [ "$fail" -ne 0 ]; then
+  echo "" >&2
+  echo "Commit blocked: remove the secret(s) above, or re-run with --no-verify if it is a confirmed false positive." >&2
+  exit 1
+fi
+exit 0

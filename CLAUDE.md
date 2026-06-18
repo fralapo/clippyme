@@ -184,7 +184,7 @@ Components land in `src/components/ui/`. They use Tailwind v4 class syntax — v
 - **Hardware auto-detection**: CUDA/CPU fallback at runtime for faster-whisper and YOLOv8. No manual config needed.
 - **yt-dlp uses Deno** as JS runtime for YouTube bot-detection bypass.
 - **Cookie management**: Uploaded once in Settings, persisted at `data/cookies.txt`. Used automatically for all downloads. Fallback chain: `data/cookies.txt` → `YOUTUBE_COOKIES` env var → none.
-- **Security**: `job_id` validated with strict regex to prevent path traversal. Config endpoints require trusted origin or private network client. Containers run as non-root users. Pre-commit hook blocks API keys, tokens, and cookie data.
+- **Security**: `job_id` validated with strict regex to prevent path traversal. Config endpoints require trusted origin or private network client. Containers run as non-root users. A secret-scan **pre-commit hook** lives at `.githooks/pre-commit` (blocks API keys, HF/OpenAI tokens, Deepgram tokens, Netscape cookie files, and the secret files `data/cookies.txt` / `data/config.json` / `.env`). Enable it once per clone with `git config core.hooksPath .githooks`; bypass a confirmed false positive with `git commit --no-verify`.
 - **Temp files**: Uploads go to `uploads/`, outputs to `output/`. Both are transient and git-ignored.
 - **Font serving**: `/fonts` static mount serves bundled TTFs to frontend for SubtitleModal preview (loaded via FontFace API).
 
