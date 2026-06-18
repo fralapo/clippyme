@@ -55,8 +55,8 @@ Fork of OpenShorts, hardened and extended: cloud-or-local transcription, Gemini 
 Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 
 1. **Download** with `yt-dlp` (Deno-based JS runtime to bypass YouTube bot detection, optional cookies for age-gated content).
-2. **Transcribe** with **Deepgram Nova-3** by default (multi-language, code-switching EN/IT) — automatic fallback to local **Faster-Whisper** if no key or network failure. Cached on disk for 7 days keyed by URL hash.
-3. **Detect viral moments** with **Google Gemini**. A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output.
+2. **Transcribe** with **Deepgram Nova-3** by default (multi-language, code-switching EN/IT) — automatic fallback to local **Faster-Whisper** if no key or network failure. The video is stripped to a mono-16 kHz FLAC first, so only audio is uploaded/decoded (a few MB instead of the full mp4). Cached on disk for 7 days keyed by URL hash.
+3. **Detect viral moments** with **Google Gemini** (`gemini-3.5-flash` by default). A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output.
 4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene. Hardened against messy real-world inputs: variable-frame-rate normalization, audio `start_time` compensation (YouTube A/V desync), and corrupt-frame resilience — all no-ops on clean sources.
 5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection.
 6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish), **Hook** text overlay (Pillow + emoji), **Subtitles** (6 ASS karaoke presets or classic SRT, pixel-faithful frontend preview).
@@ -77,7 +77,7 @@ While a job runs you stay in control:
 | Backend | Python 3.11, FastAPI, Pydantic v2, asyncio queue |
 | Pipeline | yt-dlp · Deepgram REST · Faster-Whisper · PySceneDetect · YOLOv8 (Ultralytics) · MediaPipe · ffmpeg · auto-editor (Nim binary) · Pillow |
 | AI | Google Gemini (viral detection) · Deepgram Nova-3 (transcription) |
-| Frontend | React 18 · Vite 5 · Tailwind CSS v4 · shadcn/ui · Radix · sonner |
+| Frontend | React 18 · Vite 5 · Tailwind CSS v4 · lucide-react · custom toasts/primitives |
 | Publishing | Zernio multi-platform API |
 | Deploy | Docker Compose (CPU multi-arch + optional NVIDIA GPU profile) |
 
@@ -131,7 +131,7 @@ All API keys, model selection, and cookies are managed **from the dashboard Sett
 
 | Key | Required for | Notes |
 |---|---|---|
-| `GEMINI_API_KEY` | Viral moment detection | Set the model from the dropdown (Flash / Pro). |
+| `GEMINI_API_KEY` | Viral moment detection | Default model `gemini-3.5-flash`; override per job or set the default in Settings (live model discovery). |
 | `DEEPGRAM_API_KEY` | Cloud transcription (default) | Falls back to local Faster-Whisper if missing. |
 | `HUGGINGFACE_TOKEN` | Optional gated models for Whisper | |
 | Zernio | Social publishing | Per-platform account IDs auto-discovered via "Discover from Zernio". |
@@ -142,8 +142,12 @@ Runtime env overrides (rarely needed):
 | Variable | Default | Purpose |
 |---|---|---|
 | `TRANSCRIPTION_PROVIDER` | `deepgram` | Or `whisper` to force local. |
+| `CLIPPYME_TRANSCRIBE_AUDIO_ONLY` | `true` | Strip to audio-only FLAC before transcription; `false` sends the full video. |
 | `DEEPGRAM_MODEL` | `nova-3` | |
 | `DEEPGRAM_LANGUAGE` | `multi` | |
+| `REFRAME_COMFORT` | `1` | Anti-nausea default (global-smooth + per-scene stationary + zoom lock). `0` = original single-pass tracker. |
+| `REFRAME_STATIONARY_THRESH` / `REFRAME_ZOOM_LOCK` | `0.30` / on | Comfort tuning: scene-lock threshold / one zoom level per scene. |
+| `REFRAME_SALIENT_GENERAL` | _(off)_ | Content-aware crop for faceless scenes instead of letterboxing. |
 | `ZERNIO_DEFAULT_TZ` | `Europe/Rome` | |
 | `ZERNIO_MIN_GAP_SECONDS` | `5400` | SmartScheduler min spacing between posts. |
 | `REFRAME_SMOOTHER` | _(blank)_ | `euro` switches the speaker camera to the 1€ adaptive filter; blank keeps the two-speed EMA. |
@@ -189,14 +193,15 @@ src/clippyme/
 
 dashboard/
   src/
-    App.jsx                 Top-level orchestrator (≈270 lines)
+    main.jsx                Mounts redesign/RedesignApp
+    redesign/               The live UI. RedesignApp (state + tab orchestration),
+                            create / results / publish / captions / views (Settings +
+                            History) / chrome / processing, realApi.js (backend client),
+                            data.js (presets/options), primitives.jsx, icon.jsx
     hooks/                  useJobSubmission, useJobPolling, useHistory,
                             useSessionPersistence, useBackendStatus, useClipStates
-    components/             MediaInput, ResultCard, ResultsGrid, SubtitleModal,
-                            HookModal, PublishModal, BatchPublishModal, SettingsTab,
-                            ZernioSettings, ProcessingView, HistoryTab, …
-    components/ui/          shadcn/ui primitives (Button, Dialog, Tabs, Tooltip, …)
-    lib/subtitlePresets.js  1:1 mirror of subtitles.py SUBTITLE_PRESETS for the live preview
+    lib/subtitlePresets.js  1:1 mirror of subtitles.py SUBTITLE_PRESETS for the live
+                            preview (kept in sync by a CI parity test)
 
 fonts/                Bundled TTF fonts served via /fonts (subtitle + hook rendering)
 data/                 Persisted config, cookies, transcript cache (git-ignored)
@@ -255,13 +260,13 @@ Toggling is UI-only state. Nothing is processed on click. At download time the a
 
 Three per-scene strategies, decided by sampling 7 frames per scene:
 
-- **TRACK** — single speaker → active-speaker tracking via `SpeakerTracker` (MAR variance + face size) and `SmoothedCameraman` (adaptive smoothing slow/fast, X+Y axis tracking, dynamic 1.0–1.6× zoom). Active-speaker selection uses MediaPipe FaceMesh mouth-aspect-ratio variance; the centering dead-band defaults to `REFRAME_DEADZONE_X=0.05` / `REFRAME_DEADZONE_Y=0.08` (empirically tuned — looser values let a talking head drift off-centre).
+- **TRACK** — single speaker → active-speaker tracking via `SpeakerTracker` (MAR variance + face size) and `SmoothedCameraman` (adaptive smoothing slow/fast, X+Y axis tracking, dynamic 1.0–1.6× zoom). Active-speaker selection uses MediaPipe FaceMesh mouth-aspect-ratio variance; in the streaming fallback path the centering dead-band defaults to `REFRAME_DEADZONE_X=0.05` / `REFRAME_DEADZONE_Y=0.08`.
 - **WIDE** — multi-speaker → same tracker with longer cooldown (45 frames ≈ 1.5 s) for interview-style switching.
 - **GENERAL** — no faces → letterbox.
 
 **Lost-subject recovery:** in TRACK/WIDE, if no speaker is detected for `REFRAME_LOST_HOLD` frames (~3 s) the camera eases back to the source center and gently zooms out instead of freezing on empty space. The active-speaker camera can optionally use a 1€ adaptive filter (`REFRAME_SMOOTHER=euro`) or a momentum/damped-spring smoother (`REFRAME_SMOOTHER=spring`) in place of the default two-speed EMA, with an optional hard pan-rate cap (`REFRAME_MAX_STEP_PX`). The pure decision math lives in the cv2-free, host-tested `clippyme.pipeline.reframe_ops` module; ffprobe-backed A/V-sync helpers (VFR detection, stream `start_time`, fps reconcile) live alongside in `media_probe.py`.
 
-**Quality preset (`REFRAME_GLOBAL_SMOOTH=1`):** an opt-in two-pass global trajectory smoother (method `savgol`/`kalman`/`l2`) that Savitzky-Golay-smooths the whole camera path per scene for noticeably tighter centering than the fast single-pass default, at the cost of a second video decode. Pairs with an [AutoFlip](https://research.google/blog/autoflip-an-open-source-framework-for-intelligent-video-reframing/)-style per-scene **stationary lock** (`REFRAME_STATIONARY_THRESH`, default off): near-static scenes are pinned to a locked-tripod viewpoint (with optional `REFRAME_SNAP_CENTER`) instead of micro-tracking jitter. See [`docs/reframe-improvements-research.md`](docs/reframe-improvements-research.md) for the measured comparison.
+**Comfort mode (`REFRAME_COMFORT`, default on):** continuous face-tracking is what makes auto-reframes feel like seasickness — the camera is always gently moving, and the changing velocity (plus a zoom that breathes mid-shot) is the actual nausea trigger, not pixel jitter. So the default render now biases toward a *still* camera the way [AutoFlip](https://research.google/blog/autoflip-an-open-source-framework-for-intelligent-video-reframing/) does: a two-pass global trajectory smoother (method `savgol`/`kalman`/`l2`) Savitzky-Golay-smooths the whole camera path per scene, a per-scene **stationary lock** (`REFRAME_STATIONARY_THRESH`, default `0.30`) pins near-static scenes to a locked tripod (with `REFRAME_SNAP_CENTER`), and **per-scene zoom lock** (`REFRAME_ZOOM_LOCK`) holds one zoom level per shot so the frame never breathes. It costs a second video decode; set `REFRAME_COMFORT=0` to fall back to the original single-pass streaming tracker. See [`docs/reframe-improvements-research.md`](docs/reframe-improvements-research.md) for the measured comparison.
 
 Override per job: `--reframe-mode disabled` forces a 4:3 center crop with black bars.
 
@@ -294,6 +299,7 @@ This project has been audited; the current state is suitable for **trusted LAN d
 - `data/config.json` and `data/cookies.txt` are written with mode `0600`.
 - Internal exceptions never leak `str(e)` to API clients; full stack traces are logged server-side only.
 - `ZERNIO_BASE_URL` env override is allowlisted to `https://*.zernio.com`.
+- A secret-scan **pre-commit hook** (`.githooks/pre-commit`) blocks committing API keys, tokens, cookie files, `data/config.json`, and `.env`. Enable per clone: `git config core.hooksPath .githooks`.
 
 **Not yet in place** (required before exposing publicly): authentication layer, rate limiting, CSRF, full reverse proxy with TLS + security headers.
 
@@ -311,5 +317,5 @@ The CPU image runs everywhere (Linux x86_64, ARM64, Apple Silicon via Docker Des
 
 - [OpenShorts](https://github.com/SamurAIGPT/Open-Source-Shorts-Maker) — original starting point.
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp), [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper), [Deepgram](https://deepgram.com), [Google Gemini](https://ai.google.dev), [Ultralytics YOLO](https://github.com/ultralytics/ultralytics), [MediaPipe](https://github.com/google/mediapipe), [auto-editor](https://github.com/WyattBlue/auto-editor), [Zernio](https://zernio.com).
-- [shadcn/ui](https://ui.shadcn.com), [Radix UI](https://www.radix-ui.com), [Tailwind CSS](https://tailwindcss.com).
+- [React](https://react.dev), [Vite](https://vitejs.dev), [Tailwind CSS](https://tailwindcss.com), [lucide](https://lucide.dev).
 - Reframe-algorithm research studied and selectively ported (see `docs/*-analysis.md`): [gauravzazz/smart-reframe](https://github.com/gauravzazz/smart-reframe), [KazKozDev/auto-vertical-reframe](https://github.com/KazKozDev/auto-vertical-reframe), [obi19999/smart-video-reframe](https://github.com/obi19999/smart-video-reframe), [mfahsold/montage-ai](https://github.com/mfahsold/montage-ai), [kamilstanuch/Autocrop-vertical](https://github.com/kamilstanuch/Autocrop-vertical).
