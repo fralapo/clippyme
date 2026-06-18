@@ -119,8 +119,9 @@ def extract_audio_for_asr(video_path: str) -> str | None:
                 out_path,
             ],
             check=True,
+            timeout=1800,
         )
         return out_path
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
         print(f"   ⚠️  Could not extract audio for transcription ({exc}); using source file.")
         return None

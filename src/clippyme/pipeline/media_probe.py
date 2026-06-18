@@ -124,11 +124,11 @@ def probe_stream_start_time(video_path: str, stream: str = "v:0") -> float:
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", stream,
              "-show_entries", "stream=start_time", "-of", "csv=p=0", video_path],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=15,
         )
         if result.returncode == 0:
             return parse_start_time(result.stdout)
-    except (FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         pass
     return 0.0
 
@@ -145,7 +145,7 @@ def probe_is_variable_frame_rate(video_path: str, threshold: float = 0.5) -> boo
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=r_frame_rate,avg_frame_rate",
              "-of", "csv=p=0", video_path],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=15,
         )
         if result.returncode != 0:
             return False
@@ -153,5 +153,5 @@ def probe_is_variable_frame_rate(video_path: str, threshold: float = 0.5) -> boo
         if len(parts) < 2:
             return False
         return is_vfr(parts[0], parts[1], threshold=threshold)
-    except (FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
         return False

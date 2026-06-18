@@ -41,7 +41,7 @@ def normalize_audio(video_path):
             '-af', 'loudnorm=I=-14:TP=-1.5:LRA=7:print_format=json',
             '-f', 'null', os.devnull
         ]
-        result = subprocess.run(analyze_cmd, capture_output=True, text=True)
+        result = subprocess.run(analyze_cmd, capture_output=True, text=True, timeout=300)
         # Parse measured values from stderr (loudnorm outputs JSON at the end)
         stderr = result.stderr
         json_start = stderr.rfind('{')
@@ -75,7 +75,7 @@ def normalize_audio(video_path):
             '-c:a', 'aac', '-b:a', '192k',
             temp_out
         ]
-        norm_result = subprocess.run(apply_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        norm_result = subprocess.run(apply_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)
         if norm_result.returncode == 0 and os.path.exists(temp_out):
             os.replace(temp_out, video_path)
             print(f"🔊 Audio normalized to -14 LUFS: {os.path.basename(video_path)}")
@@ -102,7 +102,7 @@ def apply_subtle_zoom(video_path, zoom_end=1.05):
             ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
              '-show_entries', 'stream=width,height,r_frame_rate,nb_frames',
              '-of', 'csv=s=x:p=0', video_path],
-            capture_output=True, text=True
+            capture_output=True, text=True, timeout=30
         )
         parts = probe.stdout.strip().split('x')
         if len(parts) < 3:
@@ -131,7 +131,7 @@ def apply_subtle_zoom(video_path, zoom_end=1.05):
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23',
             '-c:a', 'copy', temp_out
         ]
-        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)
         if result.returncode == 0 and os.path.exists(temp_out):
             os.replace(temp_out, video_path)
             print(f"🔍 Subtle zoom applied (1.0→{zoom_end}x): {os.path.basename(video_path)}")

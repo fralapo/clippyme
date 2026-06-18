@@ -862,59 +862,65 @@ def analyze_scenes_strategy(video_path, scenes):
     if not cap.isOpened():
         return ['TRACK'] * len(scenes)
 
-    frame_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1.0
-    frame_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1.0
-    _mt = (os.getenv("REFRAME_MOTION_WIDE_THRESH") or "").strip()
-    motion_thresh = float(_mt) if _mt else 0.12
+    try:
+        frame_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1.0
+        frame_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1.0
+        _mt = (os.getenv("REFRAME_MOTION_WIDE_THRESH") or "").strip()
+        motion_thresh = float(_mt) if _mt else 0.12
 
-    for start, end in tqdm(scenes, desc="   Analyzing Scenes"):
-        # Sample 7 frames evenly across the scene for a more reliable
-        # face-count estimate (was 3 frames). Catches mixed-content scenes
-        # where the face count changes mid-scene.
-        s_frame = start.get_frames()
-        e_frame = end.get_frames()
-        if e_frame - s_frame < 14:
-            frames_to_check = [s_frame + 2, (s_frame + e_frame) // 2, e_frame - 2]
-        else:
-            step = (e_frame - s_frame) // 8
-            frames_to_check = [s_frame + step * i for i in range(1, 8)]
-
-        face_counts = []
-        primary_centers = []  # centre of the largest face per sampled frame
-        for f_idx in frames_to_check:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
-            ret, frame = cap.read()
-            if not ret:
+        for start, end in tqdm(scenes, desc="   Analyzing Scenes"):
+            # Sample 7 frames evenly across the scene for a more reliable
+            # face-count estimate (was 3 frames). Catches mixed-content scenes
+            # where the face count changes mid-scene.
+            s_frame = start.get_frames()
+            e_frame = end.get_frames()
+            # Degenerate scene (shorter than the sampling window, or zero/negative
+            # span) → invalid frame indices. Default to GENERAL and skip sampling.
+            if e_frame <= s_frame:
+                strategies.append('GENERAL')
                 continue
-            candidates = detect_face_candidates(frame)
-            face_counts.append(len(candidates))
-            if candidates:
-                # Largest-area face = the primary subject we'd track.
-                px, py, pw, ph = max(candidates, key=lambda c: c['box'][2] * c['box'][3])['box']
-                primary_centers.append((px + pw / 2.0, py + ph / 2.0))
+            if e_frame - s_frame < 14:
+                frames_to_check = [s_frame + 2, (s_frame + e_frame) // 2, e_frame - 2]
             else:
-                primary_centers.append(None)
+                step = (e_frame - s_frame) // 8
+                frames_to_check = [s_frame + step * i for i in range(1, 8)]
 
-        if not face_counts:
-            strategies.append('GENERAL')
-            continue
+            face_counts = []
+            primary_centers = []  # centre of the largest face per sampled frame
+            for f_idx in frames_to_check:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+                candidates = detect_face_candidates(frame)
+                face_counts.append(len(candidates))
+                if candidates:
+                    # Largest-area face = the primary subject we'd track.
+                    px, py, pw, ph = max(candidates, key=lambda c: c['box'][2] * c['box'][3])['box']
+                    primary_centers.append((px + pw / 2.0, py + ph / 2.0))
+                else:
+                    primary_centers.append(None)
 
-        avg_faces = sum(face_counts) / len(face_counts)
-        max_faces = max(face_counts)
+            if not face_counts:
+                strategies.append('GENERAL')
+                continue
 
-        if avg_faces < 0.4:
-            strategies.append('GENERAL')
-        elif max_faces >= 2 and avg_faces > 1.0:
-            # More than one face in the scene → WIDE (locked, zoomed-out).
-            strategies.append('WIDE')
-        elif centroid_span(primary_centers, frame_w, frame_h) > motion_thresh:
-            # Single subject but it roams too far to hold statically → WIDE.
-            strategies.append('WIDE')
-        else:
-            # Single, near-static subject → TRACK (locked crop on the face).
-            strategies.append('TRACK')
+            avg_faces = sum(face_counts) / len(face_counts)
+            max_faces = max(face_counts)
 
-    cap.release()
+            if avg_faces < 0.4:
+                strategies.append('GENERAL')
+            elif max_faces >= 2 and avg_faces > 1.0:
+                # More than one face in the scene → WIDE (locked, zoomed-out).
+                strategies.append('WIDE')
+            elif centroid_span(primary_centers, frame_w, frame_h) > motion_thresh:
+                # Single subject but it roams too far to hold statically → WIDE.
+                strategies.append('WIDE')
+            else:
+                # Single, near-static subject → TRACK (locked crop on the face).
+                strategies.append('TRACK')
+    finally:
+        cap.release()
     return strategies
 
 def select_cover_frame(video_path):
@@ -926,47 +932,47 @@ def select_cover_frame(video_path):
     cover_path = os.path.splitext(video_path)[0] + "_cover.jpg"
     try:
         cap = cv2.VideoCapture(video_path)
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total_frames <= 0 or fps <= 0:
+        try:
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            if total_frames <= 0 or fps <= 0:
+                return None
+
+            # Sample 1 frame per second
+            sample_interval = max(1, int(fps))
+            best_score = -1
+            best_frame = None
+
+            for frame_idx in range(0, total_frames, sample_interval):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+
+                score = 0.0
+
+                # Face detection (reuse existing MediaPipe)
+                candidates = detect_face_candidates(frame)
+                if candidates:
+                    score += 50  # Face present = big bonus
+
+                # Sharpness (Laplacian variance — higher = sharper)
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+                score += min(30, laplacian_var / 100 * 30)  # Cap at 30 points
+
+                # Exposure (prefer well-lit, not too dark or blown out)
+                mean_brightness = gray.mean()
+                if 80 < mean_brightness < 200:
+                    score += 20  # Good exposure range
+                elif 50 < mean_brightness < 230:
+                    score += 10
+
+                if score > best_score:
+                    best_score = score
+                    best_frame = frame.copy()
+        finally:
             cap.release()
-            return None
-
-        # Sample 1 frame per second
-        sample_interval = max(1, int(fps))
-        best_score = -1
-        best_frame = None
-
-        for frame_idx in range(0, total_frames, sample_interval):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            if not ret:
-                continue
-
-            score = 0.0
-
-            # Face detection (reuse existing MediaPipe)
-            candidates = detect_face_candidates(frame)
-            if candidates:
-                score += 50  # Face present = big bonus
-
-            # Sharpness (Laplacian variance — higher = sharper)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-            score += min(30, laplacian_var / 100 * 30)  # Cap at 30 points
-
-            # Exposure (prefer well-lit, not too dark or blown out)
-            mean_brightness = gray.mean()
-            if 80 < mean_brightness < 200:
-                score += 20  # Good exposure range
-            elif 50 < mean_brightness < 230:
-                score += 10
-
-            if score > best_score:
-                best_score = score
-                best_frame = frame.copy()
-
-        cap.release()
 
         if best_frame is not None:
             cv2.imwrite(cover_path, best_frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -1069,37 +1075,39 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     frame_number = 0
     current_scene_index = 0
     print("   🔁 Global-smooth pass 1/2: tracking trajectory...")
-    with tqdm(total=total_frames, desc="   Pass 1", file=sys.stdout) as pbar:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if current_scene_index < len(scene_boundaries):
-                _, end_f = scene_boundaries[current_scene_index]
-                if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
-                    current_scene_index += 1
-            strat = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
-            strategies.append(strat)
-            scene_ids.append(current_scene_index)
-            if strat in ('DISABLED', 'GENERAL'):
-                targets.append(None)
-            else:
-                if frame_number % 2 == 0:
-                    candidates = detect_face_candidates(frame)
-                    candidates = detection_smoother.smooth(candidates, frame_number)
-                    for cand in candidates:
-                        cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
-                    target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
-                    if target_box:
-                        cameraman.update_target(target_box)
-                    elif strat == 'TRACK':
-                        person_box = detect_person_yolo(frame)
-                        if person_box:
-                            cameraman.update_target(person_box, is_person_box=True)
-                targets.append((cameraman.target_center_x, cameraman.target_center_y, cameraman.target_zoom))
-            frame_number += 1
-            pbar.update(1)
-    cap.release()
+    try:
+        with tqdm(total=total_frames, desc="   Pass 1", file=sys.stdout) as pbar:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if current_scene_index < len(scene_boundaries):
+                    _, end_f = scene_boundaries[current_scene_index]
+                    if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
+                        current_scene_index += 1
+                strat = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
+                strategies.append(strat)
+                scene_ids.append(current_scene_index)
+                if strat in ('DISABLED', 'GENERAL'):
+                    targets.append(None)
+                else:
+                    if frame_number % 2 == 0:
+                        candidates = detect_face_candidates(frame)
+                        candidates = detection_smoother.smooth(candidates, frame_number)
+                        for cand in candidates:
+                            cand['mar'] = compute_mouth_aspect_ratio(frame, cand['box'])
+                        target_box = speaker_tracker.get_target(candidates, frame_number, original_width)
+                        if target_box:
+                            cameraman.update_target(target_box)
+                        elif strat == 'TRACK':
+                            person_box = detect_person_yolo(frame)
+                            if person_box:
+                                cameraman.update_target(person_box, is_person_box=True)
+                    targets.append((cameraman.target_center_x, cameraman.target_center_y, cameraman.target_zoom))
+                frame_number += 1
+                pbar.update(1)
+    finally:
+        cap.release()
 
     # --- Global smoothing pass ---------------------------------------------
     # Global smoother for the pan path: savgol (default) | kalman | l2. The two
@@ -1159,47 +1167,49 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     # and truncating the clip (ported from kamilstanuch/Autocrop-vertical).
     dropped_frames = 0
     last_output_frame = None
-    with tqdm(total=total_frames, desc="   Pass 2", file=sys.stdout) as pbar:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            try:
-                strat = strategies[frame_number] if frame_number < len(strategies) else 'TRACK'
-                if strat == 'DISABLED':
-                    output_frame = create_disabled_reframe(frame, output_width, output_height)
-                elif strat == 'GENERAL':
-                    output_frame = create_general_frame(frame, output_width, output_height)
-                else:
-                    tgt = smoothed[frame_number] if frame_number < len(smoothed) else None
-                    if tgt is None:
-                        output_frame = cv2.resize(frame, (output_width, output_height))
+    try:
+        with tqdm(total=total_frames, desc="   Pass 2", file=sys.stdout) as pbar:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                try:
+                    strat = strategies[frame_number] if frame_number < len(strategies) else 'TRACK'
+                    if strat == 'DISABLED':
+                        output_frame = create_disabled_reframe(frame, output_width, output_height)
+                    elif strat == 'GENERAL':
+                        output_frame = create_general_frame(frame, output_width, output_height)
                     else:
-                        cx, cy, zoom = tgt
-                        x1, y1, x2, y2 = cameraman.crop_box_at(cx, cy, zoom)
-                        if y2 > y1 and x2 > x1:
-                            output_frame = _resize_to_output(frame[y1:y2, x1:x2], output_width, output_height)
-                        else:
+                        tgt = smoothed[frame_number] if frame_number < len(smoothed) else None
+                        if tgt is None:
                             output_frame = cv2.resize(frame, (output_width, output_height))
-                last_output_frame = output_frame
-            except Exception:
-                dropped_frames += 1
-                # Surface the FIRST failure unconditionally — a systemic bug
-                # (e.g. a NameError on every frame) otherwise hides entirely
-                # behind the duplicate-last-frame fallback. REFRAME_DEBUG_EXC
-                # adds the next 4 for context.
-                if dropped_frames == 1 or (os.environ.get('REFRAME_DEBUG_EXC') and dropped_frames <= 5):
-                    import traceback
-                    print(f"   🐛 global-smooth frame {frame_number} failed:", file=sys.stderr)
-                    traceback.print_exc()
-                if last_output_frame is not None:
-                    output_frame = last_output_frame
-                else:
-                    output_frame = np.zeros((output_height, output_width, 3), dtype=np.uint8)
-            ffmpeg_process.stdin.write(output_frame.tobytes())
-            frame_number += 1
-            pbar.update(1)
-    cap.release()
+                        else:
+                            cx, cy, zoom = tgt
+                            x1, y1, x2, y2 = cameraman.crop_box_at(cx, cy, zoom)
+                            if y2 > y1 and x2 > x1:
+                                output_frame = _resize_to_output(frame[y1:y2, x1:x2], output_width, output_height)
+                            else:
+                                output_frame = cv2.resize(frame, (output_width, output_height))
+                    last_output_frame = output_frame
+                except Exception:
+                    dropped_frames += 1
+                    # Surface the FIRST failure unconditionally — a systemic bug
+                    # (e.g. a NameError on every frame) otherwise hides entirely
+                    # behind the duplicate-last-frame fallback. REFRAME_DEBUG_EXC
+                    # adds the next 4 for context.
+                    if dropped_frames == 1 or (os.environ.get('REFRAME_DEBUG_EXC') and dropped_frames <= 5):
+                        import traceback
+                        print(f"   🐛 global-smooth frame {frame_number} failed:", file=sys.stderr)
+                        traceback.print_exc()
+                    if last_output_frame is not None:
+                        output_frame = last_output_frame
+                    else:
+                        output_frame = np.zeros((output_height, output_width, 3), dtype=np.uint8)
+                ffmpeg_process.stdin.write(output_frame.tobytes())
+                frame_number += 1
+                pbar.update(1)
+    finally:
+        cap.release()
     if dropped_frames > 0:
         pct = 100.0 * dropped_frames / max(1, total_frames)
         print(f"   ⚠️ {dropped_frames} frame(s) ({pct:.1f}%) failed processing and were duplicated from the previous good frame.")
@@ -1242,7 +1252,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
             '-c:a', 'copy', temp_cfr_input,
         ]
         try:
-            subprocess.run(cfr_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            subprocess.run(cfr_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)
             input_video = temp_cfr_input
             print("   ✅ VFR normalization complete.")
         except subprocess.CalledProcessError:
@@ -1511,7 +1521,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         'ffmpeg', '-y', *seek_args, '-i', input_video, '-vn', '-acodec', 'copy', temp_audio_output
     ]
     try:
-        result = subprocess.run(audio_extract_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        result = subprocess.run(audio_extract_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)
     except subprocess.CalledProcessError as e:
         stderr_msg = e.stderr.decode(errors='replace').strip() if e.stderr else 'unknown'
         print(f"\n   ⚠️ Audio extraction failed: {stderr_msg}")
@@ -1536,7 +1546,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         ]
         
     try:
-        subprocess.run(merge_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        subprocess.run(merge_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)
         print(f"   ✅ Clip saved to {final_output_video}")
     except subprocess.CalledProcessError as e:
         print("\n   ❌ Final merge failed.")

@@ -43,7 +43,8 @@ def save_job_metadata(metadata_path: str, data: dict) -> None:
     """
     tmp_path = metadata_path + ".tmp"
     try:
-        with open(tmp_path, "w") as f:
+        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
         os.replace(tmp_path, metadata_path)
     except Exception:

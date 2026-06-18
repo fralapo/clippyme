@@ -49,9 +49,7 @@ async def run_smart_cut(
         raise NotFoundError(f"Clip file not found: {filename}")
 
     try:
-        loop = asyncio.get_event_loop()
-        result_path, stats = await loop.run_in_executor(
-            None,
+        result_path, stats = await asyncio.to_thread(
             smart_cut,
             clip_path,
             transcript,

@@ -109,6 +109,12 @@ jobs: Dict[str, Dict] = {}
 # Semaphore to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
+
+def _load_metadata_json(path):
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # run_job is defined later in this module, so we bind workers here.
@@ -232,7 +238,7 @@ async def list_gemini_models(
 ):
     """List available Gemini models using the provided API key."""
     require_trusted_config_request(request)
-    return list_available_models(api_key or os.environ.get("GEMINI_API_KEY"))
+    return await asyncio.to_thread(list_available_models, api_key or os.environ.get("GEMINI_API_KEY"))
 
 async def run_job(job_id, job_data):
     """Executes the subprocess for a specific job."""
@@ -551,7 +557,7 @@ async def get_status(job_id: str):
     job = jobs[job_id]
     return {
         "status": job['status'],
-        "logs": job['logs'],
+        "logs": job.get('logs', [])[-500:],
         "result": job.get('result')
     }
 
@@ -574,12 +580,12 @@ async def cancel_job(job_id: str, request: Request):
     if proc and proc.poll() is None:
         if job['status'] == 'paused':
             try:
-                job_control.resume_tree(proc.pid)
+                await asyncio.to_thread(job_control.resume_tree, proc.pid)
             except Exception:
                 pass
         try:
             proc.kill()
-            proc.wait(timeout=5)
+            await asyncio.to_thread(lambda: proc.wait(timeout=5))
         except Exception:
             pass
 
@@ -592,7 +598,7 @@ async def cancel_job(job_id: str, request: Request):
     # Cleanup output dir (discard all partial output).
     output_dir = job.get('output_dir', '')
     if output_dir and os.path.isdir(output_dir):
-        shutil.rmtree(output_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, output_dir, True)
 
     return {"success": True, "status": "cancelled"}
 
@@ -670,12 +676,12 @@ async def stop_job(job_id: str, request: Request):
     proc = job.get('process')
     if proc and proc.poll() is None:
         try:
-            job_control.resume_tree(proc.pid)  # ensure kill is delivered if paused
+            await asyncio.to_thread(job_control.resume_tree, proc.pid)  # ensure kill is delivered if paused
         except Exception:
             pass
         try:
             proc.kill()
-            proc.wait(timeout=5)
+            await asyncio.to_thread(lambda: proc.wait(timeout=5))
         except Exception:
             pass
         # Promote whatever finished to the final result immediately (the
@@ -1105,7 +1111,7 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
 async def list_history(request: Request):
     """Scan output/ for past jobs with metadata files."""
     require_trusted_config_request(request)
-    return {"jobs": scan_history(OUTPUT_DIR)}
+    return {"jobs": await asyncio.to_thread(scan_history, OUTPUT_DIR)}
 
 @app.delete("/api/history/{job_id}")
 async def delete_history(job_id: str, request: Request):
@@ -1116,7 +1122,7 @@ async def delete_history(job_id: str, request: Request):
     job_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(job_dir):
         raise HTTPException(status_code=404, detail="Job not found on disk")
-    shutil.rmtree(job_dir, ignore_errors=True)
+    await asyncio.to_thread(shutil.rmtree, job_dir, True)
     if job_id in jobs:
         del jobs[job_id]
     logger.info("Deleted job %s and all files", job_id)
@@ -1139,8 +1145,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, reques
     if not metadata_path:
         raise HTTPException(status_code=404, detail="No metadata found")
 
-    with open(metadata_path, encoding="utf-8") as f:
-        metadata = json.load(f)
+    metadata = await asyncio.to_thread(_load_metadata_json, metadata_path)
 
     clips = metadata.get("shorts", [])
     if clip_index < 0 or clip_index >= len(clips):
@@ -1247,8 +1252,7 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     metadata_path = _pick_latest_metadata(job_dir)
     if not metadata_path:
         raise HTTPException(status_code=404, detail="No metadata found")
-    with open(metadata_path, encoding="utf-8") as f:
-        metadata = json.load(f)
+    metadata = await asyncio.to_thread(_load_metadata_json, metadata_path)
     clips = metadata.get("shorts", [])
     if clip_index < 0 or clip_index >= len(clips):
         raise HTTPException(status_code=400, detail="Invalid clip index")

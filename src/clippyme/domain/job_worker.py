@@ -13,6 +13,8 @@ from typing import Awaitable, Callable, Dict
 
 logger = logging.getLogger("clippyme")
 
+MAX_LOG_LINES = int(os.environ.get("MAX_LOG_LINES", "2000"))
+
 
 def enqueue_output(out, job_id: str, jobs: Dict[str, Dict]) -> None:
     """Read lines from a subprocess stream and append them to the job's log list.
@@ -25,7 +27,10 @@ def enqueue_output(out, job_id: str, jobs: Dict[str, Dict]) -> None:
             if decoded_line:
                 print(f"📝 [Job Output] {decoded_line}")
                 if job_id in jobs:
-                    jobs[job_id]["logs"].append(decoded_line)
+                    logs = jobs[job_id]["logs"]
+                    logs.append(decoded_line)
+                    if len(logs) > MAX_LOG_LINES:
+                        del logs[: len(logs) - MAX_LOG_LINES]
     except Exception as e:
         logger.error("Error reading output for job %s: %s", job_id, e)
     finally:

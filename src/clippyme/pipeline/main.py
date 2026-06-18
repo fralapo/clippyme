@@ -1,4 +1,5 @@
 import time
+import logging
 import cv2
 import scenedetect
 import subprocess
@@ -531,7 +532,8 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         try:
             response = client.models.generate_content(
                 model=model_name,
-                contents=prompt
+                contents=prompt,
+                config={"http_options": {"timeout": 120000}},
             )
             break
         except Exception as e:
@@ -637,6 +639,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
                 retry_resp = client.models.generate_content(
                     model=retry_model,
                     contents=retry_prompt,
+                    config={"http_options": {"timeout": 120000}},
                 )
                 print(f"🔁 Retry via {retry_model} (cheap reformatter)")
                 return retry_resp.text or ""
@@ -689,6 +692,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         return result_json
     except Exception as e:
         print(f"❌ Unexpected error in Gemini response processing: {e}")
+        logging.getLogger("clippyme").exception("Unexpected error in Gemini response processing")
         return None
 
 if __name__ == '__main__':
@@ -949,6 +953,7 @@ if __name__ == '__main__':
                     if cut_proc.returncode != 0:
                         err_tail = (cut_proc.stderr or b'').decode('utf-8', errors='replace')[-500:]
                         print(f"   ⚠️  ffmpeg cut failed (code {cut_proc.returncode}): {err_tail}", flush=True)
+                        continue
                     else:
                         print(f"   ✅ ffmpeg cut done", flush=True)
                 except subprocess.TimeoutExpired:

@@ -101,10 +101,19 @@ def _clip_lock(clip_path: str) -> threading.Lock:
         if lock is None:
             lock = threading.Lock()
             _CLIP_LOCKS[abs_path] = lock
-            # Bound the registry. 256 in-flight clips is plenty for any
-            # realistic worker count.
+            # Bound the registry WITHOUT ever evicting a lock another thread
+            # may still hold — handing two callers different locks for one
+            # path would defeat the mutex. Only drop currently-free locks.
             if len(_CLIP_LOCKS) > 256:
-                _CLIP_LOCKS.pop(next(iter(_CLIP_LOCKS)))
+                for k in list(_CLIP_LOCKS.keys()):
+                    if len(_CLIP_LOCKS) <= 256:
+                        break
+                    other = _CLIP_LOCKS[k]
+                    if other is not lock and other.acquire(blocking=False):
+                        try:
+                            del _CLIP_LOCKS[k]
+                        finally:
+                            other.release()
         return lock
 
 

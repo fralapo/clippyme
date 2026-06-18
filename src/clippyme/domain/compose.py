@@ -42,9 +42,7 @@ async def _apply_logo(
     scale = lp.get("scale", _LOGO_SIZE_MAP.get(size, 0.18))
     opacity = lp.get("opacity", 1.0)
     margin = lp.get("margin", 0.04)
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None,
+    await asyncio.to_thread(
         add_logo_to_video,
         current_input,
         LOGO_PATH,
@@ -89,9 +87,7 @@ async def _apply_smartcut(
             intermediate_files.append(smartcut_path)
             return smartcut_path
     transcript = metadata.get("transcript", {})
-    loop = asyncio.get_event_loop()
-    sc_output, _ = await loop.run_in_executor(
-        None,
+    sc_output, _ = await asyncio.to_thread(
         smart_cut,
         current_input,
         transcript,
@@ -127,18 +123,15 @@ async def _apply_hook(
     _style_keys = ("text_color", "bg_enabled", "bg_color", "bg_opacity",
                    "corner_radius", "outline_color", "outline_width", "font", "shadow")
     style = {k: hook_params[k] for k in _style_keys if k in hook_params}
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(
-        None,
-        lambda: add_hook_to_video(
-            current_input,
-            hook_params["text"],
-            hook_output,
-            position,
-            font_scale,
-            offset_y,
-            style or None,
-        ),
+    await asyncio.to_thread(
+        add_hook_to_video,
+        current_input,
+        hook_params["text"],
+        hook_output,
+        position,
+        font_scale,
+        offset_y,
+        style or None,
     )
     return hook_output
 
@@ -159,13 +152,11 @@ async def _apply_subtitles(
     clip_end = clip_info.get("end", 0)
     sub_mode = subtitle_params.get("mode", "karaoke")
     sub_offset_y = subtitle_params.get("offset_y", 0)
-    loop = asyncio.get_event_loop()
 
     if sub_mode == "karaoke":
         ass_path = os.path.join(job_dir, f"composed_subs_{clip_index}.ass")
         intermediate_files.append(ass_path)
-        success = await loop.run_in_executor(
-            None,
+        success = await asyncio.to_thread(
             lambda: generate_ass_karaoke(
                 transcript,
                 clip_start,
@@ -183,8 +174,7 @@ async def _apply_subtitles(
         )
         if not success:
             raise ValidationError("No words found for this clip range.")
-        await loop.run_in_executor(
-            None,
+        await asyncio.to_thread(
             burn_subtitles,
             current_input,
             ass_path,
@@ -202,13 +192,12 @@ async def _apply_subtitles(
     else:
         srt_path = os.path.join(job_dir, f"composed_subs_{clip_index}.srt")
         intermediate_files.append(srt_path)
-        success = await loop.run_in_executor(
-            None, generate_srt, transcript, clip_start, clip_end, srt_path
+        success = await asyncio.to_thread(
+            generate_srt, transcript, clip_start, clip_end, srt_path
         )
         if not success:
             raise ValidationError("No words found for this clip range.")
-        await loop.run_in_executor(
-            None,
+        await asyncio.to_thread(
             lambda: burn_subtitles(
                 current_input,
                 srt_path,
