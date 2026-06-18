@@ -65,7 +65,8 @@ export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }
               onClick={() => ok && onOpen(h)} style={{ cursor: ok ? 'pointer' : 'default', opacity: removed ? 0.55 : 1 }}>
               <div className="hthumb" style={{ background: removed ? 'var(--bg-4)' : 'var(--grad-viral)' }}>{h.clipCount ?? 0}</div>
               <div style={{ minWidth: 0 }}>
-                <div className="ht">{h.source || h.jobId}</div>
+                <div className="ht" title={h.source || h.jobId}
+                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.source || h.jobId}</div>
                 <div className="hm">
                   <Icon n={h.sourceType === 'url' ? 'globe' : 'file-video'} style={{ width: 11, height: 11, verticalAlign: '-1px', marginRight: 5 }} />
                   {removed ? 'Files removed (rebuild/cleanup) · delete to dismiss'

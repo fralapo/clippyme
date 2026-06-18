@@ -183,7 +183,9 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                             onClick={() => toggleDrop(s.index)}
                             title={off ? 'Will be cut — tap to keep' : 'Kept — tap to cut'}>
                             <Icon n={off ? 'scissors' : 'check'} style={{ width: 13, height: 13, flexShrink: 0 }} />
-                            <span className="trim-txt">{s.text}</span>
+                            <span className="trim-txt" title={s.text}>
+                              {s.text && s.text.length > 140 ? s.text.slice(0, 140) + '…' : s.text}
+                            </span>
                             <span className="trim-time">{s.start.toFixed(1)}s</span>
                           </button>
                         );
