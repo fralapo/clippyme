@@ -125,13 +125,13 @@ export default function RedesignApp() {
   // `processing` flag drives the per-card spinner; each clip is an independent
   // async chain → several can render concurrently.
   const reprocessClip = useCallback(async (idx, clip, params) => {
-    const { reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams } = params;
+    const { reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams, dropRanges } = params;
     const reframeChanged = reframeMode !== baseMode;
     const anyCompose = !!(toggles.smartcut || toggles.subtitles || toggles.hook || toggles.logo);
 
     // Persist the user's choices + flip the card into its processing state up
     // front (so the badge/preview already reflect the new reframe mode).
-    updateClipState(idx, { reframeMode, toggles, subtitleParams, hookParams, logoParams,
+    updateClipState(idx, { reframeMode, toggles, subtitleParams, hookParams, logoParams, dropRanges,
       processing: reframeChanged || anyCompose });
 
     if (!reframeChanged && !anyCompose) {
@@ -154,6 +154,7 @@ export default function RedesignApp() {
           hook_params: toggles.hook ? hookParams : {},
           subtitle_params: toggles.subtitles ? subtitleParams : {},
           logo_params: toggles.logo ? logoParams : {},
+          drop_ranges: toggles.smartcut ? (dropRanges || []) : [],
         });
         updateClipState(idx, { previewUrl: composed_url, previewBust: Date.now(), processing: false });
       } else {

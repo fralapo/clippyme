@@ -227,7 +227,8 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `POST` | `/api/stop/{job_id}` | Stop early but **keep the clips finished so far**. |
 | `POST` | `/api/cancel/{job_id}` | Kill the subprocess **and discard all output**. |
 | `POST` | `/api/compose/{job_id}/{clip_index}` | Compose Subtitles + Smart Cut + Hook + Logo on demand. |
-| `POST` | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut a single clip. |
+| `POST` | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut a single clip (optional `drop_ranges` for manual trim). |
+| `GET` | `/api/transcript/{job_id}/{clip_index}` | Per-clip transcript segments for the manual-trim UI. |
 | `POST` | `/api/reframe/{job_id}/{clip_index}` | Switch a clip's reframe mode. |
 | `GET` | `/api/history` | Past jobs from disk. |
 | `POST` | `/api/history/{job_id}/restore` | Reload a past job into memory. |
@@ -254,7 +255,7 @@ Static mounts: `/videos`, `/thumbnails`, `/fonts` (read-only).
 
 Every finished clip has an **Edit & reprocess** panel — one button on the clip card opens a modal that gathers all the options in one place (reframe mode, Smart Cut, Hook, Subtitles, Brand logo) so you set everything first and apply once, instead of the clip reprocessing on every tweak. The compose layers:
 
-- **Smart Cut** — removes silences and filler words via auto-editor v3 timeline; falls back to ffmpeg concat demuxer if the binary is missing.
+- **Smart Cut** — removes silences and filler words via auto-editor v3 timeline; falls back to ffmpeg concat demuxer if the binary is missing. **Manual trim:** the Edit modal also shows the clip's transcript as a tap-to-cut checklist — auto-removal handles silence and fillers, and you hand-cut any extra line; the picked spans (`drop_ranges`) carry through download and publish.
 - **Hook** — text overlay, auto-prefilled from the Gemini hook suggestion. Beyond position/size it offers **Instagram-Stories-style text styling**: a toggleable coloured banner behind the text (colour + opacity), independent text colour, an outline/stroke (None/Thin/Thick + colour), and a font choice. A live WYSIWYG preview sits above the controls. Supports emoji.
 - **Subtitles** — 6 viral karaoke presets (`classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`) or classic SRT with font/color/position controls. The frontend preview is **pixel-faithful** with the burned-in output (`dashboard/src/lib/subtitlePresets.js` mirrors the Python preset table 1:1 — keep them in sync).
 - **Brand logo** — burns an uploaded transparent PNG onto the clip (7 anchor positions × S/M/L size × opacity). Upload it once in Settings → Brand assets.

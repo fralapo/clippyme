@@ -83,3 +83,37 @@ def test_analyze_no_drops_is_unchanged_shape():
     segs, stats = sc.analyze_silences(_transcript(words), 0, 2.0, "en")
     assert "manual_drops" not in stats
     assert segs and segs[0][0] == 0.0
+
+
+# --- clip_transcript_segments (manual-trim UI feed) ------------------------
+
+def test_clip_transcript_segments_word_level_relative_times():
+    t = {"language": "en", "segments": [
+        {"words": [{"word": "hello", "start": 10.0, "end": 10.5},
+                   {"word": "world", "start": 10.5, "end": 11.0}]},
+        {"words": [{"word": "second", "start": 12.0, "end": 12.4},
+                   {"word": "line", "start": 12.4, "end": 12.9}]},
+    ]}
+    segs = sc.clip_transcript_segments(t, 10.0, 13.0)
+    assert [s["text"] for s in segs] == ["hello world", "second line"]
+    assert segs[0]["start"] == 0.0 and segs[0]["end"] == 1.0
+    assert segs[1]["start"] == 2.0  # 12.0 - 10.0
+    assert [s["index"] for s in segs] == [0, 1]
+
+
+def test_clip_transcript_segments_trims_straddling_segment():
+    # Only the words inside the clip window contribute.
+    t = {"language": "en", "segments": [
+        {"words": [{"word": "before", "start": 4.0, "end": 4.5},
+                   {"word": "inside", "start": 5.2, "end": 5.6}]},
+    ]}
+    segs = sc.clip_transcript_segments(t, 5.0, 8.0)
+    assert len(segs) == 1
+    assert segs[0]["text"] == "inside"
+    assert segs[0]["start"] == 0.2  # 5.2 - 5.0
+
+
+def test_clip_transcript_segments_segment_level_fallback():
+    t = {"segments": [{"text": "no word timing", "start": 3.0, "end": 6.0}]}
+    segs = sc.clip_transcript_segments(t, 2.0, 10.0)
+    assert segs == [{"index": 0, "text": "no word timing", "start": 1.0, "end": 4.0}]

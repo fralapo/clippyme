@@ -75,17 +75,25 @@ export async function stopJob(jobId) {
   return res.json().catch(() => ({}));
 }
 
-export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params, logo_params }) {
+export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params, logo_params, drop_ranges }) {
   const res = await fetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ toggles, hook_params, subtitle_params, logo_params }),
+    body: JSON.stringify({ toggles, hook_params, subtitle_params, logo_params, drop_ranges: drop_ranges || [] }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
   return res.json(); // { composed_url }
+}
+
+// Per-clip transcript segments (clip-relative seconds) for the manual-trim UI.
+// Returns { segments: [{index, text, start, end}], duration, language }.
+export async function getClipTranscript(jobId, index) {
+  const res = await fetch(getApiUrl(`/api/transcript/${jobId}/${index}`));
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
 // Download a clip, composing first (subtitles/hook/smart-cut) when any toggle
@@ -103,6 +111,7 @@ export async function exportClip(jobId, index, clip, state, preselections) {
     hook_params: toggles.hook ? hook : {},
     subtitle_params: toggles.subtitles ? subs : {},
     logo_params: toggles.logo ? logo : {},
+    drop_ranges: toggles.smartcut ? (state?.dropRanges || []) : [],
   });
   const href = safeResolveUrl(composed_url);
   const a = document.createElement('a');

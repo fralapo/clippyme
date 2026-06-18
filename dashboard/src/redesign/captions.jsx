@@ -6,11 +6,11 @@
 // reframe (subprocess) + compose (subtitles → smart-cut → hook) run in the
 // BACKGROUND in RedesignApp, so the user can keep editing other clips while
 // this one renders. The clip card shows a per-clip "processing" spinner.
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Icon, Btn, Segmented, Switch } from './primitives';
 import { SUBTITLE_PRESETS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, HOOK_STYLE_DEFAULT } from './data';
 import { useModalA11y } from './useModalA11y';
-import { clipPreviewSrc } from './realApi';
+import { clipPreviewSrc, getClipTranscript } from './realApi';
 import { useFontList } from '../hooks/useFontList';
 import { HookStyleControls, HookPreview } from './hookStyle';
 import { seedSubtitleParams, seedHookParams, seedLogoParams } from '../lib/seedClipParams';
@@ -29,7 +29,20 @@ const REFRAME_OPTS = [
   { id: 'disabled', label: 'Off' },
 ];
 
-export function EditClipModal({ clip, idx, initial, appliedMode, preselections, onClose, onApply }) {
+// Reconstruct which transcript segments were marked dropped from previously
+// saved drop_ranges: a segment is "dropped" if a saved span covers its
+// midpoint. Lets the manual-trim checklist restore state on modal reopen.
+function dropSetFromRanges(segments, ranges) {
+  const set = new Set();
+  if (!ranges?.length) return set;
+  segments.forEach((s) => {
+    const mid = (s.start + s.end) / 2;
+    if (ranges.some(([a, b]) => mid >= a && mid <= b)) set.add(s.index);
+  });
+  return set;
+}
+
+export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselections, onClose, onApply }) {
   const t0 = initial?.toggles || {};
   const sp = initial?.subtitleParams || {};
   const pre = preselections || {};
@@ -40,6 +53,10 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
 
   const [reframeMode, setReframeMode] = useState(baseMode);
   const [smartcut, setSmartcut] = useState(t0.smartcut ?? !!pre.smartcut);
+  // Manual trim (flycut-style): transcript segments + the set the user dropped.
+  const [segments, setSegments] = useState(null); // null = not loaded
+  const [segErr, setSegErr] = useState(false);
+  const [dropped, setDropped] = useState(() => new Set());
   const [subsOn, setSubsOn] = useState(t0.subtitles ?? !!pre.subtitles);
   const [hookOn, setHookOn] = useState(t0.hook ?? !!pre.hook);
   const [logoOn, setLogoOn] = useState(t0.logo ?? !!pre.logo);
@@ -62,6 +79,33 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
     () => pickHookStyle(initial?.hookParams || (preselections || {}).hook),
   );
 
+  // Lazy-load transcript segments the first time Smart Cut is enabled. Cheap
+  // GET; backend reads metadata.json. Failure → hide the trim list silently
+  // (auto Smart Cut still works).
+  useEffect(() => {
+    if (!smartcut || segments !== null || !jobId) return;
+    let alive = true;
+    getClipTranscript(jobId, idx)
+      .then((d) => { if (!alive) return;
+        const segs = d.segments || [];
+        setSegments(segs);
+        setDropped(dropSetFromRanges(segs, initial?.dropRanges));
+      })
+      .catch(() => { if (alive) setSegErr(true); });
+    return () => { alive = false; };
+  }, [smartcut, segments, jobId, idx, initial]);
+
+  const toggleDrop = (i) => setDropped((prev) => {
+    const next = new Set(prev);
+    next.has(i) ? next.delete(i) : next.add(i);
+    return next;
+  });
+
+  // Dropped segment indices → merged [start, end] spans for the backend.
+  const dropRanges = (segments || [])
+    .filter((s) => dropped.has(s.index))
+    .map((s) => [s.start, s.end]);
+
   const panelRef = useModalA11y(onClose);
 
   const reframeChanged = reframeMode !== baseMode;
@@ -78,7 +122,8 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
     const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), ...hookStyle, text: hookText };
     const logoParams = { position: logoPos, size: logoSize };
     const toggles = { smartcut, subtitles: subsOn, hook: hookOn, logo: logoOn };
-    onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams });
+    onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams,
+      dropRanges: smartcut ? dropRanges : [] });
   };
 
   return (
@@ -115,6 +160,39 @@ export function EditClipModal({ clip, idx, initial, appliedMode, preselections, 
               <div className="eo-txt"><div className="eo-t">Smart Cut</div><div className="eo-d">Remove silence &amp; filler words</div></div>
               <Switch on={smartcut} onChange={setSmartcut} />
             </div>
+            {smartcut && (
+              <div className="cfg-drawer fade-in">
+                <div className="cf-row" style={{ marginBottom: 0 }}>
+                  <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Manual trim</span>
+                    {dropRanges.length > 0 && <span className="eo-d">{dropRanges.length} dropped</span>}
+                  </span>
+                  <div className="eo-d" style={{ marginBottom: 8 }}>
+                    Auto removes silence &amp; fillers. Tap any line below to also cut it.
+                  </div>
+                  {segments === null && !segErr && <div className="eo-d">Loading transcript…</div>}
+                  {segErr && <div className="eo-d">Transcript unavailable — auto Smart Cut still applies.</div>}
+                  {segments && segments.length === 0 && <div className="eo-d">No transcript segments for this clip.</div>}
+                  {segments && segments.length > 0 && (
+                    <div className="trim-list">
+                      {segments.map((s) => {
+                        const off = dropped.has(s.index);
+                        return (
+                          <button key={s.index} type="button"
+                            className={'trim-seg' + (off ? ' cut' : '')}
+                            onClick={() => toggleDrop(s.index)}
+                            title={off ? 'Will be cut — tap to keep' : 'Kept — tap to cut'}>
+                            <Icon n={off ? 'scissors' : 'check'} style={{ width: 13, height: 13, flexShrink: 0 }} />
+                            <span className="trim-txt">{s.text}</span>
+                            <span className="trim-time">{s.start.toFixed(1)}s</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="edit-opt">
               <div className="eo-ico"><Icon n="captions" /></div>

@@ -63,6 +63,7 @@ async def _apply_smartcut(
     metadata: dict,
     clip_info: dict,
     intermediate_files: list,
+    drop_ranges=None,
 ) -> str:
     # Cache key must follow the ACTUAL input. The previous implementation
     # keyed off `base_clip` unconditionally, which meant that if we'd
@@ -70,8 +71,12 @@ async def _apply_smartcut(
     # even when the current call is operating on a subtitled/hooked
     # variant. Use current_input instead so each input gets its own
     # sidecar _smartcut.mp4.
+    # Legacy fixed-name sidecar shortcut — only safe for the plain auto cut.
+    # A manual trim (drop_ranges) must NOT reuse it: the same input with
+    # different hand-picked drops would otherwise serve a stale cut. smart_cut
+    # itself plan-hashes the output, so manual trims still cache correctly.
     smartcut_path = current_input.replace(".mp4", "_smartcut.mp4")
-    if os.path.exists(smartcut_path):
+    if not drop_ranges and os.path.exists(smartcut_path):
         intermediate_files.append(smartcut_path)
         return smartcut_path
     transcript = metadata.get("transcript", {})
@@ -84,6 +89,7 @@ async def _apply_smartcut(
         clip_info.get("start", 0),
         clip_info.get("end", 0),
         transcript.get("language"),
+        drop_ranges,
     )
     # Track the smart-cut artefact so _cleanup_intermediates can remove
     # it at the end of compose_layers (unless it ends up as the final
@@ -244,6 +250,7 @@ async def compose_layers(
     hook_params: dict,
     subtitle_params: dict,
     logo_params: dict = None,
+    drop_ranges=None,
 ) -> str:
     """Run the active layer pipeline. Returns the final composed filename (basename).
 
@@ -313,7 +320,8 @@ async def compose_layers(
 
         if active.get("smartcut"):
             current_input = await _apply_smartcut(
-                current_input, base_clip, metadata, clip_info, intermediate_files
+                current_input, base_clip, metadata, clip_info, intermediate_files,
+                drop_ranges,
             )
             layers_applied.append("smartcut")
             logger.info("compose_layers: ✓ smartcut → %s", os.path.basename(current_input))

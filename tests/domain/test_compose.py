@@ -42,7 +42,7 @@ def _install_recording_stubs(monkeypatch, order):
         return out
 
     async def fake_smartcut(current_input, base_clip, metadata, clip_info,
-                            intermediate_files):
+                            intermediate_files, drop_ranges=None):
         order.append("smartcut")
         out = current_input.replace(".mp4", "_smartcut.mp4")
         _touch(out)
@@ -138,7 +138,7 @@ def test_failure_cleans_intermediates_and_reraises(tmp_path, monkeypatch):
     _install_recording_stubs(monkeypatch, order)
 
     async def boom_smartcut(current_input, base_clip, metadata, clip_info,
-                            intermediate_files):
+                            intermediate_files, drop_ranges=None):
         order.append("smartcut")
         raise RuntimeError("ffmpeg exploded")
 

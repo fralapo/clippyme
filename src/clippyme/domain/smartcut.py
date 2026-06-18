@@ -308,6 +308,42 @@ def normalize_drop_ranges(raw, *, max_ranges: int = 500):
     return out
 
 
+def clip_transcript_segments(transcript, clip_start, clip_end):
+    """Return the transcript broken into editable segments within a clip's
+    [clip_start, clip_end] window, with times made clip-relative (seconds from
+    the clip's own start). Feeds the interactive manual-trim UI.
+
+    Each segment: {"index", "text", "start", "end"}. Prefers the transcript's
+    own segment boundaries (Deepgram utterances / Whisper sentences); within a
+    segment, only the words that fall inside the clip window contribute to the
+    text + timing, so a segment straddling the clip edge is trimmed cleanly.
+    Falls back to the segment-level text/timing when per-word timing is absent.
+    """
+    out = []
+    for seg in transcript.get("segments", []):
+        words = seg.get("words") or []
+        in_words = [w for w in words
+                    if w.get("end", 0) > clip_start and w.get("start", 0) < clip_end]
+        if in_words:
+            s = max(0.0, in_words[0]["start"] - clip_start)
+            e = max(s, in_words[-1]["end"] - clip_start)
+            text = " ".join(w["word"].strip() for w in in_words).strip()
+        else:
+            s_abs, e_abs = seg.get("start"), seg.get("end")
+            if s_abs is None or e_abs is None:
+                continue
+            if e_abs <= clip_start or s_abs >= clip_end:
+                continue
+            s = max(0.0, s_abs - clip_start)
+            e = max(s, min(e_abs, clip_end) - clip_start)
+            text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        out.append({"index": len(out), "text": text,
+                    "start": round(s, 3), "end": round(e, 3)})
+    return out
+
+
 def subtract_ranges(keep_segments, drop_ranges):
     """Remove `drop_ranges` from `keep_segments`. Both are lists of (start, end)
     seconds; returns the trimmed keep list, splitting a kept span when a drop

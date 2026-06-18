@@ -158,16 +158,55 @@ def _validate_overlay_params(v):
     return v
 
 
+# Manual-trim drop spans. Bounds mirror the overlay validator's intent: keep an
+# authenticated request from handing the worker an absurd list. The smartcut
+# engine (normalize_drop_ranges) re-validates, so this is a cheap front gate.
+_DROP_MAX_RANGES = 500
+_DROP_MAX_SECONDS = 100_000
+
+
+def _validate_drop_ranges(v):
+    if v is None:
+        return v
+    if not isinstance(v, list):
+        raise ValueError("drop_ranges must be a list")
+    if len(v) > _DROP_MAX_RANGES:
+        raise ValueError(f"too many drop_ranges (max {_DROP_MAX_RANGES})")
+    for item in v:
+        # Accept [start, end] pairs or {"start","end"} objects; the engine
+        # coerces both. Just bound the numeric magnitude here.
+        if isinstance(item, dict):
+            nums = (item.get("start"), item.get("end"))
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            nums = (item[0], item[1])
+        else:
+            raise ValueError("each drop range must be [start, end] or {start, end}")
+        for n in nums:
+            if not isinstance(n, (int, float)) or isinstance(n, bool):
+                raise ValueError("drop range bounds must be numbers")
+            if abs(n) > _DROP_MAX_SECONDS:
+                raise ValueError("drop range bound out of range")
+    return v
+
+
 class ComposeRequest(BaseModel):
     toggles: dict = {}
     hook_params: dict = {}
     subtitle_params: dict = {}
     logo_params: dict = {}
+    # Manual Smart Cut trim: hand-picked [[start, end], …] spans (clip-relative
+    # seconds) removed on top of the automatic filler/silence pass.
+    drop_ranges: list = []
 
     @field_validator("hook_params", "subtitle_params", "logo_params")
     @classmethod
     def _bound_overlay(cls, v):
         return _validate_overlay_params(v)
+
+    @field_validator("drop_ranges")
+    @classmethod
+    def _bound_drops(cls, v):
+        return _validate_drop_ranges(v)
 
 
 class PublishRequest(BaseModel):
@@ -225,11 +264,17 @@ class PublishRequest(BaseModel):
     hook_params: Optional[dict] = None
     subtitle_params: Optional[dict] = None
     logo_params: Optional[dict] = None
+    drop_ranges: Optional[list] = None
 
     @field_validator("hook_params", "subtitle_params", "logo_params")
     @classmethod
     def _bound_overlay(cls, v):
         return _validate_overlay_params(v)
+
+    @field_validator("drop_ranges")
+    @classmethod
+    def _bound_drops(cls, v):
+        return None if v is None else _validate_drop_ranges(v)
 
     @field_validator("platforms")
     @classmethod

@@ -221,6 +221,15 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .cfg-drawer .cf-row{margin-bottom:14px}
 .cfg-drawer .cf-row:last-child{margin-bottom:0}
 
+/* manual-trim transcript checklist */
+.trim-list{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow-y:auto;padding-right:2px}
+.trim-seg{display:flex;align-items:center;gap:8px;width:100%;text-align:left;padding:7px 9px;background:var(--bg-2);border:1px solid var(--line-1);border-radius:var(--r-sm);color:var(--fg-2);font-size:var(--text-xs);cursor:pointer;transition:.12s}
+.trim-seg:hover{border-color:var(--line-3)}
+.trim-seg.cut{background:rgba(225,45,67,.07);border-color:rgba(225,45,67,.4);color:var(--fg-3)}
+.trim-seg.cut .trim-txt{text-decoration:line-through;opacity:.7}
+.trim-seg .trim-txt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trim-seg .trim-time{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--fg-3);font-size:var(--text-2xs)}
+
 /* subtitle preset grid */
 .subgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .subpre{position:relative;border:1px solid var(--line-1);background:var(--bg-3);border-radius:var(--r-sm);overflow:hidden;cursor:pointer;transition:border-color .15s}

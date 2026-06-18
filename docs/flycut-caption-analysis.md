@@ -59,8 +59,10 @@ flycut's genuine differentiator: the operator can **look at the transcript and h
 - `analyze_silences(..., drop_ranges=None)` — applies manual drops on top of the auto cut; also honours drops on transcripts with no word-level timing (manual spans are absolute, not word-derived).
 - `smart_cut(..., drop_ranges=None)` — threads the param; a manual trim renders even for a small/single-segment cut (explicit user intent), while the automatic path keeps its conservative ≥1s guard.
 
-`POST /api/smartcut/{job_id}/{clip_index}` now accepts an optional `{"drop_ranges": [[start, end], …]}` body (clip-relative seconds). Legacy callers that POST no body are unaffected — pure auto Smart Cut.
+`POST /api/smartcut/{job_id}/{clip_index}` accepts an optional `{"drop_ranges": [[start, end], …]}` body (clip-relative seconds). Legacy callers that POST no body are unaffected — pure auto Smart Cut. `drop_ranges` also rides on `POST /api/compose` and the `compose_first` path of `POST /api/publish`, so a manual trim survives the final download / publish — not just the smartcut preview.
 
-### Follow-up (not built)
+`GET /api/transcript/{job_id}/{clip_index}` returns the per-clip transcript as editable segments (`{index, text, start, end}`, clip-relative seconds) via the pure `clip_transcript_segments` helper.
 
-Frontend transcript editor in `EditClipModal` (`redesign/captions.jsx`): render the per-clip transcript segments (already in `metadata.json`) as a checklist, let the user toggle spans off, and pass the unchecked spans as `drop_ranges` to `/api/smartcut` (and the compose Smart Cut layer). The backend engine is ready for it.
+### Frontend (shipped)
+
+The interactive trim lives in the Smart Cut section of `EditClipModal` (`redesign/captions.jsx`). When Smart Cut is toggled on it lazy-loads `GET /api/transcript`, renders the segments as a tap-to-cut checklist (strikethrough + scissors on dropped lines), and converts the dropped set into `drop_ranges`. The spans flow through `reprocessClip` (Edit), `exportClip` (download) and `PublishModal` (publish), and persist per-clip in `useClipStates` (`dropRanges`) so they survive a reload. So: auto Smart Cut removes silence + fillers, and the operator hand-cuts anything else — flycut's editorial control on top of ClippyMe's automation.

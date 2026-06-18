@@ -905,6 +905,33 @@ async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
     )
 
 
+@app.get("/api/transcript/{job_id}/{clip_index}")
+async def clip_transcript(job_id: str, clip_index: int, request: Request):
+    """Per-clip transcript segments (clip-relative seconds) for the manual-trim
+    UI. Each segment is {index, text, start, end}; the frontend lets the user
+    mark segments to drop and posts the resulting spans as `drop_ranges`."""
+    require_trusted_config_request(request)
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    try:
+        _meta_path, data = load_job_metadata(job_id, OUTPUT_DIR)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+    transcript = data.get("transcript") or {}
+    clips = data.get("shorts", [])
+    if clip_index < 0 or clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+    clip = clips[clip_index]
+    start, end = clip.get("start", 0), clip.get("end", 0)
+    from clippyme.domain.smartcut import clip_transcript_segments
+    segments = clip_transcript_segments(transcript, start, end)
+    return {
+        "segments": segments,
+        "duration": round(max(0.0, end - start), 3),
+        "language": transcript.get("language", "en"),
+    }
+
+
 @app.post("/api/reframe/{job_id}/{clip_index}")
 async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, request: Request):
     """Switch a clip between reframe modes (auto / object / disabled) after generation.
@@ -1113,6 +1140,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, reques
             hook_params=req.hook_params,
             subtitle_params=req.subtitle_params,
             logo_params=req.logo_params,
+            drop_ranges=req.drop_ranges,
         )
         return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
     except (HTTPException, ClippyMeError):
@@ -1228,6 +1256,7 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
                 hook_params=req.hook_params or {},
                 subtitle_params=req.subtitle_params or {},
                 logo_params=req.logo_params or {},
+                drop_ranges=req.drop_ranges,
             )
             upload_path = os.path.join(job_dir, composed_filename)
         except ClippyMeError:
