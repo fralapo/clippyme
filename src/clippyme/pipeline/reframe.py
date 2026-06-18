@@ -633,14 +633,57 @@ def detect_person_yolo(frame):
                 
     return best_box
 
+def _salient_general_crop(frame, output_width, output_height):
+    """Content-aware crop for faceless (GENERAL) scenes — opt-in via
+    REFRAME_SALIENT_GENERAL=1.
+
+    The default GENERAL handling letterboxes a faceless shot (blurred bars +
+    fit-to-width), which parks an off-centre B-roll subject behind the bars.
+    When enabled, this instead crops a full-height 9:16 window centred on the
+    most salient column band — the highest image-gradient energy — via
+    ``reframe_ops.salient_crop_center`` (host-tested). Saliency uses a plain
+    Sobel gradient (base cv2, no opencv-contrib dependency). Returns ``None`` on
+    any failure or when the source is already narrower than the target, so the
+    caller transparently falls back to the proven letterbox path.
+    """
+    try:
+        orig_h, orig_w = frame.shape[:2]
+        target_ar = output_width / float(output_height)
+        crop_w = int(round(orig_h * target_ar))
+        if crop_w < 1 or crop_w >= orig_w:
+            return None  # nothing to crop horizontally
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        column_energy = np.abs(gx).sum(axis=0) + np.abs(gy).sum(axis=0)  # len == orig_w
+        center = salient_crop_center(column_energy, crop_w, orig_w)
+        x1 = int(round(center - crop_w / 2.0))
+        x1 = max(0, min(orig_w - crop_w, x1))
+        cropped = frame[:, x1:x1 + crop_w]
+        if cropped.shape[0] < 1 or cropped.shape[1] < 1:
+            return None
+        return _resize_to_output(cropped, output_width, output_height)
+    except Exception:
+        return None
+
+
 def create_general_frame(frame, output_width, output_height):
     """
-    Creates a 'General Shot' frame: 
+    Creates a 'General Shot' frame:
     - Background: Blurred zoom of original
     - Foreground: Original video scaled to fit width, centered vertically.
+
+    Opt-in: with REFRAME_SALIENT_GENERAL=1, faceless scenes are content-aware
+    cropped to the salient region instead of letterboxed (see
+    _salient_general_crop). Default-off keeps the letterbox path byte-identical.
     """
+    if os.getenv("REFRAME_SALIENT_GENERAL", "").strip().lower() in ("1", "true", "yes", "on"):
+        salient = _salient_general_crop(frame, output_width, output_height)
+        if salient is not None:
+            return salient
+
     orig_h, orig_w = frame.shape[:2]
-    
+
     # 1. Background (Fill Height)
     # Crop center to aspect ratio
     bg_scale = output_height / orig_h

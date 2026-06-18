@@ -66,6 +66,36 @@ def test_global_smooth_path_produces_valid_vertical(tmp_path, monkeypatch):
     assert frames > 0
 
 
+def test_salient_general_crop_opt_in_produces_valid_vertical(tmp_path, monkeypatch):
+    """The opt-in content-aware GENERAL crop (REFRAME_SALIENT_GENERAL) must
+    produce a valid 9:16 output on a faceless clip without crashing — exercising
+    the Sobel saliency + reframe_ops.salient_crop_center wiring."""
+    src = str(tmp_path / "src.mp4")
+    out = str(tmp_path / "out.mp4")
+    _make_synthetic_clip(src)  # faceless moving rectangle → GENERAL strategy
+
+    monkeypatch.setenv("REFRAME_SALIENT_GENERAL", "1")
+    monkeypatch.setattr(reframe, "ASPECT_RATIO", 9 / 16)
+
+    assert reframe.process_video_to_vertical(src, out, reframe_mode="auto") is True
+    assert os.path.exists(out)
+    cap = cv2.VideoCapture(out)
+    try:
+        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    finally:
+        cap.release()
+    assert h > w and frames > 0
+
+
+def test_salient_general_crop_helper_falls_back_when_too_narrow(tmp_path):
+    """The helper returns None (→ letterbox fallback) when the source is already
+    narrower than the 9:16 target, so it never crashes the GENERAL path."""
+    tall = np.zeros((400, 100, 3), dtype=np.uint8)  # narrower than 9:16
+    assert reframe._salient_general_crop(tall, 1080, 1920) is None
+
+
 def test_global_smooth_matches_singlepass_frame_count(tmp_path, monkeypatch):
     """The two-stage path must emit the same number of frames as the default
     single-pass path — i.e. it drops/duplicates nothing."""

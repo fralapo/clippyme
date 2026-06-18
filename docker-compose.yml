@@ -78,6 +78,9 @@ services:
       - REFRAME_STATIONARY_THRESH=${REFRAME_STATIONARY_THRESH:-}
       - REFRAME_ZOOM_LOCK=${REFRAME_ZOOM_LOCK:-}
       - REFRAME_SNAP_CENTER=${REFRAME_SNAP_CENTER:-0.10}
+      # Opt-in: content-aware crop for faceless (GENERAL) scenes instead of
+      # letterboxing (Sobel saliency). Default off = byte-identical letterbox.
+      - REFRAME_SALIENT_GENERAL=${REFRAME_SALIENT_GENERAL:-}
       # Transcription: strip to audio-only (FLAC) before sending to the provider.
       # DEFAULT ON; set to false to upload/decode the full video.
       - CLIPPYME_TRANSCRIBE_AUDIO_ONLY=${CLIPPYME_TRANSCRIBE_AUDIO_ONLY:-true}
