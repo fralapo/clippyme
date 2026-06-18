@@ -2,18 +2,21 @@
 @import "tw-animate-css";
 
 /*
- * ClippyMe — design system
+ * ClippyMe — global base layer (NOT the live theme).
  *
- * Aesthetic direction: editorial-brutalist dark, inspired by film editing
- * suites and cinema grading tools. Single accent color (amber),
- * hairline borders, tabular mono for every timecode/number,
- * Fraunces display serif paired with Inter Tight + JetBrains Mono.
+ * This file ships Tailwind's preflight reset, tw-animate, the shared
+ * keyframes/animation utilities, the scrollbar, and the global
+ * :focus-visible + reduced-motion a11y rules. The redesign uses almost
+ * no Tailwind utility classes, so the @theme palette/fonts below are
+ * effectively dormant.
  *
- * Legacy class names (.glass-panel, .btn-primary, .accent-pink, …) are
- * preserved so existing components keep working — but their visual
- * weight has been remapped to the new system. Where a literal
- * pink→purple→blue gradient appears in a component, it's been
- * overridden locally via !important fallbacks or direct edits.
+ * The LIVE visual system is tokens.css + redesign/app.css (dark · flat ·
+ * editorial; blue accent #0A81D9; Geist + Anton). Those load AFTER this
+ * file and win the cascade — app.css's unlayered `body`/`h1–h6` rules
+ * override the @layer base rules here, and tokens.css redefines
+ * --font-* at :root. Treat the amber/Fraunces values below as legacy;
+ * do not assume they reach the screen. See app.css header for the
+ * authoritative system description.
  */
 
 @theme {

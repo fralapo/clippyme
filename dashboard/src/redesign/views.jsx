@@ -57,7 +57,7 @@ export function HistoryView({ history, onOpen, onDelete, onClear }) {
                 {ok ? <Badge tone="teal" icon="check">complete</Badge>
                   : h.status === 'error' ? <Badge tone="danger" icon="triangle-alert">error</Badge>
                     : <Badge tone="amber" icon="clock">{h.status || 'pending'}</Badge>}
-                <span className="mini" title="Delete" onClick={(e) => { e.stopPropagation(); onDelete(h.jobId); }}><Icon n="trash-2" /></span>
+                <button type="button" className="mini" title="Delete" aria-label="Delete job" onClick={(e) => { e.stopPropagation(); onDelete(h.jobId); }}><Icon n="trash-2" /></button>
                 {ok && <Icon n="chevron-right" style={{ width: 18, height: 18, color: 'var(--fg-4)' }} />}
               </div>
             </div>
@@ -85,7 +85,7 @@ function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, presen
           placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
           onFocus={() => { focusVal.current = value; }}
           onBlur={() => { if (value !== focusVal.current) onSave(); }} />
-        <span className="mini" title={reveal ? 'Hide' : 'Show'} onClick={() => setReveal(!reveal)}><Icon n={reveal ? 'eye-off' : 'eye'} /></span>
+        <button type="button" className="mini" title={reveal ? 'Hide' : 'Show'} aria-label={reveal ? 'Hide key' : 'Show key'} onClick={() => setReveal(!reveal)}><Icon n={reveal ? 'eye-off' : 'eye'} /></button>
         {value || present ? <Badge tone="teal" icon="check">set</Badge> : <Badge tone="out">empty</Badge>}
       </div>
     </div>

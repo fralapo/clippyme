@@ -9,25 +9,32 @@ function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelet
   return (
     <div className="preset-row">
       {presets.map((p) => (
-        <button key={p.id} type="button" className={'preset' + (active === p.id ? ' on' : '')} onClick={() => onPick(p)}>
+        // role=button (not a real <button>) so the star/trash actions inside
+        // can be real, keyboard-operable <button>s — interactive-in-interactive
+        // is invalid HTML.
+        <div key={p.id} role="button" tabIndex={0} className={'preset' + (active === p.id ? ' on' : '')}
+          onClick={() => onPick(p)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPick(p); } }}>
           <span className="pcheck"><Icon n="check" /></span>
           <span style={corner}>
-            <span title={defaultId === p.id ? 'Default (click to unset)' : 'Set as default'}
+            <button type="button" className="picon-btn"
+              title={defaultId === p.id ? 'Default (click to unset)' : 'Set as default'}
+              aria-label={defaultId === p.id ? 'Unset default preset' : 'Set as default preset'}
               onClick={(e) => { e.stopPropagation(); onSetDefault(p.id); }}
-              style={{ cursor: 'pointer', color: defaultId === p.id ? 'var(--brand-amber)' : 'var(--fg-4)', display: 'flex' }}>
+              style={{ color: defaultId === p.id ? 'var(--brand-amber)' : 'var(--fg-4)' }}>
               <Icon n="star" style={{ width: 14, height: 14 }} />
-            </span>
+            </button>
             {p.user && (
-              <span title="Delete preset" onClick={(e) => { e.stopPropagation(); onDelete(p.id); }}
-                style={{ cursor: 'pointer', color: 'var(--fg-4)', display: 'flex' }}>
+              <button type="button" className="picon-btn" title="Delete preset" aria-label="Delete preset"
+                onClick={(e) => { e.stopPropagation(); onDelete(p.id); }} style={{ color: 'var(--fg-4)' }}>
                 <Icon n="trash-2" style={{ width: 14, height: 14 }} />
-              </span>
+              </button>
             )}
           </span>
           <span className="pico"><Icon n={p.icon} /></span>
           <span className="pt">{p.title}{defaultId === p.id && <span style={{ color: 'var(--brand-amber)', fontSize: 11, marginLeft: 6 }}>· default</span>}</span>
           <span className="pd">{p.desc}</span>
-        </button>
+        </div>
       ))}
       <button type="button" className="preset" onClick={onSaveCurrent}
         style={{ borderStyle: 'dashed', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>

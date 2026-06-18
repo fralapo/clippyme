@@ -1,7 +1,11 @@
 /* ============================================================
-   ClippyMe — Colors & Type foundations
+   ClippyMe — Colors & Type foundations (the LIVE design system)
    Self-hosted AI video platform: long-form → viral 9:16 shorts.
-   Aesthetic: dark glassmorphism, gradient borders, glow, noise.
+   Aesthetic: dark · flat · editorial. The viral gradient is a SIGNAL
+   only (logo, primary CTA, score, hero word) — no glows, no decorative
+   gradient borders, no glassmorphism on content. tokens.css + app.css
+   are the source of truth; they load AFTER index.css and win the
+   cascade (app.css's unlayered rules beat index.css's @layer base).
    ------------------------------------------------------------
    Fonts loaded from Google Fonts CDN (substitutions flagged in
    README → swap for bundled files if you have them):
