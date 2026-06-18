@@ -974,6 +974,14 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
                 last_output_frame = output_frame
             except Exception:
                 dropped_frames += 1
+                # Surface the FIRST failure unconditionally — a systemic bug
+                # (e.g. a NameError on every frame) otherwise hides entirely
+                # behind the duplicate-last-frame fallback. REFRAME_DEBUG_EXC
+                # adds the next 4 for context.
+                if dropped_frames == 1 or (os.environ.get('REFRAME_DEBUG_EXC') and dropped_frames <= 5):
+                    import traceback
+                    print(f"   🐛 global-smooth frame {frame_number} failed:", file=sys.stderr)
+                    traceback.print_exc()
                 if last_output_frame is not None:
                     output_frame = last_output_frame
                 else:
@@ -983,7 +991,10 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
             pbar.update(1)
     cap.release()
     if dropped_frames > 0:
-        print(f"   ⚠️ {dropped_frames} frame(s) failed processing and were duplicated from the previous good frame.")
+        pct = 100.0 * dropped_frames / max(1, total_frames)
+        print(f"   ⚠️ {dropped_frames} frame(s) ({pct:.1f}%) failed processing and were duplicated from the previous good frame.")
+        if pct >= 25.0:
+            print(f"   ❗ High drop rate ({pct:.1f}%) — likely a systemic bug, not isolated corrupt frames. Re-run with REFRAME_DEBUG_EXC=1 for full tracebacks.", file=sys.stderr)
 
 
 def process_video_to_vertical(input_video, final_output_video, reframe_mode='auto'):
@@ -1211,7 +1222,9 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                     last_output_frame = output_frame
                 except Exception:
                     dropped_frames += 1
-                    if os.environ.get('REFRAME_DEBUG_EXC') and dropped_frames <= 5:
+                    # First failure always surfaces (see global-smooth guard);
+                    # REFRAME_DEBUG_EXC adds the next 4 for context.
+                    if dropped_frames == 1 or (os.environ.get('REFRAME_DEBUG_EXC') and dropped_frames <= 5):
                         import traceback
                         print(f"   🐛 frame {frame_number} ({current_strategy}) failed:", file=sys.stderr)
                         traceback.print_exc()
@@ -1225,7 +1238,10 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                 pbar.update(1)
 
         if dropped_frames > 0:
-            print(f"   ⚠️ {dropped_frames} frame(s) failed processing and were duplicated from the previous good frame.")
+            pct = 100.0 * dropped_frames / max(1, total_frames)
+            print(f"   ⚠️ {dropped_frames} frame(s) ({pct:.1f}%) failed processing and were duplicated from the previous good frame.")
+            if pct >= 25.0:
+                print(f"   ❗ High drop rate ({pct:.1f}%) — likely a systemic bug, not isolated corrupt frames. Re-run with REFRAME_DEBUG_EXC=1 for full tracebacks.", file=sys.stderr)
     
         ffmpeg_process.stdin.close()
         stderr_output = ffmpeg_process.stderr.read().decode()
