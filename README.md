@@ -320,8 +320,12 @@ This project has been audited; the current state is suitable for **trusted LAN d
 - Internal exceptions never leak `str(e)` to API clients; full stack traces are logged server-side only.
 - `ZERNIO_BASE_URL` env override is allowlisted to `https://*.zernio.com`.
 - A secret-scan **pre-commit hook** (`.githooks/pre-commit`) blocks committing API keys, tokens, cookie files, `data/config.json`, and `.env`. Enable per clone: `git config core.hooksPath .githooks`.
+- **CSRF protection**: config-mutation endpoints reject any request whose `Sec-Fetch-Site` is `cross-site`/`same-site` (a browser-set forbidden header JS can't forge), then fall back to an `Origin` allowlist — so a cross-site `<form>` POST can't reach them.
+- **Per-client rate limiting** (`RATE_LIMIT_ENABLED`, default on): a dependency-free token bucket throttles the compute-heavy endpoints (`process` / `batch` / `publish`) per client IP; the bucket table is bounded against a unique-IP-flood memory DoS.
+- **Spoof-resistant client IP**: `X-Forwarded-For` / `X-Real-IP` are honoured only when `TRUST_PROXY=1` **and** the TCP peer is itself a private/loopback proxy, so a direct public client can't forge its address to dodge the rate limiter or the trusted-origin guard.
+- **SSRF hardening**: download + Zernio upload URLs are re-resolved and rejected when every resolved address is internal/loopback/link-local (DNS-rebinding-aware), with a bounded `getaddrinfo` timeout.
 
-**Not yet in place** (required before exposing publicly): authentication layer, rate limiting, CSRF, full reverse proxy with TLS + security headers.
+**Not yet in place** (required before exposing publicly): an authentication layer and a reverse proxy terminating TLS + security headers.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

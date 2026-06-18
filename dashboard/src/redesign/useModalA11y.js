@@ -54,7 +54,6 @@ export function useModalA11y(onClose) {
       // Restore focus to where it was before the modal opened.
       if (prevActive && typeof prevActive.focus === 'function') prevActive.focus();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // run once on mount — onClose changes are handled via onCloseRef above
 
   return ref;
