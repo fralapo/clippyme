@@ -141,8 +141,23 @@ export async function publishClip(jobId, index, body) {
 
 export async function restoreJob(jobId) {
   const res = await fetch(getApiUrl(`/api/history/${jobId}/restore`), { method: 'POST' });
-  if (!res.ok) throw new Error('Restore failed');
+  if (!res.ok) { const e = new Error('Restore failed'); e.status = res.status; throw e; }
   return res.json(); // { result: { clips, cost_analysis } }
+}
+
+// Jobs that actually exist on disk right now. The History list is driven by
+// localStorage (survives rebuilds), but the clip files live in output/ — a
+// docker rebuild/cleanup can wipe them while the localStorage entry lingers.
+// Cross-checking against this set lets the UI flag entries that can no longer
+// be opened instead of failing silently on click. Returns a Set of jobIds;
+// empty Set on any error (treated as "unknown" → don't disable anything).
+export async function listBackendJobIds() {
+  try {
+    const res = await fetch(getApiUrl('/api/history'));
+    if (!res.ok) return null;
+    const data = await res.json();
+    return new Set((data.jobs || []).map((j) => j.jobId).filter(Boolean));
+  } catch { return null; }
 }
 
 // --- config / settings ----------------------------------------------------

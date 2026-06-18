@@ -13,7 +13,7 @@ import { ResultsView } from './results';
 import { PublishModal } from './publish';
 import { HistoryView, SettingsView, ApiKeyModal } from './views';
 import { EditClipModal } from './captions';
-import { optsToPreselections, restoreJob, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from './realApi';
+import { optsToPreselections, restoreJob, listBackendJobIds, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from './realApi';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from './presets';
 
 import { useJobSubmission } from '../hooks/useJobSubmission';
@@ -92,12 +92,22 @@ export default function RedesignApp() {
   const [publishClips, setPublishClips] = useState(null);
   const [editClip, setEditClip] = useState(null);
   const [viewingHistory, setViewingHistory] = useState(false);
+  // jobIds that still exist on disk (null = not yet known / backend offline →
+  // don't disable anything). Reconciles the localStorage history list against
+  // reality so jobs wiped by a rebuild are flagged instead of dead-clicking.
+  const [availableJobIds, setAvailableJobIds] = useState(null);
 
   const { history, saveToHistory, deleteFromHistory, clearHistory } = useHistory();
   const { cookiesConfigured } = useBackendStatus();
   const { states: clipStates, updateClip: updateClipState } = useClipStates(jobId);
 
   useEffect(() => { if (apiKey) localStorage.setItem('gemini_key', apiKey); }, [apiKey]);
+  // Refresh the on-disk job set whenever the History tab opens, so a job whose
+  // files were removed (rebuild/cleanup) shows as unavailable rather than
+  // failing silently when clicked.
+  useEffect(() => {
+    if (tab === 'history' && !viewingHistory) listBackendJobIds().then(setAvailableJobIds);
+  }, [tab, viewingHistory]);
   useSessionPersistence({ status, jobId, results, processingMedia, activeTab: tab, preselections });
 
   const pushToast = useCallback((type, msg) => {
@@ -319,8 +329,17 @@ export default function RedesignApp() {
         setPreselectionsRaw(saved ? JSON.parse(saved) : null);
       } catch { setPreselectionsRaw(null); }
       setViewingHistory(true);
-    } catch {
-      pushToast('error', 'Could not restore this job');
+    } catch (err) {
+      // The clip files are gone from disk (typically a docker rebuild/cleanup
+      // wiped output/ while the localStorage entry lingered). Drop the dead
+      // entry so the phantom row stops teasing a click that can never open.
+      if (err?.status === 404 || err?.status === 400) {
+        deleteFromHistory(h.jobId);
+        setAvailableJobIds((prev) => { if (!prev) return prev; const n = new Set(prev); n.delete(h.jobId); return n; });
+        pushToast('error', 'Clip files were removed (rebuild/cleanup) — entry cleared');
+      } else {
+        pushToast('error', 'Could not restore this job');
+      }
     }
   };
 
@@ -349,7 +368,7 @@ export default function RedesignApp() {
       )}
 
       {tab === 'history' && !viewingHistory && (
-        <HistoryView history={history}
+        <HistoryView history={history} availableIds={availableJobIds}
           onOpen={openHistoryJob}
           onDelete={(id) => { deleteFromHistory(id); pushToast('info', 'Job deleted'); }}
           onClear={() => { clearHistory(); pushToast('info', 'History cleared'); }} />

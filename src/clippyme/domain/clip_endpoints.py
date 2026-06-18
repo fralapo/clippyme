@@ -92,14 +92,26 @@ def restore_job_from_disk(job_id: str, output_dir: str, job_dir: str) -> dict:
         data = json.load(f)
     clips = data.get("shorts", [])
     base_name = os.path.basename(meta_files[0]).replace("_metadata.json", "")
+    present = []
     for i, clip in enumerate(clips):
         clip_filename = filename_from_video_url(clip.get("video_url"))
         if not clip_filename:
             clip_filename = f"{base_name}_clip_{i+1}.mp4"
+        # Only restore clips whose rendered file actually made it to disk. When a
+        # job is stopped/cancelled mid-render the metadata still lists every
+        # Gemini moment (e.g. 15 shorts) while only the clips that finished
+        # rendering exist on disk (e.g. 5 mp4s). Restoring the phantom ones would
+        # fill the grid with dead 404 video tiles.
+        if not os.path.exists(os.path.join(job_dir, clip_filename)):
+            continue
         # Store the clean URL back — strip any stale ?v= cache-bust so
         # downstream consumers (publish, smartcut, compose) never have to
         # defensively split on `?` again.
         clip["video_url"] = f"/videos/{job_id}/{clip_filename}"
+        present.append(clip)
+
+    if not present:
+        raise NotFoundError("Job has no rendered clips on disk")
 
     return {
         "status": "completed",
@@ -107,5 +119,5 @@ def restore_job_from_disk(job_id: str, output_dir: str, job_dir: str) -> dict:
         "cmd": [],
         "env": {},
         "output_dir": job_dir,
-        "result": {"clips": clips, "cost_analysis": data.get("cost_analysis")},
+        "result": {"clips": present, "cost_analysis": data.get("cost_analysis")},
     }
