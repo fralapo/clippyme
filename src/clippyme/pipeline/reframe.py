@@ -818,6 +818,19 @@ def create_disabled_reframe(frame, output_width, output_height):
 
     return canvas
 
+def _resize_to_output(img, w, h):
+    """Resize a crop to output size with scale-aware interpolation.
+
+    LANCZOS4 when enlarging (the common case — a zoomed crop is smaller than the
+    1080-tall vertical output, and Lanczos keeps faces/edges crisp), INTER_AREA
+    when shrinking (best downscale filter, avoids moiré). cv2's default bilinear
+    softens both. Idea ported from fralapo/FrameShift (lanczos default resize).
+    """
+    src_h, src_w = img.shape[:2]
+    interp = cv2.INTER_AREA if (w * h) < (src_w * src_h) else cv2.INTER_LANCZOS4
+    return cv2.resize(img, (w, h), interpolation=interp)
+
+
 def _reframe_comfort_enabled() -> bool:
     """Comfort (anti-nausea) reframe policy — default ON.
 
@@ -955,7 +968,7 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
                         cx, cy, zoom = tgt
                         x1, y1, x2, y2 = cameraman.crop_box_at(cx, cy, zoom)
                         if y2 > y1 and x2 > x1:
-                            output_frame = cv2.resize(frame[y1:y2, x1:x2], (output_width, output_height))
+                            output_frame = _resize_to_output(frame[y1:y2, x1:x2], output_width, output_height)
                         else:
                             output_frame = cv2.resize(frame, (output_width, output_height))
                 last_output_frame = output_frame
@@ -1192,7 +1205,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                         # Crop
                         if y2 > y1 and x2 > x1:
                             cropped = frame[y1:y2, x1:x2]
-                            output_frame = cv2.resize(cropped, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
+                            output_frame = _resize_to_output(cropped, OUTPUT_WIDTH, OUTPUT_HEIGHT)
                         else:
                             output_frame = cv2.resize(frame, (OUTPUT_WIDTH, OUTPUT_HEIGHT))
                     last_output_frame = output_frame
