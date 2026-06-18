@@ -15,7 +15,11 @@ def find_job_metadata_path(job_id: str, output_dir: str) -> str:
     matches = glob.glob(os.path.join(job_dir, "*_metadata.json"))
     if not matches:
         raise FileNotFoundError(f"Metadata not found for job {job_id}")
-    return matches[0]
+    # Newest-by-mtime, consistent with job_results._pick_latest_metadata. A bare
+    # glob[0] is filesystem-order dependent, so when a job dir holds >1 metadata
+    # file (e.g. a reprocess) smartcut/reframe could operate on a different file
+    # than the user sees.
+    return max(matches, key=os.path.getmtime)
 
 
 def load_job_metadata(job_id: str, output_dir: str) -> Tuple[str, dict]:

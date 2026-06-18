@@ -21,6 +21,19 @@ def test_find_job_metadata_path_returns_match(tmp_path):
     assert ja.find_job_metadata_path("job1", out).endswith("vid_metadata.json")
 
 
+def test_find_job_metadata_path_returns_newest_when_multiple(tmp_path):
+    """With >1 metadata file, the newest-by-mtime wins (consistent with
+    job_results._pick_latest_metadata) — not filesystem glob order."""
+    out = str(tmp_path)
+    job_dir = os.path.join(out, "job1")
+    old = _write_meta(job_dir, "old", {"v": "old"})
+    new = _write_meta(job_dir, "new", {"v": "new"})
+    # Make `new` strictly newer regardless of write timing.
+    os.utime(old, (1, 1))
+    os.utime(new, (10_000_000, 10_000_000))
+    assert ja.find_job_metadata_path("job1", out) == new
+
+
 def test_find_job_metadata_path_missing_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         ja.find_job_metadata_path("nope", str(tmp_path))

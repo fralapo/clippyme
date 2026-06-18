@@ -46,6 +46,9 @@ def scan_history(output_dir: str) -> List[dict]:
             meta_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
             if not meta_files:
                 continue
+            # Newest-by-mtime so a reprocessed job lists its latest metadata,
+            # consistent with job_results._pick_latest_metadata.
+            meta_files.sort(key=os.path.getmtime, reverse=True)
             try:
                 with open(meta_files[0], "r") as f:
                     data = json.load(f)
