@@ -2,7 +2,7 @@
 import { useState, useRef } from 'react';
 import { Icon, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
 import { Hero } from './chrome';
-import { SUBTITLE_PRESETS, LANGUAGES } from './data';
+import { SUBTITLE_PRESETS, LANGUAGES, GEMINI_MODELS, SUB_FONTS, SUB_COLORS } from './data';
 
 function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelete, onSaveCurrent }) {
   const corner = { position: 'absolute', top: 12, left: 12, display: 'flex', gap: 8, zIndex: 2 };
@@ -184,6 +184,27 @@ function SubConfig({ opts, set }) {
           </div>
         </div>
       )}
+      {opts.subMode === 'classic' && (
+        <>
+          <div className="cf-row">
+            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
+            <select className="sel" style={{ width: '100%' }} value={opts.subFont || 'Montserrat-Black'}
+              onChange={(e) => set({ subFont: e.target.value })}>
+              {SUB_FONTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div className="cf-row">
+            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Color</span>
+            <div className="swatches">
+              {SUB_COLORS.map((c) => (
+                <button key={c} type="button" aria-label={`Font color ${c}`}
+                  className={'swatch' + ((opts.subColor || '#FFFFFF').toUpperCase() === c.toUpperCase() ? ' on' : '')}
+                  style={{ background: c }} onClick={() => set({ subColor: c })} />
+              ))}
+            </div>
+          </div>
+        </>
+      )}
       <div className="cf-row">
         <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
         <Segmented full value={opts.subPosition} onChange={(id) => set({ subPosition: id })}
@@ -239,6 +260,17 @@ function OptionsPanel({ opts, set }) {
       <div className="label" style={{ margin: '16px 0 4px' }}>AI &amp; reframe</div>
       <OptRow icon="sparkles" label="Find viral moments" desc="Gemini scores the transcript · off = whole video"
         on={opts.detect} set={(v) => set({ detect: v })} />
+      {opts.detect && (
+        <div className="opt">
+          <div className="oico"><Icon n="sparkles" /></div>
+          <div className="otxt" style={{ flex: 1 }}><div className="ot">Gemini model</div><div className="od">Override for this job · blank uses the Settings default</div></div>
+          <div className="r" style={{ flex: '0 0 184px' }}>
+            <select className="sel" value={opts.model || ''} onChange={(e) => set({ model: e.target.value })}>
+              {GEMINI_MODELS.map(([v, l]) => <option key={v || 'default'} value={v}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
       <div className="opt">
         <div className="oico"><Icon n="scan-face" /></div>
         <div className="otxt"><div className="ot">Reframe</div><div className="od">Auto face-track · Object element-crop · Off letterbox bands</div></div>

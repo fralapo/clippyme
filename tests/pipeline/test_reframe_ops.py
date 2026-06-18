@@ -640,3 +640,80 @@ def test_build_trajectory_lock_zoom_independent_per_scene():
     zs_scene1 = {round(z, 4) for (_cx, _cy, z) in out[10:]}
     assert len(zs_scene0) == 1 and len(zs_scene1) == 1
     assert zs_scene0 != zs_scene1           # different zoom per scene survives
+
+
+# --- centroid_span (motion measure for AUTO static policy) ------------------
+
+def test_centroid_span_static_subject_is_zero():
+    centers = [(500.0, 500.0)] * 5
+    assert ro.centroid_span(centers, 1000, 1000) == pytest.approx(0.0)
+
+
+def test_centroid_span_skips_none_frames():
+    centers = [(400.0, 500.0), None, (600.0, 500.0), None]
+    # x span = 200/1000 = 0.2, y span = 0 -> max 0.2
+    assert ro.centroid_span(centers, 1000, 1000) == pytest.approx(0.2)
+
+
+def test_centroid_span_uses_larger_axis():
+    centers = [(500.0, 300.0), (500.0, 800.0)]  # y span 500/1000=0.5 dominates
+    assert ro.centroid_span(centers, 1000, 1000) == pytest.approx(0.5)
+
+
+def test_centroid_span_too_few_points_is_zero():
+    assert ro.centroid_span([(500.0, 500.0)], 1000, 1000) == 0.0
+    assert ro.centroid_span([None, None], 1000, 1000) == 0.0
+
+
+# --- collapse_scene_targets (per-scene static framing) ----------------------
+
+def test_collapse_track_locks_on_median_with_zoom_cap():
+    # A TRACK scene with a small drift + an aggressive zoom request.
+    targets = [(480.0, 500.0, 1.6), (520.0, 500.0, 1.6), (500.0, 500.0, 1.6)]
+    sids = [0, 0, 0]
+    strats = ['TRACK', 'TRACK', 'TRACK']
+    out = ro.collapse_scene_targets(targets, sids, strats, x_max=1000, y_max=1000,
+                                    track_zoom_cap=1.35, snap_center_dist=0.0)
+    assert len({t for t in out}) == 1           # one fixed target for the scene
+    cx, cy, z = out[0]
+    assert cx == pytest.approx(500.0)           # median x
+    assert z == pytest.approx(1.35)             # capped below the 1.6 request
+
+
+def test_collapse_wide_forces_widest_zoom():
+    targets = [(400.0, 500.0, 1.5), (600.0, 500.0, 1.4)]
+    sids = [0, 0]
+    strats = ['WIDE', 'WIDE']
+    out = ro.collapse_scene_targets(targets, sids, strats, x_max=1000, y_max=1000,
+                                    wide_zoom=1.0, snap_center_dist=0.0)
+    cx, cy, z = out[0]
+    assert z == pytest.approx(1.0)              # WIDE always widest, no zoom-in
+    assert cx == pytest.approx(500.0)           # centred between the two faces
+
+
+def test_collapse_snaps_near_center_to_exact_center():
+    targets = [(505.0, 500.0, 1.1)] * 4
+    sids = [0] * 4
+    strats = ['TRACK'] * 4
+    out = ro.collapse_scene_targets(targets, sids, strats, x_max=1000, y_max=1000,
+                                    snap_center_dist=0.10)
+    assert out[0][0] == pytest.approx(500.0)    # 5px off -> snapped to centre
+
+
+def test_collapse_is_static_per_scene_but_varies_across_cut():
+    targets = ([(300.0, 500.0, 1.2)] * 5) + ([(700.0, 500.0, 1.2)] * 5)
+    sids = ([0] * 5) + ([1] * 5)
+    strats = ['TRACK'] * 10
+    out = ro.collapse_scene_targets(targets, sids, strats, x_max=1000, y_max=1000,
+                                    snap_center_dist=0.0)
+    assert len({t for t in out[:5]}) == 1       # scene 0 fully static
+    assert len({t for t in out[5:]}) == 1       # scene 1 fully static
+    assert out[0] != out[5]                     # but the two scenes differ
+
+
+def test_collapse_passes_through_none_targets():
+    targets = [(500.0, 500.0, 1.1), None, (500.0, 500.0, 1.1)]
+    sids = [0, 0, 0]
+    strats = ['TRACK', 'GENERAL', 'TRACK']
+    out = ro.collapse_scene_targets(targets, sids, strats, x_max=1000, y_max=1000)
+    assert out[1] is None                       # GENERAL/None frame untouched

@@ -31,6 +31,8 @@ from clippyme.pipeline.reframe_ops import (
     advance_value_with_velocity,
     asymmetric_zoom_step,
     build_smoothed_trajectory,
+    centroid_span,
+    collapse_scene_targets,
     drift_to_center,
     limit_step,
     salient_crop_center,
@@ -839,16 +841,31 @@ def create_general_frame(frame, output_width, output_height, force_object_weight
 def analyze_scenes_strategy(video_path, scenes):
     """
     Analyzes each scene to determine framing strategy.
-    Strategies:
-      TRACK   — single subject, follow with smart crop
-      WIDE    — 2+ faces, use letterbox (blur bg + centered full frame)
-      GENERAL — no faces detected, use letterbox
+
+    Strategies (AUTO static-framing policy — the camera never pans within a
+    scene; see ``collapse_scene_targets``):
+      TRACK   — a SINGLE, near-static subject → locked crop on the face.
+      WIDE    — 2+ faces in the scene OR a single subject that MOVES too much to
+                hold without panning → a locked, zoomed-out crop that keeps
+                everyone/everything in frame with zero camera motion.
+      GENERAL — no faces detected → letterbox / element-aware fallback.
+
+    A single moving subject is deliberately demoted from TRACK to WIDE: chasing
+    it would force the very camera motion the policy exists to avoid, so instead
+    we pull back to a static wide shot. Motion is measured by the primary face's
+    normalised centroid travel across the sampled frames
+    (``REFRAME_MOTION_WIDE_THRESH``, default 0.12 of the frame).
     """
     cap = cv2.VideoCapture(video_path)
     strategies = []
 
     if not cap.isOpened():
         return ['TRACK'] * len(scenes)
+
+    frame_w = cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1.0
+    frame_h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1.0
+    _mt = (os.getenv("REFRAME_MOTION_WIDE_THRESH") or "").strip()
+    motion_thresh = float(_mt) if _mt else 0.12
 
     for start, end in tqdm(scenes, desc="   Analyzing Scenes"):
         # Sample 7 frames evenly across the scene for a more reliable
@@ -863,6 +880,7 @@ def analyze_scenes_strategy(video_path, scenes):
             frames_to_check = [s_frame + step * i for i in range(1, 8)]
 
         face_counts = []
+        primary_centers = []  # centre of the largest face per sampled frame
         for f_idx in frames_to_check:
             cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
             ret, frame = cap.read()
@@ -870,6 +888,12 @@ def analyze_scenes_strategy(video_path, scenes):
                 continue
             candidates = detect_face_candidates(frame)
             face_counts.append(len(candidates))
+            if candidates:
+                # Largest-area face = the primary subject we'd track.
+                px, py, pw, ph = max(candidates, key=lambda c: c['box'][2] * c['box'][3])['box']
+                primary_centers.append((px + pw / 2.0, py + ph / 2.0))
+            else:
+                primary_centers.append(None)
 
         if not face_counts:
             strategies.append('GENERAL')
@@ -881,9 +905,13 @@ def analyze_scenes_strategy(video_path, scenes):
         if avg_faces < 0.4:
             strategies.append('GENERAL')
         elif max_faces >= 2 and avg_faces > 1.0:
-            # Multi-speaker scene → WIDE (now uses dynamic switching, not letterbox)
+            # More than one face in the scene → WIDE (locked, zoomed-out).
+            strategies.append('WIDE')
+        elif centroid_span(primary_centers, frame_w, frame_h) > motion_thresh:
+            # Single subject but it roams too far to hold statically → WIDE.
             strategies.append('WIDE')
         else:
+            # Single, near-static subject → TRACK (locked crop on the face).
             strategies.append('TRACK')
 
     cap.release()
@@ -1097,13 +1125,30 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
     # Per-scene zoom lock — on by default under comfort.
     _zl = (os.getenv("REFRAME_ZOOM_LOCK") or "").strip().lower()
     lock_zoom = (_zl in ("1", "true", "yes", "on")) if _zl else comfort
-    smoothed = build_smoothed_trajectory(
-        targets, scene_ids, window=win, polyorder=2,
-        x_max=original_width, y_max=original_height,
-        min_zoom=1.0, max_zoom=1.6, method=global_method,
-        stationary_threshold=stationary_thresh, snap_center_dist=snap_center_dist,
-        lock_zoom=lock_zoom,
-    )
+
+    # AUTO static-framing policy (default ON): collapse each scene to a single
+    # fixed (cx,cy,zoom) so the camera is a locked tripod within every shot —
+    # zero pan, zero mid-shot zoom. TRACK locks on the (near-static) face; WIDE
+    # locks zoomed-out and centred between the faces / a roaming subject. This is
+    # the deterministic end-state of comfort mode; set REFRAME_STATIC_AUTO=0 to
+    # fall back to the per-frame Savitzky-Golay smoother (legacy moving-but-eased
+    # camera), still A/B-able.
+    _static = (os.getenv("REFRAME_STATIC_AUTO") or "").strip().lower()
+    static_auto = (_static in ("1", "true", "yes", "on")) if _static else True
+    if static_auto:
+        smoothed = collapse_scene_targets(
+            targets, scene_ids, strategies,
+            x_max=original_width, y_max=original_height,
+            wide_zoom=1.0, snap_center_dist=snap_center_dist,
+        )
+    else:
+        smoothed = build_smoothed_trajectory(
+            targets, scene_ids, window=win, polyorder=2,
+            x_max=original_width, y_max=original_height,
+            min_zoom=1.0, max_zoom=1.6, method=global_method,
+            stationary_threshold=stationary_thresh, snap_center_dist=snap_center_dist,
+            lock_zoom=lock_zoom,
+        )
 
     # --- Pass 2: render from the smoothed trajectory -----------------------
     print("   🔁 Global-smooth pass 2/2: rendering...")

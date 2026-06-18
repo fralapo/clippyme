@@ -167,6 +167,11 @@ textarea.ta.mono{font-family:var(--font-mono);font-size:var(--text-sm)}
 textarea.ta::placeholder{color:var(--fg-4)}
 select.sel{width:100%;height:42px;border-radius:var(--r-md);background:var(--bg-3);border:1px solid var(--line-1);color:var(--fg-1);font:inherit;font-size:var(--text-14);padding:0 12px;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%237E7E8F' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
 select.sel:focus{outline:0;border-color:var(--brand-blue)}
+/* Classic-subtitle colour swatches (clip options + edit modal). */
+.swatches{display:flex;gap:8px;flex-wrap:wrap}
+.swatch{width:30px;height:30px;border-radius:var(--r-sm);border:2px solid var(--line-2);cursor:pointer;padding:0;transition:.12s}
+.swatch:hover{border-color:var(--line-3)}
+.swatch.on{border-color:var(--brand-blue);box-shadow:0 0 0 2px rgba(10,129,217,.35)}
 
 /* dropzone */
 .dropzone{border:1.5px dashed var(--line-2);border-radius:var(--r-md);padding:28px;text-align:center;color:var(--fg-3);font-size:var(--text-sm);cursor:pointer;transition:.15s}
@@ -329,6 +334,11 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .clip-edit:hover{background:var(--bg-4);border-color:var(--line-3)}
 .clip-edit svg{width:14px;height:14px}
 .clip-edit.busy{color:var(--blue-300);border-color:rgba(10,129,217,.4)}
+.clip-edit:disabled{color:var(--blue-300);border-color:rgba(10,129,217,.4);cursor:wait;background:var(--bg-2)}
+/* Per-clip background-reprocess overlay — non-blocking (the video underneath
+   keeps playing); pointer-events:none so it never eats clicks. */
+.clip-busy{position:absolute;inset:0;z-index:4;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;background:rgba(5,5,7,.62);backdrop-filter:blur(2px);pointer-events:none;font-family:var(--font-mono);font-size:var(--text-2xs);letter-spacing:.08em;text-transform:uppercase;color:var(--blue-300)}
+.clip-busy svg{width:26px;height:26px}
 /* Edit modal: a labelled switch row (icon + name + description + toggle). */
 .edit-opt{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--line-1)}
 .edit-opt:first-of-type{border-top:0}

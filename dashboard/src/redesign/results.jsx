@@ -15,6 +15,7 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, 
   // modal, not by an instant click on the card.
   const mode = state?.reframeMode || clip.reframe_mode || 'auto';
   const title = clip.video_title_for_youtube_short || `Clip ${index + 1}`;
+  const processing = !!state?.processing;
 
   const doDownload = async (e) => {
     e.stopPropagation();
@@ -49,11 +50,17 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, 
           {state?.publishedAt && <span className="clip-pub"><Icon n="check" />published</span>}
           <span className="dur" style={{ marginLeft: state?.publishedAt ? 8 : 0 }}>{fmtDuration(clip.start, clip.end)}</span>
         </div>
+        {processing && (
+          <div className="clip-busy" aria-live="polite">
+            <Icon n="loader" /><span>Reprocessing…</span>
+          </div>
+        )}
       </div>
       {!selectMode && (
-        <button className="clip-edit" onClick={(e) => { e.stopPropagation(); onEdit(clip, index); }}
-          title="Set reframe, captions, smart cut & hook — then apply">
-          <Icon n="sliders-horizontal" />Edit &amp; reprocess
+        <button className="clip-edit" disabled={processing}
+          onClick={(e) => { e.stopPropagation(); if (!processing) onEdit(clip, index); }}
+          title={processing ? 'Reprocessing — please wait' : 'Set reframe, captions, smart cut & hook — then apply'}>
+          <Icon n={processing ? 'loader' : 'sliders-horizontal'} />{processing ? 'Reprocessing…' : 'Edit & reprocess'}
         </button>
       )}
       <div className="clip-foot">

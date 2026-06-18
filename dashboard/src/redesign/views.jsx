@@ -5,9 +5,18 @@ import { useModalA11y } from './useModalA11y';
 import { Icon, Btn, Badge, Switch, Segmented, Panel } from './primitives';
 import { Hero } from './chrome';
 import {
-  getConfig, saveConfig, cookiesStatus, uploadCookies, deleteCookies,
+  getConfig, saveConfig, getModels, cookiesStatus, uploadCookies, deleteCookies,
   getZernio, saveZernio, discoverZernioAccounts,
 } from './realApi';
+
+// Curated fallback when live discovery is unavailable (no key yet / offline).
+// Mirrors the allow-list prefixes (gemini-2.5- / gemini-3) the backend accepts.
+const FALLBACK_MODELS = [
+  { name: 'gemini-3.5-flash', display_name: 'Gemini 3.5 Flash — recommended' },
+  { name: 'gemini-2.5-flash', display_name: 'Gemini 2.5 Flash — budget' },
+  { name: 'gemini-3.1-pro-preview', display_name: 'Gemini 3.1 Pro — max quality' },
+  { name: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro — max quality' },
+];
 
 function relTime(ts) {
   if (!ts) return '';
@@ -102,14 +111,39 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
   const [accts, setAccts] = useState({ tiktok: '', instagram: '', youtube: '' });
   const [cookies, setCookies] = useState(!!cookiesConfigured);
   const [provider, setProvider] = useState('deepgram');
+  const [model, setModel] = useState('');
+  const [models, setModels] = useState(FALLBACK_MODELS);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  // Pull the live model list from the backend (uses the saved key if the
+  // header is empty). Merges discovery with the curated fallback + the
+  // currently-selected model so the dropdown is never empty and never drops
+  // the active choice.
+  const loadModels = async (key) => {
+    setLoadingModels(true);
+    try {
+      const { models: live } = await getModels(key || gemini || apiKey || '');
+      const seen = new Set();
+      const merged = [];
+      [...(live || []), ...FALLBACK_MODELS].forEach((m) => {
+        if (m?.name && !seen.has(m.name)) { seen.add(m.name); merged.push(m); }
+      });
+      if (merged.length) setModels(merged);
+    } catch { /* keep fallback */ }
+    finally { setLoadingModels(false); }
+  };
 
   useEffect(() => {
     getConfig().then((c) => {
       setPresent({ gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY });
       if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
+      if (c.GEMINI_MODEL) setModel(c.GEMINI_MODEL);
+      loadModels();
     }).catch(() => {});
     getZernio().then((z) => { setZernioState(z); if (z.accounts) setAccts({ tiktok: '', instagram: '', youtube: '', ...z.accounts }); }).catch(() => {});
     cookiesStatus().then((s) => setCookies(!!s.configured)).catch(() => {});
+    // Mount-once bootstrap; loadModels reads the latest key via closure on call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const saveKeys = async (patch) => {
@@ -173,6 +207,22 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, pushToast })
           <div className="r"><Segmented value={provider}
             onChange={(id) => { setProvider(id); saveKeys({ TRANSCRIPTION_PROVIDER: id }); }}
             options={[{ id: 'deepgram', label: 'Deepgram' }, { id: 'whisper', label: 'Whisper' }]} /></div>
+        </div>
+        <div className="opt" style={{ borderBottom: 0 }}>
+          <div className="oico"><Icon n="sparkles" /></div>
+          <div className="otxt"><div className="ot">Gemini model</div><div className="od">Viral-moment detection model · applied to new jobs</div></div>
+          <div className="r" style={{ gap: 8 }}>
+            <select className="key-input" style={{ width: 'auto', minWidth: 200, fontFamily: 'var(--font-sans)' }}
+              value={model}
+              onChange={(e) => { setModel(e.target.value); saveKeys({ GEMINI_MODEL: e.target.value }); }}>
+              {!model && <option value="">Default (gemini-3.5-flash)</option>}
+              {model && !models.some((m) => m.name === model) && <option value={model}>{model}</option>}
+              {models.map((m) => <option key={m.name} value={m.name}>{m.display_name || m.name}</option>)}
+            </select>
+            <Btn variant="ghost" size="sm" icon="refresh-cw" onClick={() => loadModels()} disabled={loadingModels}>
+              {loadingModels ? '…' : 'Refresh'}
+            </Btn>
+          </div>
         </div>
       </Panel>
 

@@ -1,15 +1,16 @@
 // ClippyMe redesign — EditClipModal: one staged editing surface per clip.
 // Reframe mode + Smart Cut + Subtitles + Hook are all edited here as *pending*
 // state and only committed when the user presses "Apply & reprocess" — no more
-// auto-reprocessing on every single tweak. Apply runs the real work in order:
-//   1. reframe (subprocess) only if the mode actually changed, then
-//   2. compose (subtitles → smart-cut → hook) if any layer toggle is on,
-// then updates the clip's preview to whatever the pipeline produced.
+// auto-reprocessing on every single tweak. Apply doesn't block: it hands the
+// staged params to the parent (`onApply`) and closes immediately. The actual
+// reframe (subprocess) + compose (subtitles → smart-cut → hook) run in the
+// BACKGROUND in RedesignApp, so the user can keep editing other clips while
+// this one renders. The clip card shows a per-clip "processing" spinner.
 import { useState } from 'react';
 import { Icon, Btn, Segmented, Switch } from './primitives';
-import { SUBTITLE_PRESETS } from './data';
+import { SUBTITLE_PRESETS, SUB_FONTS, SUB_COLORS } from './data';
 import { useModalA11y } from './useModalA11y';
-import { reframeClip, composeClip, clipPreviewSrc } from './realApi';
+import { clipPreviewSrc } from './realApi';
 import { seedSubtitleParams, seedHookParams } from '../lib/seedClipParams';
 
 const REFRAME_OPTS = [
@@ -18,7 +19,7 @@ const REFRAME_OPTS = [
   { id: 'disabled', label: 'Off' },
 ];
 
-export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselections, onClose, onSave, pushToast }) {
+export function EditClipModal({ clip, idx, initial, appliedMode, preselections, onClose, onApply }) {
   const t0 = initial?.toggles || {};
   const sp = initial?.subtitleParams || {};
   const pre = preselections || {};
@@ -35,10 +36,11 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const [mode, setMode] = useState(sp.mode || preSubs.mode || 'karaoke');
   const [preset, setPreset] = useState(sp.preset || preSubs.preset || 'hormozi_bold');
   const [position, setPosition] = useState(sp.position || preSubs.position || 'center');
+  const [subFont, setSubFont] = useState(sp.font || preSubs.font || 'Montserrat-Black');
+  const [subColor, setSubColor] = useState(sp.font_color || preSubs.font_color || '#FFFFFF');
   const [hookText, setHookText] = useState(
     initial?.hookParams?.text || clip.viral_hook_text || clip.hook_text || '',
   );
-  const [busy, setBusy] = useState(false);
 
   const panelRef = useModalA11y(onClose);
 
@@ -46,68 +48,28 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const anyCompose = smartcut || subsOn || hookOn;
   const willReprocess = reframeChanged || anyCompose;
 
-  const apply = async () => {
-    if (busy) return;
-    setBusy(true);
-    // Seed the full param shape (font, size, offset_y, …) the compose backend
-    // expects, then layer the user's edits on top — keeps Apply byte-compatible
-    // with the download/export path (which also seeds).
-    const subtitleParams = { ...seedSubtitleParams(preselections), ...sp, mode, preset, position };
+  // Non-blocking apply: seed the full param shape (font, size, offset_y, …) the
+  // compose backend expects, layer the user's edits on top, hand it to the
+  // parent for BACKGROUND processing, and close immediately. No await here →
+  // the modal never traps the user while a clip renders.
+  const apply = () => {
+    const subtitleParams = { ...seedSubtitleParams(preselections), ...sp, mode, preset, position,
+      ...(mode === 'classic' ? { font: subFont, font_color: subColor } : {}) };
     const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), text: hookText };
     const toggles = { smartcut, subtitles: subsOn, hook: hookOn };
-    const patch = { reframeMode, toggles, subtitleParams, hookParams };
-    let reframeApplied = false; // reframe overwrites the file on disk — track it
-    const commit = (p) => { try { onSave(p); } catch { /* parent state bug — don't freeze the modal */ } };
-    try {
-      // 1) Reframe first — it overwrites the clip file in place, so a later
-      //    compose picks up the new framing automatically.
-      if (reframeChanged) {
-        await reframeClip(jobId, idx, reframeMode);
-        reframeApplied = true;
-        patch.reframeBust = Date.now();
-        patch.previewUrl = undefined; // a stale composed preview no longer matches
-      }
-      // 2) Compose the active layers and point the preview at the result.
-      if (anyCompose) {
-        const { composed_url } = await composeClip(jobId, idx, {
-          toggles,
-          hook_params: hookOn ? hookParams : {},
-          subtitle_params: subsOn ? subtitleParams : {},
-        });
-        patch.previewUrl = composed_url;
-        patch.previewBust = Date.now();
-      } else if (reframeChanged) {
-        patch.previewUrl = undefined; // show the freshly reframed raw clip
-      }
-      commit(patch); // parent persists state, closes the modal, toasts success
-    } catch (err) {
-      const tooOld = err?.status === 409;
-      // Partial success: the reframe already overwrote the file on disk, so we
-      // MUST persist its cache-buster — otherwise the card keeps serving the
-      // pre-reframe cached URL forever. Commit the reframe-only patch (which
-      // also closes the modal), then surface the compose failure.
-      if (reframeApplied) {
-        commit({ reframeMode, reframeBust: Date.now(), previewUrl: undefined });
-        pushToast?.('error', 'Reframed, but composing the layers failed: ' + String(err?.message || err).slice(0, 50));
-        return;
-      }
-      pushToast?.('error', tooOld
-        ? 'This clip is too old to reframe — reprocess the video first.'
-        : 'Reprocess failed: ' + String(err?.message || err).slice(0, 60));
-      setBusy(false); // nothing applied — keep the modal open so edits aren't lost
-    }
+    onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams });
   };
 
   const ps = SUBTITLE_PRESETS.find((p) => p.id === preset) || SUBTITLE_PRESETS[0];
 
   return (
-    <div className="overlay" onClick={busy ? undefined : onClose}>
+    <div className="overlay" onClick={onClose}>
       <div className="modal wide" ref={panelRef} onClick={(e) => e.stopPropagation()}
         role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
         <div className="modal-head">
           <div><h3 id="edit-modal-title">Edit clip</h3>
             <div className="mh-sub">{clip.video_title_for_youtube_short || clip.title || `Clip ${idx + 1}`}</div></div>
-          <button className="x" onClick={onClose} aria-label="Close" disabled={busy}><Icon n="x" /></button>
+          <button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button>
         </div>
 
         <div className="modal-body edit-grid">
@@ -160,6 +122,26 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                     </div>
                   </div>
                 )}
+                {mode === 'classic' && (
+                  <>
+                    <div className="cf-row">
+                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
+                      <select className="sel" style={{ width: '100%' }} value={subFont} onChange={(e) => setSubFont(e.target.value)}>
+                        {SUB_FONTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </div>
+                    <div className="cf-row">
+                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Color</span>
+                      <div className="swatches">
+                        {SUB_COLORS.map((c) => (
+                          <button key={c} type="button" aria-label={`Font color ${c}`}
+                            className={'swatch' + (subColor.toUpperCase() === c.toUpperCase() ? ' on' : '')}
+                            style={{ background: c }} onClick={() => setSubColor(c)} />
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
                 <div className="cf-row">
                   <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
                   <Segmented full value={position} onChange={setPosition}
@@ -191,15 +173,15 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
         </div>
 
         <div className="modal-foot">
-          {willReprocess && !busy && (
+          {willReprocess && (
             <span className="edit-dirty">
-              {reframeChanged ? 'Will re-render framing' : 'Will re-compose layers'} on apply
+              {reframeChanged ? 'Will re-render framing' : 'Will re-compose layers'} in the background
             </span>
           )}
-          <Btn variant="ghost" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
           <div className="mf-right">
-            <Btn variant="primary" icon={busy ? 'loader' : (willReprocess ? 'wand-sparkles' : 'check')} onClick={apply} disabled={busy}>
-              {busy ? 'Reprocessing…' : (willReprocess ? 'Apply & reprocess' : 'Save changes')}
+            <Btn variant="primary" icon={willReprocess ? 'wand-sparkles' : 'check'} onClick={apply}>
+              {willReprocess ? 'Apply & reprocess' : 'Save changes'}
             </Btn>
           </div>
         </div>

@@ -78,6 +78,14 @@ services:
       - REFRAME_STATIONARY_THRESH=${REFRAME_STATIONARY_THRESH:-}
       - REFRAME_ZOOM_LOCK=${REFRAME_ZOOM_LOCK:-}
       - REFRAME_SNAP_CENTER=${REFRAME_SNAP_CENTER:-0.10}
+      # AUTO static-framing policy (DEFAULT ON): collapse each scene to ONE fixed
+      # crop so the camera is a locked tripod within every shot — zero pan, zero
+      # mid-shot zoom. TRACK locks on the static face; a single subject that
+      # MOVES more than MOTION_WIDE_THRESH (fraction of frame) is demoted to WIDE
+      # (locked, zoomed-out) instead of being chased; 2+ faces also → WIDE. Set
+      # REFRAME_STATIC_AUTO=0 to fall back to the per-frame eased smoother.
+      - REFRAME_STATIC_AUTO=${REFRAME_STATIC_AUTO:-}
+      - REFRAME_MOTION_WIDE_THRESH=${REFRAME_MOTION_WIDE_THRESH:-0.12}
       # Opt-in: content-aware crop for faceless (GENERAL) scenes instead of
       # letterboxing (Sobel saliency). Default off = byte-identical letterbox.
       - REFRAME_SALIENT_GENERAL=${REFRAME_SALIENT_GENERAL:-}

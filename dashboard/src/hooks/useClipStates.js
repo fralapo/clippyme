@@ -2,8 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 
 /**
  * Per-clip state: { selected: boolean, deleted: boolean, publishedAt: number,
- *                    reframeMode: 'auto' | 'object' | 'disabled', reframing: boolean,
+ *                    reframeMode: 'auto' | 'object' | 'disabled', processing: boolean,
+ *                    previewUrl, previewBust, reframeBust,
  *                    toggles: {...}, hookParams: {...}, subtitleParams: {...} }
+ * `processing` is transient (background reprocess in flight) and cleared on load.
  * Keyed by clip index. Persisted in localStorage under `clippyme_clip_states_{jobId}`
  * so user choices (selection, published flags, deleted clips) survive page
  * reloads without a backend round-trip.
@@ -24,7 +26,15 @@ export function useClipStates(jobId) {
         }
         try {
             const raw = localStorage.getItem(`clippyme_clip_states_${jobId}`);
-            setStates(raw ? JSON.parse(raw) : {});
+            const parsed = raw ? JSON.parse(raw) : {};
+            // `processing` is a transient background-reprocess flag. A reload mid-
+            // render would otherwise persist it and leave a card stuck on the
+            // "Reprocessing…" overlay with its Edit button disabled forever —
+            // clear it on load so the UI never wedges.
+            for (const k of Object.keys(parsed)) {
+                if (parsed[k] && parsed[k].processing) parsed[k] = { ...parsed[k], processing: false };
+            }
+            setStates(parsed);
         } catch {
             setStates({});
         }

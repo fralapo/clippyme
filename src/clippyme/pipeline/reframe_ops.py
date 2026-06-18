@@ -577,6 +577,90 @@ def stationary_lock(xs, ys, frame_w: float, frame_h: float,
     return [lock_x] * n, [lock_y] * n, True
 
 
+def centroid_span(centers, frame_w: float, frame_h: float) -> float:
+    """Normalised travel of a subject's centre across a scene → motion measure.
+
+    ``centers`` is a list of ``(x, y)`` face/subject centres sampled across one
+    scene (``None`` entries — frames with no detection — are skipped). Returns
+    ``max(x_span / frame_w, y_span / frame_h)`` where each span is
+    ``max - min`` of the present centres: 0.0 = perfectly still subject, larger
+    = the subject roams further across the frame.
+
+    Used by the AUTO static-framing policy to promote a *moving* single-subject
+    scene from TRACK (which would have to pan to follow it) to WIDE (a locked,
+    zoomed-out crop that keeps the moving subject in frame without camera
+    motion). Pure-math → host-unit-tested.
+    """
+    pts = [c for c in centers if c is not None]
+    if len(pts) < 2 or frame_w <= 0 or frame_h <= 0:
+        return 0.0
+    xs = [float(p[0]) for p in pts]
+    ys = [float(p[1]) for p in pts]
+    x_span = (max(xs) - min(xs)) / frame_w
+    y_span = (max(ys) - min(ys)) / frame_h
+    return max(x_span, y_span)
+
+
+def collapse_scene_targets(targets, scene_ids, strategies, *,
+                           x_max: float, y_max: float,
+                           wide_zoom: float = 1.0,
+                           track_zoom_cap: float = 1.35,
+                           snap_center_dist: float = 0.10):
+    """Collapse each scene to ONE fixed ``(cx, cy, zoom)`` → fully static camera.
+
+    The AUTO static-framing policy: within a scene the camera never moves. This
+    is the deterministic alternative to ``build_smoothed_trajectory`` — instead
+    of low-passing a moving path, every frame of a scene is pinned to a single
+    viewpoint so there is zero pan and zero mid-shot zoom breathing.
+
+    ``targets[i]`` is the raw recorded per-frame target ``(cx, cy, zoom)`` (or
+    ``None`` for frames that bypass the cameraman, e.g. GENERAL/DISABLED).
+    ``scene_ids[i]`` is the scene index of frame ``i``; ``strategies[i]`` its
+    per-frame strategy string.
+
+      * ``TRACK`` — locked on the scene's *median* subject centre; zoom = the
+        median recorded zoom, capped at ``track_zoom_cap`` so a static subject
+        is framed but never aggressively pushed in.
+      * ``WIDE`` — locked on the scene's median centre (the mid-point between
+        speakers / a roaming subject's average position) with zoom forced to
+        ``wide_zoom`` (1.0 = widest 9:16 window → shows the most, no zoom-in on
+        any single face).
+      * anything else / ``None`` target → ``None`` (its own render path handles
+        the frame).
+
+    A lock point within ``snap_center_dist`` of frame centre snaps to exact
+    centre. Returns a per-frame list, constant within each scene. Pure-math →
+    host-unit-tested.
+    """
+    n = len(targets)
+    out = [None] * n
+    i = 0
+    while i < n:
+        if targets[i] is None:
+            i += 1
+            continue
+        j = i
+        sid = scene_ids[i]
+        while j < n and targets[j] is not None and scene_ids[j] == sid:
+            j += 1
+        seg = targets[i:j]
+        strat = strategies[i] if i < len(strategies) else 'TRACK'
+        cx = float(np.median([t[0] for t in seg]))
+        cy = float(np.median([t[1] for t in seg]))
+        if strat == 'WIDE':
+            zoom = float(wide_zoom)
+        else:
+            zoom = min(float(np.median([t[2] for t in seg])), float(track_zoom_cap))
+        if abs(cx - x_max / 2.0) <= snap_center_dist * x_max:
+            cx = x_max / 2.0
+        if abs(cy - y_max / 2.0) <= snap_center_dist * y_max:
+            cy = y_max / 2.0
+        for k in range(j - i):
+            out[i + k] = (cx, cy, zoom)
+        i = j
+    return out
+
+
 def build_smoothed_trajectory(targets, scene_ids, window: int, polyorder: int,
                               x_max: float, y_max: float,
                               min_zoom: float = 1.0, max_zoom: float = 1.6,

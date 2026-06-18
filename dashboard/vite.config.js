@@ -17,6 +17,15 @@ export default defineConfig({
     hmr: {
       clientPort: 5175,
     },
+    // File-watching across the Docker bind mount. On Windows/macOS Docker
+    // (WSL2 / gRPC-FUSE) inotify events do NOT propagate from the host into the
+    // container, so Vite's default native watcher never sees host edits and HMR
+    // silently stops working ("Docker is serving an old version"). Polling is
+    // the portable fix. Costs a little CPU; dev-only, never affects `build`.
+    watch: {
+      usePolling: true,
+      interval: 150,
+    },
     // Dev-server Host allow-list. Only local names — the unrelated upstream
     // 'openshorts.app' was removed (DNS-rebinding hardening). Add your own
     // hostname here if you proxy the dev server through a custom domain.
@@ -34,14 +43,6 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/thumbnails': {
-        target: 'http://backend:8000',
-        changeOrigin: true,
-      },
-      '/gallery': {
-        target: 'http://backend:8000',
-        changeOrigin: true,
-      },
-      '/video': {
         target: 'http://backend:8000',
         changeOrigin: true,
       },

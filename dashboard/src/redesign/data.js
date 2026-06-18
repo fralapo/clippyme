@@ -34,6 +34,33 @@ export const PRESETS = [
 
 export const ASPECTS = [['9:16', 'Vertical'], ['1:1', 'Square'], ['16:9', 'Wide']];
 
+// Per-job Gemini model quick-picker (Create → Clip Options). '' = use the
+// global Settings model. Live discovery lives in Settings; here we keep a small
+// curated list so the picker works offline. Mirrors the allow-list prefixes
+// (gemini-2.5- / gemini-3) the backend accepts.
+export const GEMINI_MODELS = [
+  ['', 'Default (Settings)'],
+  ['gemini-3.5-flash', '3.5 Flash · recommended'],
+  ['gemini-2.5-flash', '2.5 Flash · budget'],
+  ['gemini-3.1-pro-preview', '3.1 Pro · max quality'],
+  ['gemini-2.5-pro', '2.5 Pro · max quality'],
+];
+
+// Classic-mode subtitle fonts. Values are the bundled TTF basenames libass
+// resolves from `fonts/` (Verdana falls back to a system face). The backend
+// validates the name against `_FONT_NAME_RE` in subtitles.py.
+export const SUB_FONTS = [
+  ['Montserrat-Black', 'Montserrat Black'],
+  ['Anton-Regular', 'Anton'],
+  ['Bangers-Regular', 'Bangers'],
+  ['Poppins-Black', 'Poppins Black'],
+  ['Poppins-Medium', 'Poppins Medium'],
+  ['Verdana', 'Verdana'],
+];
+
+// Classic-mode subtitle colour swatches (sent as `font_color` hex).
+export const SUB_COLORS = ['#FFFFFF', '#FFE000', '#00FF66', '#00E5FF', '#FF4D6D', '#000000'];
+
 export const SUBTITLE_PRESETS = [
   { id: 'classic_white', label: 'Classic', hi: '#FFFF00', style: { color: '#fff', fontFamily: 'Verdana, sans-serif', textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000' } },
   { id: 'hormozi_bold', label: 'Hormozi', hi: '#00FF66', style: { color: '#fff', fontFamily: "Impact,'Arial Black',sans-serif", textShadow: '-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000', letterSpacing: '.02em' } },

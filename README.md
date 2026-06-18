@@ -146,6 +146,8 @@ Runtime env overrides (rarely needed):
 | `DEEPGRAM_MODEL` | `nova-3` | |
 | `DEEPGRAM_LANGUAGE` | `multi` | |
 | `REFRAME_COMFORT` | `1` | Anti-nausea default (global-smooth + per-scene stationary + zoom lock). `0` = original single-pass tracker. |
+| `REFRAME_STATIC_AUTO` | on | Lock the camera per scene — zero pan, zero mid-shot zoom. `0` = eased-but-moving smoother. |
+| `REFRAME_MOTION_WIDE_THRESH` | `0.12` | How far a single subject may travel (fraction of frame) before TRACK is demoted to a static WIDE crop. |
 | `REFRAME_STATIONARY_THRESH` / `REFRAME_ZOOM_LOCK` | `0.30` / on | Comfort tuning: scene-lock threshold / one zoom level per scene. |
 | `REFRAME_SALIENT_GENERAL` | _(off)_ | Content-aware crop for faceless scenes instead of letterboxing. |
 | `REFRAME_OBJECT_WEIGHTS` | _(off)_ | Faceless scenes follow a weighted-object centroid (product/dog/car) by reusing the existing YOLO pass. `1` = curated defaults, or `dog:3,car:2` for custom weights. |
@@ -239,7 +241,7 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `GET` | `/api/zernio/accounts` | Discover accounts via Zernio. |
 | `POST` | `/api/publish/{job_id}/{clip_index}` | Upload + schedule a clip on TikTok/IG/YouTube. |
 
-Static mounts: `/videos`, `/thumbnails`, `/gallery`, `/video`, `/fonts` (read-only).
+Static mounts: `/videos`, `/thumbnails`, `/fonts` (read-only).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -267,9 +269,11 @@ Pick one of three modes per job (and per clip after the fact, from the **Edit & 
 
 Inside **Auto**, three per-scene strategies are decided by sampling 7 frames per scene:
 
-- **TRACK** — single speaker → active-speaker tracking via `SpeakerTracker` (MAR variance + face size) and `SmoothedCameraman` (adaptive smoothing slow/fast, X+Y axis tracking, dynamic 1.0–1.6× zoom). Active-speaker selection uses MediaPipe FaceMesh mouth-aspect-ratio variance; in the streaming fallback path the centering dead-band defaults to `REFRAME_DEADZONE_X=0.05` / `REFRAME_DEADZONE_Y=0.08`.
-- **WIDE** — multi-speaker → same tracker with longer cooldown (45 frames ≈ 1.5 s) for interview-style switching.
+- **TRACK** — a single, near-static speaker → a crop locked on the face. The camera holds still; it does not pan around with the subject. (`SpeakerTracker` MAR-variance selection and `SmoothedCameraman` still run in pass 1 to find the face; the static policy then pins the shot.)
+- **WIDE** — two or more faces in the scene, *or* a single subject that moves too far to hold without panning → a locked, zoomed-out crop that keeps everyone in frame with no camera motion. Movement is measured by how far the primary face travels across the sampled frames (`REFRAME_MOTION_WIDE_THRESH`, default 0.12 of the frame); past that, chasing the subject would cause the exact motion we're trying to avoid, so we pull back instead.
 - **GENERAL** — no faces → letterbox.
+
+**Static framing (`REFRAME_STATIC_AUTO`, default on):** the rule that ties the strategies together is that the camera never moves *within* a shot. Each scene collapses to a single fixed crop — TRACK locks on the face (zoom capped so it's framed, not shoved in your face), WIDE locks zoomed-out between the faces. Zoom can still change *across* a cut, which reads as a new shot rather than camera motion. This is the deterministic end-state of comfort mode; set `REFRAME_STATIC_AUTO=0` to go back to the eased-but-moving Savitzky-Golay smoother. The decision math (`centroid_span`, `collapse_scene_targets`) is pure and host-tested.
 
 **Lost-subject recovery:** in TRACK/WIDE, if no speaker is detected for `REFRAME_LOST_HOLD` frames (~3 s) the camera eases back to the source center and gently zooms out instead of freezing on empty space. The active-speaker camera can optionally use a 1€ adaptive filter (`REFRAME_SMOOTHER=euro`) or a momentum/damped-spring smoother (`REFRAME_SMOOTHER=spring`) in place of the default two-speed EMA, with an optional hard pan-rate cap (`REFRAME_MAX_STEP_PX`). The pure decision math lives in the cv2-free, host-tested `clippyme.pipeline.reframe_ops` module; ffprobe-backed A/V-sync helpers (VFR detection, stream `start_time`, fps reconcile) live alongside in `media_probe.py`.
 

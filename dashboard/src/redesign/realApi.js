@@ -223,8 +223,18 @@ export function optsToPreselections(opts) {
     no_zoom: !opts.zoom,
     skip_analysis: !opts.detect,
     smartcut: opts.smartcut,
+    // Per-job Gemini model override (quick-picker). Omitted when blank →
+    // lib/api.js skips the field and the backend uses the Settings default.
+    model: (opts.model || '').trim() || undefined,
     subtitles: opts.subtitles
-      ? { mode: opts.subMode, preset: opts.subPreset, position: opts.subPosition }
+      ? {
+          mode: opts.subMode, preset: opts.subPreset, position: opts.subPosition,
+          // Classic-mode typography (karaoke draws style from the preset, so
+          // these are harmless there but only meaningful for classic).
+          ...(opts.subMode === 'classic'
+            ? { font: opts.subFont || 'Montserrat-Black', font_color: opts.subColor || '#FFFFFF' }
+            : {}),
+        }
       : false,
     hook: opts.hooks ? { position: opts.hookPos, size: opts.hookSize } : false,
   };
