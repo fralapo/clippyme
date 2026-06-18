@@ -324,6 +324,8 @@ export default function ResultsGrid({
                     <em className="not-italic text-white">Your clips,</em>{' '}
                     <span className="italic text-zinc-400 font-light">ready to publish</span>
                   </>
+                ) : status === 'complete' ? (
+                  <span className="italic text-zinc-400 font-light">No clips to show</span>
                 ) : (
                   <span className="italic text-zinc-400 font-light">Waiting for clips…</span>
                 )}
@@ -666,6 +668,20 @@ export default function ResultsGrid({
         </div>
       )}
 
+      {clipCount === 0 && (
+        <div className="rounded-[3px] border border-dashed border-white/10 bg-white/[0.015] py-16 px-6 flex flex-col items-center text-center gap-3">
+          <div className="w-12 h-12 rounded-[3px] bg-white/[0.03] border border-white/10 flex items-center justify-center text-zinc-600">
+            <Sparkles size={22} strokeWidth={1.4} />
+          </div>
+          <p className="type-display text-lg text-zinc-300">No clips to show</p>
+          <p className="text-sm text-zinc-500 max-w-sm leading-relaxed">
+            Every clip has been hidden from this view. The video files are still on
+            disk — deletes here are visual only, so you can reprocess or restore the
+            job from History.
+          </p>
+        </div>
+      )}
+
       <BatchPublishModal
         isOpen={batchPublishOpen}
         onClose={() => { setBatchPublishOpen(false); setPublishScope('selected'); }}
@@ -718,10 +734,10 @@ export default function ResultsGrid({
       />
 
       {status === 'error' && (
-        <div className="rounded-[3px] bg-red-500/10 border border-red-500/20 p-4 flex items-center justify-between">
+        <div className="rounded-[3px] bg-[oklch(62%_0.22_25)]/10 border border-[oklch(62%_0.22_25)]/25 p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <AlertCircle size={18} className="text-red-400 shrink-0" />
-            <p className="text-sm text-red-400">
+            <AlertCircle size={18} className="text-[oklch(78%_0.2_25)] shrink-0" />
+            <p className="text-sm text-[oklch(78%_0.2_25)]">
               Processing encountered an error. Some clips may be incomplete.
             </p>
           </div>

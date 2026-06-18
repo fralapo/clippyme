@@ -1,5 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Youtube, Upload, FileVideo, X, Globe, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard, Settings } from 'lucide-react';
+import { Youtube, Upload, FileVideo, X, Globe, FileUp, Loader2, ChevronDown, Sparkles, Layers, Clipboard, Settings, Check, AlertCircle } from 'lucide-react';
+import { toast } from 'sonner';
+
+// Client-side upload ceiling — mirrors the backend guard so an oversized
+// file is rejected instantly instead of after a multi-minute upload that
+// the server would only refuse at the end.
+const MAX_FILE_BYTES = 2 * 1024 ** 3; // 2 GiB
+const fmtSizeMB = (bytes) => `${Math.round(bytes / 1024 ** 2)}MB`;
 
 /**
  * Segmented button group — used for tabs (Single/Batch), source
@@ -374,16 +381,31 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
         }
     };
 
+    // Split incoming files into those within the size limit and toast about
+    // any that are too large, so an oversized drop/select fails fast with a
+    // clear reason instead of silently or only at upload's end.
+    const filterBySize = (files) => {
+        const ok = [];
+        const rejected = [];
+        files.forEach((f) => (f.size > MAX_FILE_BYTES ? rejected : ok).push(f));
+        if (rejected.length === 1) {
+            toast.error(`"${rejected[0].name}" is ${fmtSizeMB(rejected[0].size)} — over the 2GB limit.`);
+        } else if (rejected.length > 1) {
+            toast.error(`${rejected.length} files skipped — each must be under 2GB.`);
+        }
+        return ok;
+    };
+
     const handleDrop = (e) => {
         e.preventDefault();
         setIsDragging(false);
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-            if (mode === 'batch') {
-                setBatchFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
-            } else {
-                setFile(e.dataTransfer.files[0]);
-                setSingleSource('file');
-            }
+        const dropped = filterBySize(Array.from(e.dataTransfer.files || []));
+        if (dropped.length === 0) return;
+        if (mode === 'batch') {
+            setBatchFiles((prev) => [...prev, ...dropped]);
+        } else {
+            setFile(dropped[0]);
+            setSingleSource('file');
         }
     };
 
@@ -397,8 +419,34 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
         }
     };
 
+    // Inline URL validity — drives the small hint under the URL field so the
+    // user gets immediate feedback instead of discovering a bad paste only
+    // after the job fails downstream. Accepts any http(s) URL (the backend
+    // resolves YouTube vs. direct media itself).
+    const urlValid = (() => {
+        const v = url.trim();
+        if (!v) return false;
+        try {
+            const u = new URL(v);
+            return u.protocol === 'http:' || u.protocol === 'https:';
+        } catch {
+            return false;
+        }
+    })();
+
     const batchUrlCount = batchUrls.split('\n').filter(u => u.trim()).length;
     const batchTotal = batchUrlCount + batchFiles.length;
+    const batchOverLimit = mode === 'batch' && batchTotal > 20;
+
+    // Power-user submit: Cmd/Ctrl+Enter fires the form from anywhere inside
+    // it (incl. the multiline batch textarea, where a bare Enter inserts a
+    // newline). Plain Enter in the single-line URL field still submits
+    // natively, so we only intercept the modifier combo here.
+    const handleKeyDown = (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !isDisabled) {
+            handleSubmit(e);
+        }
+    };
 
     const tabs = [
         { id: 'single', label: 'Single', icon: FileVideo },
@@ -408,7 +456,8 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
     const isDisabled = isProcessing
         || (mode === 'single' && singleSource === 'url' && !url)
         || (mode === 'single' && singleSource === 'file' && !file)
-        || (mode === 'batch' && batchTotal === 0);
+        || (mode === 'batch' && batchTotal === 0)
+        || batchOverLimit;
 
     return (
         <div className="relative bg-[oklch(14%_0.009_260)] border border-white/[0.08] rounded-[3px] overflow-hidden animate-fade-in shadow-[0_32px_80px_-40px_oklch(0%_0_0/0.9),0_0_0_1px_oklch(100%_0_0/0.02)]">
@@ -428,7 +477,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
 
             {/* Content */}
             <div className="p-6">
-                <form onSubmit={handleSubmit} className="space-y-5">
+                <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-5">
 
                     {/* Single Mode — URL or File via inner toggle */}
                     {mode === 'single' && (
@@ -469,7 +518,23 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                                             Paste
                                         </button>
                                     </div>
-
+                                    {url.trim() && (
+                                        <p
+                                            className={`flex items-center gap-1.5 text-[11px] px-0.5 leading-snug ${
+                                                urlValid ? 'text-[oklch(78%_0.17_145)]' : 'text-[oklch(82%_0.16_68)]'
+                                            }`}
+                                            aria-live="polite"
+                                        >
+                                            {urlValid ? (
+                                                <Check size={11} strokeWidth={2.4} className="shrink-0" />
+                                            ) : (
+                                                <AlertCircle size={11} strokeWidth={2} className="shrink-0" />
+                                            )}
+                                            {urlValid
+                                                ? 'Looks like a valid URL'
+                                                : 'Enter a full URL starting with http(s)://'}
+                                        </p>
+                                    )}
                                 </>
                             ) : (
                                 <div
@@ -508,7 +573,10 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                                             <input
                                                 type="file"
                                                 accept="video/*"
-                                                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                                                onChange={(e) => {
+                                                    const [picked] = filterBySize(Array.from(e.target.files || []));
+                                                    if (picked) setFile(picked);
+                                                }}
                                                 className="hidden"
                                             />
                                             <div className="w-14 h-14 rounded-[3px] bg-white/[0.03] flex items-center justify-center text-zinc-500 group-hover:text-[oklch(82%_0.16_68)] group-hover:bg-[oklch(74%_0.175_62)]/[0.08] border border-white/[0.1] group-hover:border-[oklch(74%_0.175_62)]/40 transition-all duration-300">
@@ -564,7 +632,7 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                                             type="file"
                                             accept="video/*"
                                             multiple
-                                            onChange={(e) => setBatchFiles((prev) => [...prev, ...Array.from(e.target.files || [])])}
+                                            onChange={(e) => setBatchFiles((prev) => [...prev, ...filterBySize(Array.from(e.target.files || []))])}
                                             className="hidden"
                                         />
                                         <Upload size={18} strokeWidth={1.6} className="text-zinc-500" />
@@ -592,11 +660,19 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                                 )}
                             </div>
 
-                            <div className="flex items-center justify-between pt-2 border-t border-white/[0.06] type-label">
-                                <span>Total items</span>
-                                <span className={`tabular-nums ${batchTotal > 20 ? 'text-[oklch(70%_0.22_25)]' : batchTotal > 0 ? 'text-[oklch(82%_0.16_68)]' : 'text-zinc-600'}`}>
-                                    {String(batchTotal).padStart(2, '0')}&nbsp;/&nbsp;20
-                                </span>
+                            <div className="space-y-1.5 pt-2 border-t border-white/[0.06]">
+                                <div className="flex items-center justify-between type-label">
+                                    <span>Total items</span>
+                                    <span className={`tabular-nums ${batchOverLimit ? 'text-[oklch(78%_0.2_25)]' : batchTotal > 0 ? 'text-[oklch(82%_0.16_68)]' : 'text-zinc-600'}`}>
+                                        {String(batchTotal).padStart(2, '0')}&nbsp;/&nbsp;20
+                                    </span>
+                                </div>
+                                {batchOverLimit && (
+                                    <p className="flex items-center gap-1.5 text-[11px] text-[oklch(78%_0.2_25)] leading-snug" aria-live="polite">
+                                        <AlertCircle size={11} strokeWidth={2} className="shrink-0" />
+                                        Over the 20-item limit — remove {batchTotal - 20} to continue.
+                                    </p>
+                                )}
                             </div>
                         </div>
                     )}
@@ -1091,9 +1167,11 @@ export default function MediaInput({ onProcess, onBatchProcess, isProcessing }) 
                         ) : (
                             <span>
                                 {mode === 'batch'
-                                    ? batchTotal > 0
-                                        ? `Generate clips from ${batchTotal} videos`
-                                        : 'Add videos to batch'
+                                    ? batchOverLimit
+                                        ? `Remove ${batchTotal - 20} — max 20 per batch`
+                                        : batchTotal > 0
+                                            ? `Generate clips from ${batchTotal} videos`
+                                            : 'Add videos to batch'
                                     : 'Generate my shorts'}
                             </span>
                         )}

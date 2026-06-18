@@ -22,7 +22,30 @@ const STEP_KEYS = STEPS.map((s) => s.key);
 export default function PipelineSteps({ currentStep }) {
   const currentIdx = STEP_KEYS.indexOf(currentStep);
   const currentLabel = currentIdx >= 0 ? STEPS[currentIdx].label : '';
+  // Determinate fill: each completed/active step advances the bar one
+  // notch out of STEPS.length. -1 (no step yet) → 0%, so the bar reads
+  // "not started" rather than jumping to the first step prematurely.
+  const pct = currentIdx >= 0 ? Math.round(((currentIdx + 1) / STEPS.length) * 100) : 0;
   return (
+    <div className="space-y-3">
+      {/* Step counter + determinate track — gives the user a single
+          glanceable "how far along" signal above the per-step chips. */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between type-mono text-[10px] uppercase tracking-[0.14em]">
+          <span className="text-[oklch(82%_0.16_68)]">
+            {currentIdx >= 0 ? currentLabel : 'Starting…'}
+          </span>
+          <span className="text-zinc-500 tabular-nums">
+            Step&nbsp;{Math.max(1, currentIdx + 1)}&nbsp;/&nbsp;{STEPS.length}
+          </span>
+        </div>
+        <div className="h-1 w-full rounded-full bg-white/[0.06] overflow-hidden">
+          <div
+            className="h-full rounded-full bg-[oklch(74%_0.175_62)] shadow-[0_0_8px_-1px_oklch(74%_0.175_62/0.7)] transition-[width] duration-500 ease-out"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      </div>
     <div
       className="flex items-center gap-2 flex-wrap"
       role="progressbar"
@@ -66,6 +89,7 @@ export default function PipelineSteps({ currentStep }) {
           </React.Fragment>
         );
       })}
+    </div>
     </div>
   );
 }

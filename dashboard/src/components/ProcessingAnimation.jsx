@@ -158,7 +158,7 @@ const ProcessingAnimation = ({ media, isComplete, syncedTime, isSyncedPlaying, s
 
         {/* Synced playing indicator */}
         {isSyncedPlaying && (
-          <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-red-500/90 backdrop-blur-sm text-white rounded-[3px] text-xs font-medium animate-pulse">
+          <div className="absolute top-3 right-3 z-20 flex items-center gap-1.5 px-3 py-1.5 bg-[oklch(62%_0.22_25)]/90 backdrop-blur-sm text-white rounded-[3px] text-xs font-medium animate-pulse">
             <Activity size={12} />
             Live Sync
           </div>

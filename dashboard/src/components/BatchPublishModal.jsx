@@ -375,7 +375,7 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
 
                 <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
                     {!isConfigured && (
-                        <div className="px-4 py-3 rounded-[3px] bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs">
+                        <div className="px-4 py-3 rounded-[3px] bg-[oklch(74%_0.175_62)]/10 border border-[oklch(74%_0.175_62)]/25 text-[oklch(82%_0.16_68)] text-xs">
                             ⚠ Zernio is not configured. Open <strong>Settings → Social Publishing</strong> first.
                         </div>
                     )}
@@ -507,10 +507,10 @@ export default function BatchPublishModal({ isOpen, onClose, jobId, clips, clipS
                                         {clip.video_title_for_youtube_short || `Clip ${originalIndex + 1}`}
                                     </span>
                                     {status === 'pending' && <Loader2 size={12} className="animate-spin text-accent-pink" />}
-                                    {status === 'ok' && <Check size={12} className="text-emerald-400" />}
-                                    {status === 'error' && <AlertCircle size={12} className="text-red-400" />}
+                                    {status === 'ok' && <Check size={12} className="text-[oklch(78%_0.17_145)]" />}
+                                    {status === 'error' && <AlertCircle size={12} className="text-[oklch(78%_0.2_25)]" />}
                                     {status === 'skipped' && (
-                                        <span className="text-[9px] font-medium text-amber-400 uppercase">Skipped</span>
+                                        <span className="text-[9px] font-medium text-[oklch(82%_0.16_68)] uppercase">Skipped</span>
                                     )}
                                 </div>
                             );
