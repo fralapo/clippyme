@@ -45,7 +45,7 @@ button{font-family:inherit}
 /* ============================================================ TOP NAV */
 .topnav{
   position:sticky;top:0;z-index:60;height:60px;display:flex;align-items:center;gap:16px;
-  padding:0 20px;backdrop-filter:blur(var(--glass-blur));background:rgba(8,8,11,.72);
+  padding:0 20px;background:rgba(8,8,11,.97);
   border-bottom:1px solid var(--line-1);
 }
 .brand{display:flex;align-items:center;gap:9px;font-weight:800;font-size:18px;letter-spacing:-.03em;color:var(--fg-1)}
@@ -226,7 +226,7 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .plat.on.yt{background:#ff0033}
 
 /* summary bar */
-.summary{position:sticky;bottom:0;margin-top:18px;background:rgba(15,15,21,.94);backdrop-filter:blur(var(--glass-blur));border:1px solid var(--glass-line);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);padding:16px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;z-index:30}
+.summary{position:sticky;bottom:0;margin-top:18px;background:rgba(15,15,21,.97);border:1px solid var(--glass-line);border-radius:var(--r-lg);box-shadow:var(--shadow-lg);padding:16px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;z-index:30}
 .summary .s-main{font-size:15px;font-weight:600;color:var(--fg-1);letter-spacing:-.01em}
 .summary .s-sub{font-family:var(--font-mono);font-size:11px;color:var(--fg-3);margin-top:4px;letter-spacing:.04em;display:flex;flex-wrap:wrap;gap:6px}
 .summary .s-sub .chip{padding:2px 8px;border:1px solid var(--line-1);border-radius:var(--r-pill);text-transform:uppercase;letter-spacing:.1em;font-size:9px}
@@ -277,7 +277,7 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .results-head h2{font-size:26px;font-weight:800;letter-spacing:-.025em}
 .results-head .rh-right{margin-left:auto;display:flex;gap:10px;flex-wrap:wrap}
 .results-sub{font-family:var(--font-mono);font-size:11px;letter-spacing:.06em;color:var(--fg-3);margin-bottom:22px;text-transform:uppercase}
-.actionbar{position:sticky;top:72px;z-index:25;display:flex;align-items:center;gap:12px;padding:12px 16px;margin-bottom:18px;background:rgba(15,15,21,.92);backdrop-filter:blur(var(--glass-blur));border:1px solid var(--glass-line);border-radius:var(--r-md)}
+.actionbar{position:sticky;top:72px;z-index:25;display:flex;align-items:center;gap:12px;padding:12px 16px;margin-bottom:18px;background:rgba(15,15,21,.97);border:1px solid var(--glass-line);border-radius:var(--r-md)}
 .actionbar .sel-n{font-family:var(--font-mono);font-size:12px;color:var(--fg-2);letter-spacing:.04em}
 .actionbar .ab-right{margin-left:auto;display:flex;gap:10px}
 
@@ -403,7 +403,7 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 
 /* ============================================================ TOAST */
 .toasts{position:fixed;bottom:24px;right:24px;z-index:120;display:flex;flex-direction:column;gap:10px}
-.toast{display:flex;align-items:center;gap:11px;padding:13px 16px;background:rgba(18,18,24,.96);backdrop-filter:blur(var(--glass-blur));border:1px solid var(--glass-line);border-radius:var(--r-md);box-shadow:var(--shadow-lg);font-size:13px;color:var(--fg-1);min-width:260px;animation:toastIn .25s cubic-bezier(.2,.8,.2,1) both}
+.toast{display:flex;align-items:center;gap:11px;padding:13px 16px;background:rgba(18,18,24,.98);border:1px solid var(--glass-line);border-radius:var(--r-md);box-shadow:var(--shadow-lg);font-size:13px;color:var(--fg-1);min-width:260px;animation:toastIn .25s cubic-bezier(.2,.8,.2,1) both}
 @keyframes toastIn{from{transform:translateX(20px);opacity:0}to{transform:none;opacity:1}}
 .toast .ti{width:28px;height:28px;border-radius:var(--r-xs);display:flex;align-items:center;justify-content:center;flex:none}
 .toast .ti svg{width:15px;height:15px}
