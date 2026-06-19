@@ -47,14 +47,13 @@ export function seedHookParams(clip, preselections) {
 
 export function seedSubtitleParams(preselections) {
     const subs = preselections?.subtitles;
-    return {
+    const out = {
         preset: subs?.preset || 'classic_white',
         mode: subs?.mode || 'karaoke',
         display_mode: 'word_group',
         highlight_color: null,
         font: subs?.font || 'Montserrat-Black',
-        uppercase: true,
-        offset_y: 0,
+        offset_y: subs?.offset_y ?? 0,
         font_color: subs?.font_color || '#FFFFFF',
         position: subs?.position || 'bottom',
         // Classic-mode stroke + background (passed through to burn_subtitles).
@@ -62,9 +61,15 @@ export function seedSubtitleParams(preselections) {
         border_width: subs?.border_width ?? 2,
         bg_color: subs?.bg_color || '#000000',
         bg_opacity: subs?.bg_opacity ?? 0,
-        // Optional custom size / grouping — keys omitted when unset so the
-        // backend preset default applies instead of a hard-coded value.
-        ...(subs?.font_size !== undefined ? { font_size: subs.font_size } : {}),
-        ...(subs?.words_per_group !== undefined ? { words_per_group: subs.words_per_group } : {}),
     };
+    // uppercase: only forward an EXPLICIT choice. Omitted → the backend honours
+    // the preset's own casing (mrbeast_box / minimal_clean are lower-case
+    // presets that a hard-coded `true` used to silently force uppercase).
+    if (subs?.uppercase !== undefined) out.uppercase = subs.uppercase;
+    // Optional karaoke overrides — omitted when unset so the preset default
+    // applies instead of a hard-coded value.
+    if (subs?.outline_width !== undefined) out.outline_width = subs.outline_width;
+    if (subs?.font_size !== undefined) out.font_size = subs.font_size;
+    if (subs?.words_per_group !== undefined) out.words_per_group = subs.words_per_group;
+    return out;
 }

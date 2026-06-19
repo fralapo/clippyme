@@ -175,17 +175,26 @@ function SubConfig({ opts, set }) {
           options={[{ id: 'karaoke', label: 'Karaoke' }, { id: 'classic', label: 'Classic' }]} />
       </div>
       {opts.subMode === 'karaoke' && (
-        <div className="cf-row">
-          <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Style preset</span>
-          <div className="subgrid">
-            {SUBTITLE_PRESETS.map((p) => (
-              <button key={p.id} type="button" className={'subpre' + (opts.subPreset === p.id ? ' on' : '')} onClick={() => set({ subPreset: p.id })}>
-                <div className="prev"><span style={p.style}>WORD <span style={{ color: p.hi }}>UP</span></span></div>
-                <div className="nm">{p.label}</div>
-              </button>
-            ))}
+        <>
+          <div className="cf-row">
+            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Style preset</span>
+            <div className="subgrid">
+              {SUBTITLE_PRESETS.map((p) => (
+                <button key={p.id} type="button" className={'subpre' + (opts.subPreset === p.id ? ' on' : '')} onClick={() => set({ subPreset: p.id })}>
+                  <div className="prev"><span style={p.style}>WORD <span style={{ color: p.hi }}>UP</span></span></div>
+                  <div className="nm">{p.label}</div>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+          <div className="cf-row">
+            <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
+              <span>Font size</span><span className="od">{opts.subFontSize > 0 ? opts.subFontSize : 'Auto'}</span>
+            </span>
+            <input type="range" min="0" max="80" step="1" value={opts.subFontSize || 0} aria-label="Subtitle font size"
+              onChange={(e) => set({ subFontSize: Number(e.target.value) })} style={{ width: '100%' }} />
+          </div>
+        </>
       )}
       {opts.subMode === 'classic' && (
         <>
@@ -206,12 +215,31 @@ function SubConfig({ opts, set }) {
               ))}
             </div>
           </div>
+          <div className="cf-row">
+            <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
+              <span>Outline width</span><span className="od">{opts.subOutlineW ?? 2}</span>
+            </span>
+            <input type="range" min="0" max="6" step="1" value={opts.subOutlineW ?? 2} aria-label="Subtitle outline width"
+              onChange={(e) => set({ subOutlineW: Number(e.target.value) })} style={{ width: '100%' }} />
+          </div>
+          <div className="opt" style={{ paddingLeft: 0, paddingRight: 0 }}>
+            <div className="otxt"><div className="ot" style={{ fontSize: 13 }}>Background box</div>
+              <div className="od">Solid panel behind the text</div></div>
+            <Switch on={!!opts.subBg} onChange={(v) => set({ subBg: v })} />
+          </div>
         </>
       )}
       <div className="cf-row">
         <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
-        <Segmented full value={opts.subPosition} onChange={(id) => set({ subPosition: id })}
+        <Segmented full value={opts.subPosition || 'bottom'} onChange={(id) => set({ subPosition: id })}
           options={[{ id: 'top', label: 'Top' }, { id: 'center', label: 'Center' }, { id: 'bottom', label: 'Bottom' }]} />
+      </div>
+      <div className="cf-row">
+        <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
+          <span>Vertical nudge</span><span className="od">{(opts.subOffsetY || 0) > 0 ? `+${opts.subOffsetY}` : (opts.subOffsetY || 0)}</span>
+        </span>
+        <input type="range" min="-50" max="50" step="1" value={opts.subOffsetY || 0} aria-label="Subtitle vertical position"
+          onChange={(e) => set({ subOffsetY: Number(e.target.value) })} style={{ width: '100%' }} />
       </div>
     </div>
   );

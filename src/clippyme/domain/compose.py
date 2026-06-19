@@ -149,8 +149,14 @@ async def _apply_subtitles(
                 ass_path,
                 preset=subtitle_params.get("preset", "classic_white"),
                 mode=subtitle_params.get("display_mode", "word_group"),
-                uppercase=subtitle_params.get("uppercase", True),
+                words_per_group=subtitle_params.get("words_per_group", 3),
+                # Default None → honour the preset's own casing (mrbeast_box /
+                # minimal_clean are lower-case presets). Only an explicit
+                # frontend value overrides it.
+                uppercase=subtitle_params.get("uppercase"),
+                font_color=subtitle_params.get("font_color"),
                 highlight_color=subtitle_params.get("highlight_color"),
+                outline_width=subtitle_params.get("outline_width"),
                 font_name=subtitle_params.get("font"),
                 font_size=subtitle_params.get("font_size"),
                 position=subtitle_params.get("position", "bottom"),

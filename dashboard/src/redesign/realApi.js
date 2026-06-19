@@ -296,11 +296,24 @@ export function optsToPreselections(opts) {
     model: (opts.model || '').trim() || undefined,
     subtitles: opts.subtitles
       ? {
-          mode: opts.subMode, preset: opts.subPreset, position: opts.subPosition,
+          mode: opts.subMode, preset: opts.subPreset, position: opts.subPosition || 'bottom',
+          // Vertical nudge applies to both modes.
+          offset_y: opts.subOffsetY || 0,
+          // Karaoke font-size override (0 = Auto → use the preset size; omitted
+          // so seedSubtitleParams doesn't force a value).
+          ...(opts.subMode === 'karaoke' && opts.subFontSize > 0
+            ? { font_size: opts.subFontSize }
+            : {}),
           // Classic-mode typography (karaoke draws style from the preset, so
-          // these are harmless there but only meaningful for classic).
+          // these are only meaningful for classic).
           ...(opts.subMode === 'classic'
-            ? { font: opts.subFont || 'Montserrat-Black', font_color: opts.subColor || '#FFFFFF' }
+            ? {
+                font: opts.subFont || 'Montserrat-Black',
+                font_color: opts.subColor || '#FFFFFF',
+                border_width: opts.subOutlineW ?? 2,
+                bg_opacity: opts.subBg ? 0.6 : 0,
+                bg_color: '#000000',
+              }
             : {}),
         }
       : false,

@@ -236,19 +236,22 @@ When using ASS karaoke, the `ass` FFmpeg filter is used with `fontsdir` pointing
 
 **Safe zone defaults**: MarginL/R = **110 px** (≈10% of the 1080px vertical frame → TikTok/Reels safe zone so long captions don't get cropped). Preset fontsize defaults have been reduced twice: first pass (`80→62`, `85→66`, `75→58`, `70→54`) and then a **−35% second pass** for cleaner reading on mobile vertical frames → current values: `classic_white=40`, `hormozi_bold=43`, `neon_glow=40`, `mrbeast_box=38`, `minimal_clean=35`, `fire_impact=43`.
 
-## Faithful modal preview scaling
+## Subtitle customization flow (redesign)
 
-`SubtitleModal.jsx` and `HookModal.jsx` render **pixel-faithful** previews of the burned-in output. Shared spec in `dashboard/src/lib/subtitlePresets.js` mirrors `subtitles.py:SUBTITLE_PRESETS` 1:1 and exports `scaleFontToPreview(backendFontsize, renderedHeightPx)` (formula: `backendFontsize * renderedHeightPx / 1920`) + `outlineToTextShadow()` (8-way CSS shadow approximating libass outline). Modals measure `<video>` `clientHeight` via `ResizeObserver` and feed it through the scaler. HookModal replicates `hooks.py` formula `video_width * 0.9 * 0.05 * font_scale` with `S=0.8 / M=1.0 / L=1.3`.
+The live subtitle controls live in **two** places, kept symmetric: the Create-tab pre-selection panel `create.jsx:SubConfig` (writes flat `opts.sub*` keys → `realApi.js:optsToPreselections` → `preselections.subtitles.*`) and the per-clip `captions.jsx:EditClipModal` (seeds from `preselections.subtitles` + the clip's saved `subtitleParams`). Both emit the **same `subtitle_params` shape** via `lib/seedClipParams.js:seedSubtitleParams`, consumed by `compose.py:_apply_subtitles` → `subtitles.py`.
 
-**Hard rule:** if you change a preset's fontsize on the backend, update `subtitlePresets.js` in the same commit.
+**Controls (both panels):** mode (karaoke/classic), position (top/center/bottom segmented), and a **Vertical nudge** slider (`offset_y`, −50…+50). Karaoke adds a **Style preset** grid + a **Font size** slider (`font_size`, 0 = Auto → preset size). Classic adds font, colour swatch, **Outline width** (`border_width`, 0–6) and a **Background box** toggle (`bg_opacity` 0/0.6 + black `bg_color`).
 
-## Unified vertical position slider
+**Param-flow invariants (don't regress):**
+- **`offset_y` sign is unified** — positive moves the caption DOWN in *both* the karaoke ASS and classic SRT paths via the pure `subtitles.py:_offset_margin(position_norm, base, offset_y)` helper (top-anchor adds, bottom/center subtract; clamped ≥0). Host-tested in `tests/domain/test_subtitle_style.py`.
+- **`uppercase` defaults to the preset.** `seedSubtitleParams` only forwards `uppercase` when the user explicitly sets it; `_apply_subtitles` passes `uppercase=None` otherwise so `generate_ass_karaoke` honours each preset's own casing (`mrbeast_box`/`minimal_clean` stay lower-case — a hard-coded `true` used to force them upper).
+- **`position='center'` is honoured in both modes.** Karaoke aliases `middle`→`center`; the SRT path now maps `center`/`middle`→SSA alignment 10 (it used to silently fall through to bottom).
+- **Karaoke forwards `font_color`/`outline_width`/`words_per_group`** (previously dropped by `_apply_subtitles`). All preset `text_color`s are `#FFFFFF`, so the always-sent `font_color:#FFFFFF` is a no-op until a non-white base is chosen.
+- **Defaults agree across panels:** position default is `bottom` everywhere (Create, Edit, seed, backend). `generate_ass_karaoke` validates `font_color`/`highlight_color` against `_HEX_RE` (raises instead of silently going white) and clamps `font_size` to `[_SUB_FONTSIZE_MIN, _SUB_FONTSIZE_MAX]` = `[10, 120]`.
 
-`HookModal.jsx` and `SubtitleModal.jsx` expose a **single `-50 → +50` slider** for vertical placement — no more separate top/center/bottom radio buttons. The slider value is the absolute Y position in percent (−50 = top, 0 = center, +50 = bottom) and the modal preview uses `top: {50 + offsetY}%` so what-you-see matches what-you-get.
+The Create preview grid (`data.js:SUBTITLE_PRESETS`) is a **cosmetic** CSS mirror (system fonts, no fontsize) — its `hi` highlight colours match the backend `highlight_color` for honesty, but it is NOT a pixel-faithful preview. (The old pixel-faithful `lib/subtitlePresets.js` + `SubtitleModal.jsx`/`HookModal.jsx` were deleted with the legacy component tree — no live code rendered them.)
 
-Under the hood the frontend always sends `position='center'` to the backend, which is aliased to `'middle'` in both `subtitles.py` and `hooks.py`. This keeps the existing ASS/ffmpeg pipeline untouched while giving the user a single continuous control.
-
-The apply buttons are labelled **"Apply Hook"** / **"Apply Karaoke Subtitles"** / **"Apply Classic Subtitles"** (not "Add" — the toggle switch outside already decides whether the layer is rendered at download time).
+The apply button is the unified **"Apply & reprocess"** in `EditClipModal` (the toggle switch decides whether the subtitle layer renders at compose time).
 
 ## Clip lifecycle & batch publish
 

@@ -332,6 +332,49 @@ def effective_fonts_dir():
         return FONTS_DIR
 
 
+# --- Shared subtitle-style helpers (pure, host-tested) --------------------
+# Fontsize bounds shared by both subtitle paths. The karaoke ASS resolution is
+# 1080x1920 (preset sizes ~35-43); the SRT path scales by 0.85 afterwards. The
+# cap stops an out-of-range API value (validated up to 100000 by the generic
+# overlay validator) from reaching ffmpeg.
+_SUB_FONTSIZE_MIN = 10
+_SUB_FONTSIZE_MAX = 120
+
+
+def _clamp_fontsize(size, default):
+    """Coerce a requested fontsize into [_SUB_FONTSIZE_MIN, _SUB_FONTSIZE_MAX].
+
+    Garbage (None / non-numeric) falls back to ``default`` so a missing override
+    keeps the preset size.
+    """
+    try:
+        s = int(size)
+    except (TypeError, ValueError):
+        return default
+    return max(_SUB_FONTSIZE_MIN, min(_SUB_FONTSIZE_MAX, s))
+
+
+def _offset_margin(position_norm, base_margin_v, offset_y):
+    """Apply a vertical offset (percent of the 1920px frame) to a base MarginV.
+
+    Convention shared by the karaoke ASS path and the classic SRT path: a
+    POSITIVE ``offset_y`` moves the caption DOWN on screen, negative moves it UP
+    — matching the frontend slider where +50 ≈ bottom and -50 ≈ top.
+
+    MarginV semantics depend on the anchor: for a TOP-anchored caption MarginV
+    is the gap from the top edge (larger = lower) so we ADD; for bottom/center it
+    is the gap from the bottom edge (larger = higher) so we SUBTRACT. The result
+    is clamped at 0 so an aggressive offset never produces a negative margin.
+    """
+    try:
+        delta = int(1920 * float(offset_y) / 100)
+    except (TypeError, ValueError):
+        delta = 0
+    if position_norm == "top":
+        return base_margin_v + delta
+    return max(0, base_margin_v - delta)
+
+
 def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
                          preset="classic_white", mode="word_group",
                          words_per_group=3, uppercase=True,
@@ -364,33 +407,45 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         if not _FONT_NAME_RE.match(font_name):
             raise ValueError(f"invalid font_name: {font_name!r}")
         style["font"] = font_name
+    # Validate caller-supplied colours the same way burn_subtitles does — they
+    # are interpolated into the .ass file and must not silently coerce to white
+    # (hex_to_ass_color's fallback) on a malformed value.
+    for _label, _val in (("font_color", font_color), ("highlight_color", highlight_color)):
+        if _val and not _HEX_RE.match(str(_val)):
+            raise ValueError(f"invalid {_label}: {_val!r}")
     if font_color:
         style["text_color"] = font_color
     if highlight_color:
         style["highlight_color"] = highlight_color
     if font_size:
-        style["fontsize"] = font_size
+        style["fontsize"] = _clamp_fontsize(font_size, style["fontsize"])
     if outline_width is not None:
-        style["outline_width"] = outline_width
+        style["outline_width"] = max(0, min(20, int(outline_width)))
     if uppercase is not None:
         style["uppercase"] = uppercase
 
-    # Position → ASS alignment + margin
+    # Position → ASS alignment + margin. Positive offset_y moves the caption
+    # DOWN (see _offset_margin).
     position_norm = str(position).lower()
     if position_norm == "middle":
         position_norm = "center"  # frontend alias
     if position_norm == "top":
         ass_alignment = 8  # top-center
-        base_margin_v = 260
+        margin_v = _offset_margin("top", 260, offset_y)
     elif position_norm == "center":
-        ass_alignment = 5  # center-center
-        base_margin_v = 0
+        if offset_y:
+            # libass IGNORES MarginV for the centred anchor (\an5), so a non-zero
+            # nudge would silently no-op. Re-anchor to the top anchor (\an8) with
+            # an absolute margin measured from the vertical centre (960px of the
+            # 1920px frame) so the slider actually moves the caption.
+            ass_alignment = 8
+            margin_v = _offset_margin("top", 960, offset_y)
+        else:
+            ass_alignment = 5  # center-center
+            margin_v = 0
     else:
         ass_alignment = 2  # bottom-center
-        base_margin_v = style.get("margin_v", 350)
-
-    # Apply manual vertical offset (percentage of 1920px frame height)
-    margin_v = base_margin_v + int(1920 * offset_y / 100)
+        margin_v = _offset_margin("bottom", style.get("margin_v", 350), offset_y)
 
     # Extract words in range
     words = []
@@ -643,14 +698,14 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         align_lower = str(alignment).lower()
         if align_lower == 'top':
             ass_alignment = 6
-        elif align_lower == 'middle':
+        elif align_lower in ('middle', 'center'):
+            # 'center' is the value the frontend always sends; alias it to the
+            # legacy SSA middle-centre code (it used to fall through to bottom).
             ass_alignment = 10
         elif align_lower == 'bottom':
             ass_alignment = 2
 
-        final_fontsize = int(fontsize * 0.85)
-        if final_fontsize < 10:
-            final_fontsize = 10
+        final_fontsize = _clamp_fontsize(int(fontsize * 0.85), 10)
 
         primary_colour = hex_to_ass_color(font_color, 1.0)
 
@@ -665,7 +720,8 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
 
         back_colour = hex_to_ass_color("#000000", 0.0)
 
-        srt_margin_v = 350 - int(1920 * offset_y / 100)
+        # Same down-for-positive convention as the karaoke path.
+        srt_margin_v = _offset_margin('top' if align_lower == 'top' else 'bottom', 350, offset_y)
         style_string = (
             f"Alignment={ass_alignment},"
             f"Fontname={font_name},"

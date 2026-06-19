@@ -75,10 +75,10 @@ export const LOGO_SIZES = [['S', 'S'], ['M', 'M'], ['L', 'L']];
 
 export const SUBTITLE_PRESETS = [
   { id: 'classic_white', label: 'Classic', hi: '#FFFF00', style: { color: '#fff', fontFamily: 'Verdana, sans-serif', textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000' } },
-  { id: 'hormozi_bold', label: 'Hormozi', hi: '#00FF66', style: { color: '#fff', fontFamily: "Impact,'Arial Black',sans-serif", textShadow: '-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000', letterSpacing: '.02em' } },
+  { id: 'hormozi_bold', label: 'Hormozi', hi: '#00FF00', style: { color: '#fff', fontFamily: "Impact,'Arial Black',sans-serif", textShadow: '-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000', letterSpacing: '.02em' } },
   { id: 'neon_glow', label: 'Neon', hi: '#00FFFF', style: { color: '#fff', fontFamily: "'Helvetica Neue',sans-serif", textShadow: '0 0 4px #0ff,0 0 8px #0ff' } },
   { id: 'mrbeast_box', label: 'MrBeast', hi: '#FFFF00', style: { color: '#fff', fontFamily: "'Arial Black',sans-serif", background: '#000', padding: '2px 6px', borderRadius: '3px' } },
-  { id: 'minimal_clean', label: 'Minimal', hi: '#fff', style: { color: '#fff', fontFamily: "'Helvetica Neue',sans-serif", fontWeight: 500 } },
+  { id: 'minimal_clean', label: 'Minimal', hi: '#FFFFFF', style: { color: '#fff', fontFamily: "'Helvetica Neue',sans-serif", fontWeight: 500 } },
   { id: 'fire_impact', label: 'Fire', hi: '#FF4444', style: { color: '#fff', fontFamily: 'Impact,sans-serif', textShadow: '0 0 3px #f44,-1px -1px 0 #000,1px 1px 0 #000', letterSpacing: '.03em' } },
 ];
 

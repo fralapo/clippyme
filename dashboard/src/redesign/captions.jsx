@@ -68,9 +68,17 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
 
   const [mode, setMode] = useState(sp.mode || preSubs.mode || 'karaoke');
   const [preset, setPreset] = useState(sp.preset || preSubs.preset || 'hormozi_bold');
-  const [position, setPosition] = useState(sp.position || preSubs.position || 'center');
+  // Default matches the Create pre-selection + backend ('bottom'); was 'center'
+  // here, which silently flipped placement when opening an unedited clip.
+  const [position, setPosition] = useState(sp.position || preSubs.position || 'bottom');
   const [subFont, setSubFont] = useState(sp.font || preSubs.font || 'Montserrat-Black');
   const [subColor, setSubColor] = useState(sp.font_color || preSubs.font_color || '#FFFFFF');
+  // Vertical nudge (−50 top … +50 bottom), karaoke font-size override (0 = Auto
+  // → preset size), classic outline width + background-box toggle.
+  const [offsetY, setOffsetY] = useState(Number(sp.offset_y ?? preSubs.offset_y ?? 0));
+  const [kSize, setKSize] = useState(Number(sp.font_size ?? preSubs.font_size ?? 0));
+  const [cOutline, setCOutline] = useState(Number(sp.border_width ?? preSubs.border_width ?? 2));
+  const [cBg, setCBg] = useState(Number(sp.bg_opacity ?? preSubs.bg_opacity ?? 0) > 0);
   const [hookText, setHookText] = useState(
     initial?.hookParams?.text || clip.viral_hook_text || clip.hook_text || '',
   );
@@ -117,8 +125,17 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   // parent for BACKGROUND processing, and close immediately. No await here →
   // the modal never traps the user while a clip renders.
   const apply = () => {
-    const subtitleParams = { ...seedSubtitleParams(preselections), ...sp, mode, preset, position,
-      ...(mode === 'classic' ? { font: subFont, font_color: subColor } : {}) };
+    // Build from the clean seed + current UI state only. We deliberately do NOT
+    // spread the prior `sp` here: every meaningful prior value was already
+    // seeded into the controls above, and a raw `...sp` would leak stale
+    // style keys (e.g. a font_color/outline_width from an earlier classic edit)
+    // into a karaoke re-compose, silently overriding the chosen preset.
+    const subtitleParams = { ...seedSubtitleParams(preselections), mode, preset, position,
+      offset_y: offsetY,
+      ...(mode === 'karaoke'
+        ? { font_size: kSize > 0 ? kSize : undefined }
+        : { font: subFont, font_color: subColor, border_width: cOutline,
+            bg_opacity: cBg ? 0.6 : 0, bg_color: '#000000' }) };
     const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), ...hookStyle, text: hookText };
     const logoParams = { position: logoPos, size: logoSize };
     const toggles = { smartcut, subtitles: subsOn, hook: hookOn, logo: logoOn };
@@ -209,17 +226,26 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                     options={[{ id: 'karaoke', label: 'Karaoke' }, { id: 'classic', label: 'Classic' }]} />
                 </div>
                 {mode === 'karaoke' && (
-                  <div className="cf-row">
-                    <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Style preset</span>
-                    <div className="subgrid">
-                      {SUBTITLE_PRESETS.map((p) => (
-                        <button key={p.id} type="button" className={'subpre' + (preset === p.id ? ' on' : '')} onClick={() => setPreset(p.id)}>
-                          <div className="prev"><span style={p.style}>WORD <span style={{ color: p.hi }}>UP</span></span></div>
-                          <div className="nm">{p.label}</div>
-                        </button>
-                      ))}
+                  <>
+                    <div className="cf-row">
+                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Style preset</span>
+                      <div className="subgrid">
+                        {SUBTITLE_PRESETS.map((p) => (
+                          <button key={p.id} type="button" className={'subpre' + (preset === p.id ? ' on' : '')} onClick={() => setPreset(p.id)}>
+                            <div className="prev"><span style={p.style}>WORD <span style={{ color: p.hi }}>UP</span></span></div>
+                            <div className="nm">{p.label}</div>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                    <div className="cf-row">
+                      <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Font size</span><span className="eo-d">{kSize > 0 ? kSize : 'Auto'}</span>
+                      </span>
+                      <input type="range" min="0" max="80" step="1" value={kSize} aria-label="Subtitle font size"
+                        onChange={(e) => setKSize(Number(e.target.value))} style={{ width: '100%' }} />
+                    </div>
+                  </>
                 )}
                 {mode === 'classic' && (
                   <>
@@ -239,12 +265,31 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                         ))}
                       </div>
                     </div>
+                    <div className="cf-row">
+                      <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Outline width</span><span className="eo-d">{cOutline}</span>
+                      </span>
+                      <input type="range" min="0" max="6" step="1" value={cOutline} aria-label="Subtitle outline width"
+                        onChange={(e) => setCOutline(Number(e.target.value))} style={{ width: '100%' }} />
+                    </div>
+                    <div className="edit-opt" style={{ marginTop: 4 }}>
+                      <div className="eo-txt"><div className="eo-t" style={{ fontSize: 13 }}>Background box</div>
+                        <div className="eo-d">Solid panel behind the text</div></div>
+                      <Switch on={cBg} onChange={setCBg} />
+                    </div>
                   </>
                 )}
                 <div className="cf-row">
                   <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
                   <Segmented full value={position} onChange={setPosition}
                     options={[{ id: 'top', label: 'Top' }, { id: 'center', label: 'Center' }, { id: 'bottom', label: 'Bottom' }]} />
+                </div>
+                <div className="cf-row">
+                  <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
+                    <span>Vertical nudge</span><span className="eo-d">{offsetY > 0 ? `+${offsetY}` : offsetY}</span>
+                  </span>
+                  <input type="range" min="-50" max="50" step="1" value={offsetY} aria-label="Subtitle vertical position"
+                    onChange={(e) => setOffsetY(Number(e.target.value))} style={{ width: '100%' }} />
                 </div>
               </div>
             )}
