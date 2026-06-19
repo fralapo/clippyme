@@ -59,8 +59,8 @@ Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 3. **Detect viral moments** with **Google Gemini** (`gemini-3.5-flash` by default). A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output. **No-AI fallback:** if no Gemini key is set or the call fails, the transcript is topic-segmented into several clips by dependency-light lexical **TextTiling** (ported from [ClipsAI](https://github.com/ClipsAI/clipsai)) instead of dumping the whole video as one clip — heuristic, not viral-ranked, but offline and free.
 4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene. Hardened against messy real-world inputs: variable-frame-rate normalization, audio `start_time` compensation (YouTube A/V desync), and corrupt-frame resilience — all no-ops on clean sources.
 5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection.
-6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish), **Hook** text overlay (Pillow + emoji, with Instagram-Stories-style banner / colours / outline / font), **Subtitles** (6 ASS karaoke presets or classic SRT, pixel-faithful frontend preview), and a **Brand logo** watermark. Custom subtitle/hook fonts and the logo are uploaded once in Settings.
-7. **Publish or schedule** to TikTok / Instagram / YouTube via **Zernio**, with a SmartScheduler that picks Italian-prime-time slots, avoids same-day collisions, and handles per-platform daily-limit 429s by skipping exhausted platforms across a batch.
+6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish, plus a separate manual transcript trim), **Hook** text overlay (Pillow + emoji, with Instagram-Stories-style banner / colours / outline / font — defaulting to bannerless white Anton with a thin black outline), **Subtitles** (6 ASS karaoke presets or classic SRT with a live preview), and a **Brand logo** watermark. The per-clip editor is a tabbed modal; settings can be applied to one clip, copied to all clips, or staged across a multi-select. Custom subtitle/hook fonts and the logo are uploaded once in Settings.
+7. **Publish or schedule** to TikTok / Instagram / YouTube via **Zernio**, with a SmartScheduler that picks Italian-prime-time slots, avoids same-day collisions, and (when scheduling) spreads one clip per day to stay under per-platform daily caps. Any residual Zernio daily-limit 429 is surfaced verbatim per clip.
 
 While a job runs you stay in control:
 
@@ -205,8 +205,8 @@ dashboard/
                             data.js (presets/options), primitives.jsx, icon.jsx
     hooks/                  useJobSubmission, useJobPolling, useHistory,
                             useSessionPersistence, useBackendStatus, useClipStates
-    lib/subtitlePresets.js  1:1 mirror of subtitles.py SUBTITLE_PRESETS for the live
-                            preview (kept in sync by a CI parity test)
+    lib/                    Pure helpers (host-tested via `npm test`): pipelineStep,
+                            bulkApply (apply-to-all / multi-select), seedClipParams
 
 fonts/                Bundled TTF fonts served via /fonts (subtitle + hook rendering)
 data/                 Persisted config, cookies, transcript cache (git-ignored)
@@ -254,12 +254,15 @@ Static mounts: `/videos`, `/thumbnails`, `/fonts` (read-only).
 
 ## Editing toggles (compose-on-download)
 
-Every finished clip has an **Edit & reprocess** panel — one button on the clip card opens a modal that gathers all the options in one place (reframe mode, Smart Cut, Hook, Subtitles, Brand logo) so you set everything first and apply once, instead of the clip reprocessing on every tweak. The compose layers:
+Every finished clip has an **Edit & reprocess** panel — one button on the clip card opens a **tabbed modal** (Reframe · Captions · Hook · Smart Cut · Trim · Logo) that gathers all the options in one place so you set everything first and apply once, instead of the clip reprocessing on every tweak. The compose layers:
 
-- **Smart Cut** — removes silences and filler words via auto-editor v3 timeline; falls back to ffmpeg concat demuxer if the binary is missing. **Manual trim:** the Edit modal also shows the clip's transcript as a tap-to-cut checklist — auto-removal handles silence and fillers, and you hand-cut any extra line; the picked spans (`drop_ranges`) carry through download and publish.
-- **Hook** — text overlay, auto-prefilled from the Gemini hook suggestion. Beyond position/size it offers **Instagram-Stories-style text styling**: a toggleable coloured banner behind the text (colour + opacity), independent text colour, an outline/stroke (None/Thin/Thick + colour), and a font choice. A live WYSIWYG preview sits above the controls. Supports emoji.
-- **Subtitles** — 6 viral karaoke presets (`classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`) or classic SRT with font/color/position controls. The frontend preview is **pixel-faithful** with the burned-in output (`dashboard/src/lib/subtitlePresets.js` mirrors the Python preset table 1:1 — keep them in sync).
+- **Smart Cut** — auto-removes silences and filler words via auto-editor v3 timeline; falls back to ffmpeg concat demuxer if the binary is missing.
+- **Trim** (its own tab) — shows the clip's transcript as a tap-to-cut checklist for hand-removing specific lines, kept separate from the automatic pass. The picked spans (`drop_ranges`) ride through download and publish; dropping a line implies the Smart Cut compose stage.
+- **Hook** — text overlay, auto-prefilled from the Gemini hook suggestion. Beyond position/size it offers **Instagram-Stories-style text styling**: a toggleable coloured banner behind the text (colour + opacity), independent text colour, an outline/stroke (None/Thin/Thick + colour), and a font choice. The default look is bannerless white **Anton** with a thin black outline. A live WYSIWYG preview sits above the controls. Supports emoji.
+- **Subtitles** — 6 viral karaoke presets (`classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`) or classic SRT with font/color/position controls. The Create-tab grid (`dashboard/src/redesign/data.js`) is a cosmetic CSS preview (system fonts; highlight colours match the backend), not pixel-faithful.
 - **Brand logo** — burns an uploaded transparent PNG onto the clip (7 anchor positions × S/M/L size × opacity). Upload it once in Settings → Brand assets.
+
+**Apply across clips.** Each card has an **Apply to all** button that copies that clip's settings to every other clip; in multi-select mode (with **Select all / Deselect all**) you can **Edit N** selected clips at once. Both bulk paths copy the shared config (reframe / Smart Cut / subtitles / hook style / logo) but keep each clip's own manual trim and hook text, and reprocess with a bounded concurrency so the box isn't flooded with subprocesses.
 
 **Custom fonts**: upload a `.ttf`/`.otf` (e.g. a licensed Stratos) in Settings → Brand assets and it appears in the classic-subtitle and hook font pickers — resolved at burn time from the writable `data/fonts/` dir alongside the bundled faces.
 
@@ -303,7 +306,7 @@ After a job completes, every clip can be flipped between all three modes post-ho
 - `auto` — `SmartScheduler` picks the next free Italian-prime-time slot per weekday, with a 90-minute minimum gap and anti-collision against already-scheduled posts (3-step algorithm: free prime-time window → 15-min scan 07–23 → fallback)
 - `manual` — caller passes an ISO 8601 `scheduled_for`
 
-The dashboard `BatchPublishModal` publishes every eligible clip in one click. With `auto` it can spread one clip per day from a chosen start date (mirroring the original `tmp/programma_shorts.py` logic), and gracefully skips platforms that hit Zernio's daily limit (HTTP 429) without failing the whole batch.
+The dashboard's unified `PublishModal` publishes the selected clips concurrently in one click, each row showing live queued → uploading → live/error status. With `auto` it spreads one clip per day from a chosen start date (mirroring the original `tmp/programma_shorts.py` logic) to stay under per-platform daily caps; any residual Zernio daily-limit 429 is surfaced verbatim per clip instead of failing the whole batch.
 
 ---
 
