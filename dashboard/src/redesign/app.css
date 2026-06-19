@@ -368,6 +368,10 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
    otherwise force horizontal overflow. */
 .edit-grid{display:grid;grid-template-columns:220px 1fr;gap:20px}
 @media(max-width:560px){.edit-grid{grid-template-columns:1fr}}
+/* Tabbed sections inside the Edit / bulk-edit modal. */
+.edit-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line-1)}
+.edit-tabs .tab{padding:6px 11px;font-size:var(--text-2xs)}
+.edit-tabs .tab .lbl{display:inline}
 
 /* ============================================================ MODAL / SHEET */
 .overlay{position:fixed;inset:0;z-index:90;background:rgba(3,3,5,.7);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:24px;animation:fadein .18s ease both}

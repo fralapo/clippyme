@@ -16,6 +16,7 @@ import { EditClipModal } from './captions';
 import { optsToPreselections, restoreJob, listBackendJobIds, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from './realApi';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from './presets';
 import { HOOK_STYLE_DEFAULT } from './data';
+import { clipStateToParams, buildBulkPlan } from '../lib/bulkApply';
 
 import { useJobSubmission } from '../hooks/useJobSubmission';
 import { useJobPolling } from '../hooks/useJobPolling';
@@ -97,6 +98,8 @@ export default function RedesignApp() {
   useEffect(() => () => { toastTimerIds.current.forEach(clearTimeout); }, []);
   const [publishClips, setPublishClips] = useState(null);
   const [editClip, setEditClip] = useState(null);
+  // Multi-select bulk editor: { targets: [{ i, c }] }.
+  const [bulkEdit, setBulkEdit] = useState(null);
   const [viewingHistory, setViewingHistory] = useState(false);
   // jobIds that still exist on disk (null = not yet known / backend offline →
   // don't disable anything). Reconciles the localStorage history list against
@@ -354,6 +357,55 @@ export default function RedesignApp() {
 
   const clips = results?.clips || [];
 
+  // Visible (non-removed) clips as {i, c} — shared by both bulk paths.
+  const visibleClips = () => clips.map((c, i) => ({ i, c })).filter(({ i }) => !clipStates[i]?.deleted);
+
+  // Bounded-concurrency runner for bulk reprocessing. Each reprocessClip spawns
+  // heavy backend work (reframe = YOLO/MediaPipe subprocess, compose = ffmpeg)
+  // and the server only throttles the MAIN job worker — these endpoints are
+  // ungated, so the client is the only throttle. A bare forEach would fire all
+  // N at once and thrash/OOM the box. Cap at 2 (matches AE_MAX_PARALLEL); this
+  // is the same reason results.jsx:exportMany runs sequentially. reprocessClip
+  // swallows its own errors, so a failed clip never breaks the pool.
+  const runBulk = async (plan, limit = 2) => {
+    let next = 0;
+    const worker = async () => {
+      while (next < plan.length) {
+        const { idx, clip, params } = plan[next++];
+        await reprocessClip(idx, clip, params);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(limit, plan.length) }, worker));
+  };
+
+  // "Apply to all": take one clip's saved settings (or the global seeds if it
+  // was never edited) and reprocess every OTHER visible clip with them. Manual
+  // trim + per-clip hook text are intentionally not propagated (see bulkApply).
+  const applyClipToAll = (srcIdx) => {
+    const src = clips[srcIdx];
+    if (!src) return;
+    const srcParams = clipStateToParams(clipStates[srcIdx], preselections, src);
+    const plan = buildBulkPlan(srcParams, visibleClips(), clipStates, srcIdx);
+    if (!plan.length) { pushToast('info', 'No other clips to apply to'); return; }
+    pushToast('info', `Applying settings to ${plan.length} clip${plan.length === 1 ? '' : 's'}…`);
+    runBulk(plan);
+  };
+
+  // Bulk editor "Apply": staged params from the modal → every selected clip.
+  const applyBulkEdit = (params, targets) => {
+    const srcParams = {
+      reframeMode: params.reframeMode,
+      toggles: params.toggles,
+      subtitleParams: params.subtitleParams,
+      hookParams: params.hookParams,
+      logoParams: params.logoParams,
+    };
+    const plan = buildBulkPlan(srcParams, targets, clipStates);
+    if (!plan.length) return;
+    pushToast('info', `Reprocessing ${plan.length} clip${plan.length === 1 ? '' : 's'}…`);
+    runBulk(plan);
+  };
+
   return (
     <div>
       <TopNav tab={tab} setTab={goTab} busy={status === 'processing'} />
@@ -373,6 +425,7 @@ export default function RedesignApp() {
         <ResultsView clips={clips} jobId={jobId} preselections={preselections}
           clipStates={clipStates} onUpdateClipState={updateClipState} onBack={resetToCreate}
           onPublish={openPublish} onPublishAll={openPublish} onEdit={(c, i) => setEditClip({ clip: c, idx: i })}
+          onApplyToAll={applyClipToAll} onEditSelected={(targets) => setBulkEdit({ targets })}
           pushToast={pushToast} />
       )}
 
@@ -390,6 +443,7 @@ export default function RedesignApp() {
           <ResultsView clips={clips} jobId={jobId} preselections={preselections} embedded
             clipStates={clipStates} onUpdateClipState={updateClipState}
             onPublish={openPublish} onPublishAll={openPublish} onEdit={(c, i) => setEditClip({ clip: c, idx: i })}
+            onApplyToAll={applyClipToAll} onEditSelected={(targets) => setBulkEdit({ targets })}
             pushToast={pushToast} />
         </div>
       )}
@@ -409,6 +463,15 @@ export default function RedesignApp() {
           preselections={preselections}
           onClose={() => setEditClip(null)}
           onApply={(params) => { reprocessClip(editClip.idx, editClip.clip, params); setEditClip(null); }} />
+      )}
+      {bulkEdit && bulkEdit.targets.length > 0 && (
+        <EditClipModal clip={bulkEdit.targets[0].c} idx={bulkEdit.targets[0].i} jobId={jobId}
+          bulk targetCount={bulkEdit.targets.length}
+          initial={clipStates[bulkEdit.targets[0].i]}
+          appliedMode={clipStates[bulkEdit.targets[0].i]?.reframeMode || bulkEdit.targets[0].c.reframe_mode || 'auto'}
+          preselections={preselections}
+          onClose={() => setBulkEdit(null)}
+          onApply={(params) => { applyBulkEdit(params, bulkEdit.targets); setBulkEdit(null); }} />
       )}
       {showKeyModal && <ApiKeyModal onClose={() => setShowKeyModal(false)} onGoToSettings={() => { setShowKeyModal(false); setTab('settings'); }} />}
 

@@ -83,17 +83,18 @@ export const SUBTITLE_PRESETS = [
 ];
 
 // Instagram-Stories-style hook text defaults. Keys match the backend
-// create_hook_image `style` dict (domain/hooks.py:HOOK_STYLE_DEFAULTS). The
-// default reproduces the legacy white-banner / black-text look so existing
-// hooks render unchanged until the user customises them.
+// create_hook_image `style` dict (domain/hooks.py:HOOK_STYLE_DEFAULTS).
+// Default look = bannerless white Anton with a thin black outline (the
+// bannerless path also auto-adds a soft drop shadow for legibility). Users can
+// still re-enable the banner / pick any colour or font per clip.
 export const HOOK_STYLE_DEFAULT = {
-  bg_enabled: true,
+  bg_enabled: false,
   bg_color: '#FFFFFF',
   bg_opacity: 0.94,
-  text_color: '#000000',
-  outline_width: 0,
+  text_color: '#FFFFFF',
+  outline_width: 4,
   outline_color: '#000000',
-  font: '',
+  font: 'Anton-Regular',
 };
 // Outline thickness presets → px stroke width.
 export const HOOK_OUTLINE = [['0', 'None'], ['4', 'Thin'], ['8', 'Thick']];

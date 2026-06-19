@@ -17,12 +17,14 @@ def test_hex_to_rgba_bad_falls_back():
     assert _hex_to_rgba(None, 255, default=(9, 9, 9)) == (9, 9, 9, 255)
 
 
-def test_hook_style_defaults_reproduce_legacy_look():
-    # White banner, black text, no outline → the legacy box.
-    assert HOOK_STYLE_DEFAULTS["bg_enabled"] is True
-    assert HOOK_STYLE_DEFAULTS["bg_color"] == "#FFFFFF"
-    assert HOOK_STYLE_DEFAULTS["text_color"] == "#000000"
-    assert HOOK_STYLE_DEFAULTS["outline_width"] == 0
+def test_hook_style_defaults_match_frontend():
+    # Bannerless white Anton with a thin black outline — kept in sync with the
+    # frontend HOOK_STYLE_DEFAULT (dashboard/src/redesign/data.js).
+    assert HOOK_STYLE_DEFAULTS["bg_enabled"] is False
+    assert HOOK_STYLE_DEFAULTS["text_color"] == "#FFFFFF"
+    assert HOOK_STYLE_DEFAULTS["outline_width"] == 4
+    assert HOOK_STYLE_DEFAULTS["outline_color"] == "#000000"
+    assert HOOK_STYLE_DEFAULTS["font"] == "Anton-Regular"
 
 
 def test_create_hook_image_styled_renders_png():

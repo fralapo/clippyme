@@ -111,18 +111,20 @@ def _resolve_hook_font_path(font_name):
     return FONT_PATH
 
 
-# Instagram-Stories-style defaults: a white rounded banner with black text
-# (reproduces the legacy look so existing hooks render identically when no
-# style is supplied).
+# Instagram-Stories-style defaults: bannerless white Anton with a thin black
+# outline (the bannerless path auto-adds a soft drop shadow for legibility).
+# Kept in sync with the frontend HOOK_STYLE_DEFAULT (redesign/data.js) so that
+# any path sending partial/no style (legacy clips, restored history jobs)
+# renders the same look the live preview shows.
 HOOK_STYLE_DEFAULTS = {
-    "text_color": "#000000",
-    "bg_enabled": True,
+    "text_color": "#FFFFFF",
+    "bg_enabled": False,
     "bg_color": "#FFFFFF",
     "bg_opacity": 0.94,
     "corner_radius": 20,
     "outline_color": "#000000",
-    "outline_width": 0,
-    "font": None,            # None → bundled NotoSerif-Bold
+    "outline_width": 4,
+    "font": "Anton-Regular",
     "shadow": None,          # None → auto (shadow only when no banner)
 }
 

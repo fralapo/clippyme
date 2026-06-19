@@ -7,7 +7,7 @@ import { clipPreviewSrc, fmtDuration, downloadClip, exportClip } from './realApi
 const REFRAME_ICON = { auto: 'crop', object: 'layers', disabled: 'square' };
 const REFRAME_LABEL = { auto: 'Auto', object: 'Object', disabled: 'Off' };
 
-function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, selectMode, onPublish, pushToast }) {
+function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, onApplyToAll, selectMode, onPublish, pushToast }) {
   const [downloading, setDownloading] = useState(false);
   const selected = state?.selected !== false;
   const score = Math.round(clip.viral_score || 0);
@@ -65,6 +65,17 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, 
       )}
       <div className="clip-foot">
         <span className="ttl" title={title}>{title}</span>
+        {!selectMode && (
+          <button type="button" className="mini" title="Apply this clip's settings to all clips (not the manual trim)"
+            aria-label="Apply settings to all clips" disabled={processing}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (processing) return;
+              if (window.confirm("Apply this clip's settings (reframe, captions, smart cut, hook, logo) to every other clip? Manual trim and per-clip hook text are not copied. Each clip will reprocess.")) {
+                onApplyToAll(index);
+              }
+            }}><Icon n="copy" /></button>
+        )}
         <button type="button" className="mini" title="Download (applies your edits)" aria-label="Download clip" onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></button>
         <button type="button" className="mini" title="Publish" aria-label="Publish clip" onClick={(e) => { e.stopPropagation(); onPublish({ ...clip, _idx: index }); }}><Icon n="send" /></button>
         <button type="button" className="mini" title="Remove clip from the grid (file stays on disk)" aria-label="Remove clip" onClick={(e) => {
@@ -80,7 +91,7 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, 
 }
 
 export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUpdateClipState,
-  doneIn, onBack, onPublish, onPublishAll, onEdit, embedded, pushToast }) {
+  doneIn, onBack, onPublish, onPublishAll, onEdit, onApplyToAll, onEditSelected, embedded, pushToast }) {
   const [selectMode, setSelectMode] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -88,6 +99,8 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
   const selectedIdx = visible.filter(({ i }) => clipStates[i]?.selected !== false).map(({ i }) => i);
   const topScore = clips.length ? Math.max(...clips.map((c) => Math.round(c.viral_score || 0))) : 0;
 
+  const allSelected = visible.length > 0 && selectedIdx.length === visible.length;
+  const setSelectedAll = (sel) => visible.forEach(({ i }) => onUpdateClipState(i, { selected: sel }));
   const publishMany = (list) => onPublishAll(list.map(({ c, i }) => ({ ...c, _idx: i })));
   // Bulk export composes each clip (applying its toggles) just like the single
   // download, sequentially so we don't spawn N ffmpeg jobs at once.
@@ -111,7 +124,15 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
         <h2>{visible.length} clips ready</h2>
         {doneIn && <Badge tone="teal" icon="check">done in {doneIn}</Badge>}
         <div className="rh-right">
-          <Btn variant="secondary" size="sm" icon={selectMode ? 'x' : 'check-square'} onClick={() => setSelectMode((v) => !v)}>
+          <Btn variant="secondary" size="sm" icon={selectMode ? 'x' : 'check-square'}
+            onClick={() => setSelectMode((v) => {
+              // Entering select-mode: start with NOTHING selected so a bulk
+              // Edit/Publish/Export only ever touches clips the user explicitly
+              // ticks (the `selected !== false` default would otherwise pre-tick
+              // every clip → one click reprocesses the whole batch).
+              if (!v) visible.forEach(({ i }) => onUpdateClipState(i, { selected: false }));
+              return !v;
+            })}>
             {selectMode ? 'Cancel' : 'Select'}
           </Btn>
           {!selectMode && <Btn variant="secondary" size="sm" icon={exporting ? 'loader' : 'download'} disabled={exporting} onClick={() => exportMany(visible)}>{exporting ? 'Exporting…' : 'Export all'}</Btn>}
@@ -123,7 +144,12 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
       {selectMode && (
         <div className="actionbar">
           <span className="sel-n">{selectedIdx.length} selected</span>
+          <Btn variant="ghost" size="sm" icon="check-check" onClick={() => setSelectedAll(!allSelected)}>
+            {allSelected ? 'Deselect all' : 'Select all'}
+          </Btn>
           <div className="ab-right">
+            <Btn variant="secondary" size="sm" icon="sliders-horizontal" disabled={!selectedIdx.length}
+              onClick={() => onEditSelected(visible.filter(({ i }) => clipStates[i]?.selected !== false))}>Edit {selectedIdx.length || ''}</Btn>
             <Btn variant="secondary" size="sm" icon={exporting ? 'loader' : 'download'} disabled={!selectedIdx.length || exporting}
               onClick={() => exportMany(visible.filter(({ i }) => clipStates[i]?.selected !== false))}>{exporting ? 'Exporting…' : 'Export'}</Btn>
             <Btn variant="grad" size="sm" icon="send" disabled={!selectedIdx.length}
@@ -136,7 +162,7 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
         {visible.map(({ c, i }) => (
           <ClipCard key={c.original_index ?? i} clip={c} index={i} jobId={jobId}
             state={clipStates[i]} preselections={preselections} onUpdate={onUpdateClipState} selectMode={selectMode}
-            onPublish={onPublish} onEdit={onEdit} pushToast={pushToast} />
+            onPublish={onPublish} onEdit={onEdit} onApplyToAll={onApplyToAll} pushToast={pushToast} />
         ))}
       </div>
     </div>
