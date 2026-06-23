@@ -14,7 +14,12 @@ export function seedToggles(preselections) {
         hook: !!preselections?.hook,
         subtitles: !!preselections?.subtitles,
         logo: !!preselections?.logo,
+        grade: !!(preselections?.grade && preselections.grade.preset && preselections.grade.preset !== 'none'),
     };
+}
+
+export function seedGradeParams(preselections) {
+    return { preset: preselections?.grade?.preset || 'none' };
 }
 
 export function seedLogoParams(preselections) {

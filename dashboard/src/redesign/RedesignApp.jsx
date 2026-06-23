@@ -22,6 +22,7 @@ import { useJobSubmission } from '../hooks/useJobSubmission';
 import { useJobPolling } from '../hooks/useJobPolling';
 import { useHistory } from '../hooks/useHistory';
 import { useClipStates } from '../hooks/useClipStates';
+import { recordTasteEvent } from '../lib/taste';
 import { useBackendStatus } from '../hooks/useBackendStatus';
 import { useSessionPersistence } from '../hooks/useSessionPersistence';
 
@@ -32,7 +33,7 @@ const DEFAULT_OPTS = {
   subtitles: true, subMode: 'karaoke', subPreset: 'hormozi_bold', subPosition: 'center',
   subFont: 'Montserrat-Black', subColor: '#FFFFFF',
   hooks: true, hookPos: 'top', hookSize: 'M', hookStyle: { ...HOOK_STYLE_DEFAULT },
-  logo: false, logoPos: 'top-right', logoSize: 'M',
+  logo: false, logoPos: 'top-right', logoSize: 'M', gradePreset: 'none',
   language: 'multi',
   platforms: { tiktok: true, ig: true, yt: false },
   preset: 'viral',
@@ -110,6 +111,21 @@ export default function RedesignApp() {
   const { cookiesConfigured, setCookiesConfigured } = useBackendStatus();
   const { states: clipStates, updateClip: updateClipState } = useClipStates(jobId);
 
+  // Cross-job taste memory (#8): record a kept/discarded signal as the user
+  // publishes or removes clips, then wrap updateClipState so every call site
+  // feeds the taste profile without extra plumbing.
+  const updateClipStateT = (idx, patch) => {
+    try {
+      const c = clips?.[idx];
+      if (c && patch) {
+        const metrics = { viralScore: c.viral_score, duration: (c.end || 0) - (c.start || 0) };
+        if (patch.deleted === true) recordTasteEvent({ ...metrics, action: 'discarded' });
+        if (patch.publishedAt) recordTasteEvent({ ...metrics, action: 'kept' });
+      }
+    } catch { /* taste memory is best-effort */ }
+    updateClipState(idx, patch);
+  };
+
   useEffect(() => { if (apiKey) localStorage.setItem('gemini_key', apiKey); }, [apiKey]);
   // Refresh the on-disk job set whenever the History tab opens, so a job whose
   // files were removed (rebuild/cleanup) shows as unavailable rather than
@@ -133,13 +149,13 @@ export default function RedesignApp() {
   // `processing` flag drives the per-card spinner; each clip is an independent
   // async chain → several can render concurrently.
   const reprocessClip = useCallback(async (idx, clip, params) => {
-    const { reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams, dropRanges } = params;
+    const { reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams, gradeParams, dropRanges } = params;
     const reframeChanged = reframeMode !== baseMode;
-    const anyCompose = !!(toggles.smartcut || toggles.subtitles || toggles.hook || toggles.logo);
+    const anyCompose = !!(toggles.smartcut || toggles.subtitles || toggles.hook || toggles.logo || toggles.grade);
 
     // Persist the user's choices + flip the card into its processing state up
     // front (so the badge/preview already reflect the new reframe mode).
-    updateClipState(idx, { reframeMode, toggles, subtitleParams, hookParams, logoParams, dropRanges,
+    updateClipState(idx, { reframeMode, toggles, subtitleParams, hookParams, logoParams, gradeParams, dropRanges,
       processing: reframeChanged || anyCompose });
 
     if (!reframeChanged && !anyCompose) {
@@ -162,6 +178,7 @@ export default function RedesignApp() {
           hook_params: toggles.hook ? hookParams : {},
           subtitle_params: toggles.subtitles ? subtitleParams : {},
           logo_params: toggles.logo ? logoParams : {},
+          grade_params: toggles.grade ? gradeParams : {},
           drop_ranges: toggles.smartcut ? (dropRanges || []) : [],
         });
         updateClipState(idx, { previewUrl: composed_url, previewBust: Date.now(), processing: false });
@@ -399,6 +416,7 @@ export default function RedesignApp() {
       subtitleParams: params.subtitleParams,
       hookParams: params.hookParams,
       logoParams: params.logoParams,
+      gradeParams: params.gradeParams,
     };
     const plan = buildBulkPlan(srcParams, targets, clipStates);
     if (!plan.length) return;
@@ -423,7 +441,7 @@ export default function RedesignApp() {
       )}
       {tab === 'create' && status === 'complete' && (
         <ResultsView clips={clips} jobId={jobId} preselections={preselections}
-          clipStates={clipStates} onUpdateClipState={updateClipState} onBack={resetToCreate}
+          clipStates={clipStates} onUpdateClipState={updateClipStateT} onBack={resetToCreate}
           onPublish={openPublish} onPublishAll={openPublish} onEdit={(c, i) => setEditClip({ clip: c, idx: i })}
           onApplyToAll={applyClipToAll} onEditSelected={(targets) => setBulkEdit({ targets })}
           pushToast={pushToast} />
@@ -441,7 +459,7 @@ export default function RedesignApp() {
             <Btn variant="secondary" size="sm" icon="arrow-left" onClick={() => setViewingHistory(false)}>Back to history</Btn>
           </div>
           <ResultsView clips={clips} jobId={jobId} preselections={preselections} embedded
-            clipStates={clipStates} onUpdateClipState={updateClipState}
+            clipStates={clipStates} onUpdateClipState={updateClipStateT}
             onPublish={openPublish} onPublishAll={openPublish} onEdit={(c, i) => setEditClip({ clip: c, idx: i })}
             onApplyToAll={applyClipToAll} onEditSelected={(targets) => setBulkEdit({ targets })}
             pushToast={pushToast} />
@@ -453,7 +471,7 @@ export default function RedesignApp() {
       {publishClips && (
         <PublishModal clips={publishClips} jobId={jobId} clipStates={clipStates} preselections={preselections}
           onClose={() => setPublishClips(null)}
-          onPublished={(idx) => updateClipState(idx, { publishedAt: Date.now() })}
+          onPublished={(idx) => updateClipStateT(idx, { publishedAt: Date.now() })}
           pushToast={pushToast} />
       )}
       {editClip && (

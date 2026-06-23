@@ -46,6 +46,7 @@ from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
     ConfigUpdateRequest,
+    EditAIRequest,
     ProcessRequest,
     PublishRequest,
     ReframeRequest,
@@ -963,6 +964,53 @@ async def clip_transcript(job_id: str, clip_index: int, request: Request):
     }
 
 
+@app.post("/api/edit-ai/{job_id}/{clip_index}")
+async def edit_clip_ai(
+    job_id: str,
+    clip_index: int,
+    req: EditAIRequest,
+    request: Request,
+    api_key: Optional[str] = Header(None, alias="X-Gemini-Key"),
+):
+    """Conversational clip trim: a plain-English instruction → Gemini → the
+    clip-relative spans to remove. The returned `drop_ranges` feed the SAME
+    manual-trim machinery as the tap-to-cut UI (compose / publish honour them)."""
+    require_trusted_config_request(request)
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    try:
+        _meta_path, data = load_job_metadata(job_id, OUTPUT_DIR)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+    clips = data.get("shorts", [])
+    if clip_index < 0 or clip_index >= len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+    clip = clips[clip_index]
+    start, end = clip.get("start", 0), clip.get("end", 0)
+    duration = round(max(0.0, end - start), 3)
+
+    transcript = data.get("transcript") or {}
+    from clippyme.domain.smartcut import clip_transcript_segments
+    segments = clip_transcript_segments(transcript, start, end)
+
+    cfg = load_persistent_config() or {}
+    key = api_key or os.environ.get("GEMINI_API_KEY") or cfg.get("GEMINI_API_KEY")
+    model = req.model or cfg.get("GEMINI_MODEL") or "gemini-3.5-flash"
+    if not key:
+        raise HTTPException(status_code=400, detail="Gemini API key not configured")
+
+    from clippyme.domain.clip_edit_ai import suggest_drops
+    result = await asyncio.to_thread(
+        suggest_drops,
+        api_key=key,
+        model=model,
+        segments=segments,
+        instruction=req.instruction,
+        clip_duration=duration,
+    )
+    return {"drop_ranges": result["drops"], "explanation": result["explanation"]}
+
+
 @app.post("/api/reframe/{job_id}/{clip_index}")
 async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, request: Request):
     """Switch a clip between reframe modes (auto / object / disabled) after generation.
@@ -1193,6 +1241,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, reques
             hook_params=req.hook_params,
             subtitle_params=req.subtitle_params,
             logo_params=req.logo_params,
+            grade_params=req.grade_params,
             drop_ranges=req.drop_ranges,
         )
         return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
@@ -1308,6 +1357,7 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
                 hook_params=req.hook_params or {},
                 subtitle_params=req.subtitle_params or {},
                 logo_params=req.logo_params or {},
+                grade_params=req.grade_params or {},
                 drop_ranges=req.drop_ranges,
             )
             upload_path = os.path.join(job_dir, composed_filename)

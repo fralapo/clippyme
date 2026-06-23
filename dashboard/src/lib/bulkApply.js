@@ -31,6 +31,7 @@ export function clipStateToParams(state, preselections, clip) {
     subtitleParams: state?.subtitleParams || seedSubtitleParams(preselections),
     hookParams: state?.hookParams || seedHookParams(clip, preselections),
     logoParams: state?.logoParams || seedLogoParams(preselections),
+    gradeParams: state?.gradeParams || { preset: preselections?.grade?.preset || 'none' },
   };
 }
 
@@ -67,6 +68,7 @@ export function buildClipParams(srcParams, targetClip, targetState) {
     // Copy the hook STYLE but keep this clip's own text.
     hookParams: { ...srcParams.hookParams, text: targetHookText(srcParams, targetClip, targetState) },
     logoParams: { ...srcParams.logoParams },
+    gradeParams: { ...(srcParams.gradeParams || { preset: 'none' }) },
     // Manual trim is never propagated.
     dropRanges: [],
   };

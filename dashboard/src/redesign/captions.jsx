@@ -16,9 +16,9 @@
 // logo — is applied across the selected clips (see lib/bulkApply.js).
 import { useState, useEffect } from 'react';
 import { Icon, Btn, Segmented, Switch } from './primitives';
-import { SUBTITLE_PRESETS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, HOOK_STYLE_DEFAULT } from './data';
+import { SUBTITLE_PRESETS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, GRADE_PRESETS, HOOK_STYLE_DEFAULT } from './data';
 import { useModalA11y } from './useModalA11y';
-import { clipPreviewSrc, getClipTranscript } from './realApi';
+import { clipPreviewSrc, getClipTranscript, editClipAI } from './realApi';
 import { useFontList } from '../hooks/useFontList';
 import { HookStyleControls, HookPreview } from './hookStyle';
 import { seedSubtitleParams, seedHookParams, seedLogoParams } from '../lib/seedClipParams';
@@ -74,6 +74,9 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const lp0 = initial?.logoParams || seedLogoParams(preselections);
   const [logoPos, setLogoPos] = useState(lp0.position || 'top-right');
   const [logoSize, setLogoSize] = useState(lp0.size || 'M');
+  // Colour grade (video-use-style). Preset 'none' = grade layer off.
+  const gp0 = initial?.gradeParams || { preset: preselections?.grade?.preset || 'none' };
+  const [gradePreset, setGradePreset] = useState(gp0.preset || 'none');
   const fonts = useFontList();
 
   const [mode, setMode] = useState(sp.mode || preSubs.mode || 'karaoke');
@@ -116,6 +119,38 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
     return next;
   });
 
+  // Conversational trim: ask Gemini which spans to cut, then mark every segment
+  // overlapping a returned span as dropped (reuses the tap-to-cut state).
+  const [aiText, setAiText] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiMsg, setAiMsg] = useState('');
+  const askAITrim = async () => {
+    const instr = aiText.trim();
+    if (!instr || aiBusy || !jobId) return;
+    setAiBusy(true); setAiMsg('');
+    try {
+      const { drop_ranges = [], explanation = '' } = await editClipAI(jobId, idx, instr);
+      const segs = segments || [];
+      const hit = new Set();
+      for (const [ds, de] of drop_ranges) {
+        for (const s of segs) {
+          // overlap test between [s.start,s.end] and [ds,de]
+          if (s.start < de && s.end > ds) hit.add(s.index);
+        }
+      }
+      if (hit.size) {
+        setDropped((prev) => new Set([...prev, ...hit]));
+        setAiMsg(explanation || `Cut ${hit.size} segment${hit.size === 1 ? '' : 's'}.`);
+      } else {
+        setAiMsg(explanation || 'Nothing to cut for that instruction.');
+      }
+    } catch (e) {
+      setAiMsg(e.message || 'AI trim failed.');
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
   // Dropped segment indices → merged [start, end] spans for the backend. Never
   // in bulk (per-clip content).
   const dropRanges = bulk ? [] : (segments || [])
@@ -132,13 +167,15 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
     { id: 'smartcut', label: 'Smart Cut', icon: 'scissors' },
     !bulk && { id: 'trim', label: 'Trim', icon: 'baseline' },
     { id: 'logo', label: 'Logo', icon: 'stamp' },
+    { id: 'grade', label: 'Grade', icon: 'palette' },
   ].filter(Boolean);
 
+  const gradeOn = gradePreset && gradePreset !== 'none';
   const reframeChanged = reframeMode !== baseMode;
   // Manual trim must run the Smart Cut compose stage (drop_ranges only apply
   // inside _apply_smartcut backend-side), so dropping text implies smartcut.
   const effSmartcut = smartcut || hasDrops;
-  const anyCompose = effSmartcut || subsOn || hookOn || logoOn;
+  const anyCompose = effSmartcut || subsOn || hookOn || logoOn || gradeOn;
   const willReprocess = reframeChanged || anyCompose;
 
   // Non-blocking apply: seed the full param shape the compose backend expects,
@@ -155,8 +192,9 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
             bg_opacity: cBg ? 0.6 : 0, bg_color: '#000000' }) };
     const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), ...hookStyle, text: hookText };
     const logoParams = { position: logoPos, size: logoSize };
-    const toggles = { smartcut: effSmartcut, subtitles: subsOn, hook: hookOn, logo: logoOn };
-    onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams,
+    const gradeParams = { preset: gradePreset };
+    const toggles = { smartcut: effSmartcut, subtitles: subsOn, hook: hookOn, logo: logoOn, grade: gradeOn };
+    onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams, gradeParams,
       dropRanges: effSmartcut ? dropRanges : [] });
   };
 
@@ -223,8 +261,20 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                   {hasDrops && <span className="eo-d">{dropRanges.length} dropped</span>}
                 </span>
                 <div className="eo-d" style={{ marginBottom: 8 }}>
-                  Tap any line to cut it. Trimming also runs Smart Cut&apos;s auto silence pass.
+                  Tap any line to cut it, or describe the edit below. Trimming also runs Smart Cut&apos;s auto silence pass.
                 </div>
+                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <input className="input-field" style={{ flex: 1 }}
+                    placeholder="e.g. cut the intro and the part where he stumbles"
+                    value={aiText} onChange={(e) => setAiText(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') askAITrim(); }}
+                    disabled={aiBusy || !segments || segments.length === 0} />
+                  <Btn onClick={askAITrim} disabled={aiBusy || !aiText.trim() || !segments || segments.length === 0}>
+                    <Icon n={aiBusy ? 'loader' : 'wand-sparkles'} style={{ width: 14, height: 14 }} />
+                    {aiBusy ? 'Thinking…' : 'AI trim'}
+                  </Btn>
+                </div>
+                {aiMsg && <div className="eo-d" style={{ marginBottom: 8 }}>{aiMsg}</div>}
                 {segments === null && !segErr && <div className="eo-d">Loading transcript…</div>}
                 {segErr && <div className="eo-d">Transcript unavailable — auto Smart Cut still applies.</div>}
                 {segments && segments.length === 0 && <div className="eo-d">No transcript segments for this clip.</div>}
@@ -385,6 +435,25 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                       <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Size</span>
                       <Segmented full value={logoSize} onChange={setLogoSize}
                         options={LOGO_SIZES.map(([v, l]) => ({ id: v, label: l }))} />
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {tab === 'grade' && (
+              <>
+                <div className="edit-opt">
+                  <div className="eo-ico"><Icon n="palette" /></div>
+                  <div className="eo-txt"><div className="eo-t">Colour grade</div><div className="eo-d">Cinematic colour pass burned before overlays</div></div>
+                  <Switch on={gradeOn} onChange={(on) => setGradePreset(on ? 'warm_cinematic' : 'none')} />
+                </div>
+                {gradeOn && (
+                  <div className="cfg-drawer fade-in">
+                    <div className="cf-row" style={{ marginBottom: 0 }}>
+                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Look</span>
+                      <Segmented full value={gradePreset} onChange={setGradePreset}
+                        options={GRADE_PRESETS} />
                     </div>
                   </div>
                 )}

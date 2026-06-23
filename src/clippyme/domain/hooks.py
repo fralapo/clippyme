@@ -126,6 +126,7 @@ HOOK_STYLE_DEFAULTS = {
     "outline_width": 4,
     "font": "Anton-Regular",
     "shadow": None,          # None → auto (shadow only when no banner)
+    "animate": False,        # True → fade+slide-up entrance (build_hook_overlay_filter)
 }
 
 
@@ -277,6 +278,32 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png",
     return output_image_path, canvas_w, canvas_h
 
 
+def build_hook_overlay_filter(x, y0, animate=False, dur=0.4, slide_px=40):
+    """Build the ffmpeg `-filter_complex` graph that overlays the hook PNG
+    (input [1:v]) onto the video ([0:v]) at (x, y0).
+
+    Pure (returns a string) so it is host-unit-testable.
+
+    - animate=False → the legacy static overlay, byte-identical to before.
+    - animate=True  → an Instagram-Reels-style entrance: the PNG fades in over
+      `dur` seconds while sliding up `slide_px` px into place with an
+      ease-out-cubic curve (`pow(1-p, 3)` — never linear, video-use rule). The
+      hold frame is the final placed position, so the hook stays visible for
+      the rest of the clip.
+    """
+    x = int(x)
+    y0 = int(y0)
+    if not animate:
+        return f"[0:v][1:v]overlay={x}:{y0}"
+    # offset = slide_px * (1-eased) = slide_px * pow(1-p, 3); commas inside the
+    # expression must be escaped so ffmpeg doesn't read them as filter splits.
+    y_expr = f"{y0}+{int(slide_px)}*pow(1-min(t/{dur}\\,1)\\,3)"
+    return (
+        f"[1:v]format=yuva420p,fade=t=in:st=0:d={dur}:alpha=1[hk];"
+        f"[0:v][hk]overlay={x}:{y_expr}"
+    )
+
+
 def add_hook_to_video(video_path, text, output_path, position="top", font_scale=1.0,
                       offset_y=0, style=None):
     """
@@ -318,11 +345,14 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
         overlay_y += int(video_height * offset_y / 100)
         overlay_y = max(0, min(overlay_y, video_height - box_h))
 
+        animate = bool((style or {}).get("animate", False))
+        filter_complex = build_hook_overlay_filter(overlay_x, overlay_y, animate=animate)
+
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-i", video_path,
             "-i", img_path,
-            "-filter_complex", f"[0:v][1:v]overlay={overlay_x}:{overlay_y}",
+            "-filter_complex", filter_complex,
             "-c:a", "copy",
             "-c:v", "libx264", "-preset", "fast", "-crf", "22",
             output_path,

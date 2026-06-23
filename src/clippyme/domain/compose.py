@@ -5,9 +5,11 @@ composition logic; the FastAPI endpoint stays a thin wrapper that handles
 validation, path resolution and HTTP error mapping.
 """
 import asyncio
+import json
 import logging
 import os
 import shutil
+import subprocess
 
 from clippyme.domain.errors import ValidationError
 
@@ -53,6 +55,79 @@ async def _apply_logo(
         margin,
     )
     return logo_output
+
+
+async def _apply_grade(
+    current_input: str,
+    job_dir: str,
+    clip_index: int,
+    grade_params: dict,
+    intermediate_files: list,
+) -> str:
+    """Apply an optional colour grade. Runs FIRST (before subtitles) so overlay
+    colours are not shifted by the grade. Silently keeps the input if the
+    preset is none/unknown or ffmpeg fails."""
+    from clippyme.domain.grade import apply_grade_async, DEFAULT_GRADE
+
+    preset = (grade_params or {}).get("preset", DEFAULT_GRADE)
+    grade_output = os.path.join(job_dir, f"composed_grade_{clip_index}.mp4")
+    ok = await apply_grade_async(current_input, grade_output, preset)
+    if not ok:
+        return current_input
+    intermediate_files.append(grade_output)
+    return grade_output
+
+
+def _probe_qa(path: str) -> tuple:
+    """(duration_seconds | None, has_audio, size_bytes | None) via ffprobe.
+    Best-effort: any failure returns (None, True, size) so QA never blocks."""
+    size = os.path.getsize(path) if os.path.exists(path) else None
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_format", "-show_streams", path],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=30,
+        )
+        info = json.loads(proc.stdout or b"{}")
+        dur = info.get("format", {}).get("duration")
+        dur = float(dur) if dur is not None else None
+        has_audio = any(
+            s.get("codec_type") == "audio" for s in info.get("streams", [])
+        )
+        return dur, has_audio, size
+    except Exception:
+        return None, True, size
+
+
+async def _self_eval(
+    composed_path: str, clip_info: dict, smartcut_applied: bool, clip_index: int,
+) -> None:
+    """video-use step 7 / superpowers verification: probe the rendered output and
+    log any QA issues. Never raises — a QA miss surfaces a warning, not a 500."""
+    from clippyme.domain.clip_qa import evaluate_clip_qa
+
+    try:
+        dur, has_audio, size = await asyncio.to_thread(_probe_qa, composed_path)
+        try:
+            expected = float(clip_info.get("end", 0)) - float(clip_info.get("start", 0))
+        except (TypeError, ValueError):
+            expected = None
+        report = evaluate_clip_qa(
+            actual_duration=dur,
+            expected_duration=expected if expected and expected > 0 else None,
+            has_audio=has_audio,
+            size_bytes=size,
+            smartcut_applied=smartcut_applied,
+        )
+        if report["ok"]:
+            logger.info("self_eval: clip_index=%d ✓ output looks sane", clip_index)
+        else:
+            logger.warning(
+                "self_eval: clip_index=%d ⚠️ QA issues: %s",
+                clip_index, "; ".join(report["issues"]),
+            )
+    except Exception as e:  # pragma: no cover — QA must never break compose
+        logger.debug("self_eval skipped (probe error): %s", e)
 
 
 async def _apply_smartcut(
@@ -106,7 +181,8 @@ async def _apply_hook(
     # Instagram-Stories-style text customisation. Only forward keys the user
     # actually set so create_hook_image's defaults fill the rest.
     _style_keys = ("text_color", "bg_enabled", "bg_color", "bg_opacity",
-                   "corner_radius", "outline_color", "outline_width", "font", "shadow")
+                   "corner_radius", "outline_color", "outline_width", "font", "shadow",
+                   "animate")
     style = {k: hook_params[k] for k in _style_keys if k in hook_params}
     await asyncio.to_thread(
         add_hook_to_video,
@@ -239,6 +315,7 @@ async def compose_layers(
     hook_params: dict,
     subtitle_params: dict,
     logo_params: dict = None,
+    grade_params: dict = None,
     drop_ranges=None,
 ) -> str:
     """Run the active layer pipeline. Returns the final composed filename (basename).
@@ -285,7 +362,11 @@ async def compose_layers(
         # fast speakers, where Smart Cut removes many micro-gaps and the
         # error snowballs over the clip.
         #
-        # Correct order: SUBTITLES → SMART CUT → HOOK.
+        # Correct order: GRADE → SUBTITLES → SMART CUT → HOOK → LOGO.
+        #
+        # Grade runs FIRST so the colour transform applies only to the source
+        # frames — burning it before subtitles/hook/logo means those overlays
+        # keep their exact authored colours instead of being tinted too.
         #
         # Step 1 burns the subs into the raw frames with perfect timing
         # (since the base clip still has the original length). Step 2
@@ -294,6 +375,13 @@ async def compose_layers(
         # stay locked to the audio, no drift regardless of speech speed.
         # Step 3 overlays the static Hook on top of everything so it
         # remains visible for every surviving frame.
+        if active.get("grade"):
+            current_input = await _apply_grade(
+                current_input, job_dir, clip_index, grade_params, intermediate_files,
+            )
+            layers_applied.append("grade")
+            logger.info("compose_layers: ✓ grade → %s", os.path.basename(current_input))
+
         if active.get("subtitles"):
             current_input = await _apply_subtitles(
                 current_input,
@@ -357,6 +445,11 @@ async def compose_layers(
         logger.info(
             "compose_layers: ✅ final = %s (applied=%s)",
             os.path.basename(composed_path), layers_applied or ["<none>"],
+        )
+        # video-use step 7 / superpowers verification — probe the rendered
+        # output and log any QA issues before handing it back. Soft check.
+        await _self_eval(
+            composed_path, clip_info, "smartcut" in layers_applied, clip_index,
         )
         _cleanup_intermediates(intermediate_files, composed_path)
         return composed_filename

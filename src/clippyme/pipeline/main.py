@@ -933,8 +933,25 @@ if __name__ == '__main__':
             # render so the dashboard can render the correct per-clip state
             # without guessing (the /api/reframe endpoint updates this
             # field in place when the user flips the mode later on).
+            # video-use Hard Rules 6+7: snap each Gemini-picked [start, end] to
+            # the nearest transcript WORD boundary and pad the edges, so a clip
+            # never opens/closes mid-word and ASR drift (50-100ms) can't clip the
+            # first/last word. Done BEFORE the metadata write so subtitles / Smart
+            # Cut (which key off clip.start/end) stay aligned with the render.
+            # No-op when the transcript carries no word-level timing.
+            from clippyme.pipeline.cut_ops import flatten_words, snap_clip_to_words
+            _words = flatten_words(transcript)
             for _clip_entry in clips_data.get('shorts', []):
                 _clip_entry.setdefault('reframe_mode', args.reframe_mode)
+                if _words and 'start' in _clip_entry and 'end' in _clip_entry:
+                    _rs, _re = _clip_entry['start'], _clip_entry['end']
+                    _ss, _se = snap_clip_to_words(
+                        _rs, _re, _words, source_duration=duration or None,
+                    )
+                    if (_ss, _se) != (_rs, _re):
+                        print(f"   🎯 word-snap: [{_rs:.2f},{_re:.2f}] → [{_ss:.2f},{_se:.2f}]")
+                        _clip_entry['start'] = _ss
+                        _clip_entry['end'] = _se
             # Persist the job's output aspect so the post-hoc /api/reframe
             # endpoint can re-render at the SAME ratio. Without this it defaults
             # to 9:16 and silently squashes a 1:1/16:9 job when the user flips

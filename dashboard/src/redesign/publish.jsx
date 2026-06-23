@@ -100,6 +100,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     const hookParams = cs.hookParams ?? seedHookParams(clip, preselections);
     const subtitleParams = cs.subtitleParams ?? seedSubtitleParams(preselections);
     const logoParams = cs.logoParams ?? seedLogoParams(preselections);
+    const gradeParams = cs.gradeParams ?? { preset: preselections?.grade?.preset || 'none' };
     const title = (clip.video_title_for_youtube_short || `Clip ${idx + 1}`).slice(0, 100);
     return {
       title,
@@ -112,7 +113,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
         privacy_level: 'PUBLIC_TO_EVERYONE', allow_comment: true, allow_duet: true,
         allow_stitch: true, content_preview_confirmed: true, express_consent_given: true,
       } : undefined,
-      ...(any ? { compose_first: true, toggles, hook_params: toggles.hook ? hookParams : {}, subtitle_params: toggles.subtitles ? subtitleParams : {}, logo_params: toggles.logo ? logoParams : {}, drop_ranges: toggles.smartcut ? (cs.dropRanges || []) : [] } : {}),
+      ...(any ? { compose_first: true, toggles, hook_params: toggles.hook ? hookParams : {}, subtitle_params: toggles.subtitles ? subtitleParams : {}, logo_params: toggles.logo ? logoParams : {}, grade_params: toggles.grade ? gradeParams : {}, drop_ranges: toggles.smartcut ? (cs.dropRanges || []) : [] } : {}),
     };
   };
 

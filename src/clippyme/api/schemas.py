@@ -194,11 +194,12 @@ class ComposeRequest(BaseModel):
     hook_params: dict = {}
     subtitle_params: dict = {}
     logo_params: dict = {}
+    grade_params: dict = {}
     # Manual Smart Cut trim: hand-picked [[start, end], …] spans (clip-relative
     # seconds) removed on top of the automatic filler/silence pass.
     drop_ranges: list = []
 
-    @field_validator("hook_params", "subtitle_params", "logo_params")
+    @field_validator("hook_params", "subtitle_params", "logo_params", "grade_params")
     @classmethod
     def _bound_overlay(cls, v):
         return _validate_overlay_params(v)
@@ -207,6 +208,12 @@ class ComposeRequest(BaseModel):
     @classmethod
     def _bound_drops(cls, v):
         return _validate_drop_ranges(v)
+
+
+class EditAIRequest(BaseModel):
+    """Natural-language clip-trim request — Gemini returns spans to cut."""
+    instruction: str = Field(..., min_length=1, max_length=1000)
+    model: Optional[str] = Field(None, max_length=64)
 
 
 class PublishRequest(BaseModel):
@@ -264,9 +271,10 @@ class PublishRequest(BaseModel):
     hook_params: Optional[dict] = None
     subtitle_params: Optional[dict] = None
     logo_params: Optional[dict] = None
+    grade_params: Optional[dict] = None
     drop_ranges: Optional[list] = None
 
-    @field_validator("hook_params", "subtitle_params", "logo_params")
+    @field_validator("hook_params", "subtitle_params", "logo_params", "grade_params")
     @classmethod
     def _bound_overlay(cls, v):
         return _validate_overlay_params(v)

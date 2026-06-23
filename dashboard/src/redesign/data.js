@@ -73,6 +73,16 @@ export const LOGO_POSITIONS = [
 // Logo size presets → width fraction handled backend-side (_LOGO_SIZE_MAP).
 export const LOGO_SIZES = [['S', 'S'], ['M', 'M'], ['L', 'L']];
 
+// Colour-grade looks — ids MUST match backend GRADE_PRESETS keys
+// (clippyme/domain/grade.py). 'none' is represented by the Grade toggle being
+// off, so it is not offered as a pickable look here.
+export const GRADE_PRESETS = [
+  { id: 'warm_cinematic', label: 'Warm' },
+  { id: 'cool_crisp', label: 'Cool' },
+  { id: 'neutral_punch', label: 'Punch' },
+  { id: 'vivid_pop', label: 'Vivid' },
+];
+
 export const SUBTITLE_PRESETS = [
   { id: 'classic_white', label: 'Classic', hi: '#FFFF00', style: { color: '#fff', fontFamily: 'Verdana, sans-serif', textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000' } },
   { id: 'hormozi_bold', label: 'Hormozi', hi: '#00FF00', style: { color: '#fff', fontFamily: "Impact,'Arial Black',sans-serif", textShadow: '-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000', letterSpacing: '.02em' } },
@@ -95,6 +105,7 @@ export const HOOK_STYLE_DEFAULT = {
   outline_width: 4,
   outline_color: '#000000',
   font: 'Anton-Regular',
+  animate: false,
 };
 // Outline thickness presets → px stroke width.
 export const HOOK_OUTLINE = [['0', 'None'], ['4', 'Thin'], ['8', 'Thick']];

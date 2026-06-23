@@ -1,6 +1,16 @@
 import { useEffect, useRef } from 'react';
 import { submitProcessJob, submitBatchJob } from '../lib/api';
 import { getApiUrl } from '../config';
+import { tasteInstructionSuffix } from '../lib/taste';
+
+// Append the cross-job taste hint (#8) to a job's AI instructions so Gemini
+// biases viral detection toward what the user actually kept in past jobs.
+function withTaste(data) {
+  const hint = tasteInstructionSuffix();
+  if (!hint) return data;
+  const base = (data.instructions || '').trim();
+  return { ...data, instructions: base ? `${base} ${hint}` : hint };
+}
 
 /**
  * Custom hook factory that returns process/batch submission handlers.
@@ -43,7 +53,7 @@ export function useJobSubmission({
     if (data.preselections) setPreselections(data.preselections);
 
     try {
-      const resData = await submitProcessJob(data, apiKey);
+      const resData = await submitProcessJob(withTaste(data), apiKey);
       setJobId(resData.job_id);
     } catch (e) {
       setStatus('error');
@@ -69,7 +79,7 @@ export function useJobSubmission({
 
       // 1. Submit URLs as a single backend batch (if any)
       if (urls.length > 0) {
-        const batchRes = await submitBatchJob({ ...data, urls }, apiKey);
+        const batchRes = await submitBatchJob(withTaste({ ...data, urls }), apiKey);
         allJobIds.push(...batchRes.jobs.map((j) => j.job_id));
         setLogs((l) => [...l, `Submitted ${batchRes.total} URL job(s)`]);
       }
@@ -78,12 +88,12 @@ export function useJobSubmission({
       for (const f of files) {
         try {
           const fileRes = await submitProcessJob(
-            {
+            withTaste({
               type: 'file',
               payload: f,
               instructions: data.instructions,
               preselections: data.preselections,
-            },
+            }),
             apiKey,
           );
           allJobIds.push(fileRes.job_id);

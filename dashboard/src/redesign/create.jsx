@@ -2,7 +2,7 @@
 import { useState, useRef } from 'react';
 import { Icon, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
 import { Hero } from './chrome';
-import { SUBTITLE_PRESETS, LANGUAGES, GEMINI_MODELS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, HOOK_STYLE_DEFAULT } from './data';
+import { SUBTITLE_PRESETS, LANGUAGES, GEMINI_MODELS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, GRADE_PRESETS, HOOK_STYLE_DEFAULT } from './data';
 import { useFontList } from '../hooks/useFontList';
 import { HookStyleControls, HookPreview } from './hookStyle';
 
@@ -360,6 +360,12 @@ function OptionsPanel({ opts, set }) {
       <OptRow icon="stamp" label="Brand logo" desc="Burn your logo onto every clip"
         on={opts.logo} set={(v) => set({ logo: v })} onConfig={() => setLogoCfg(!logoCfg)} configActive={logoCfg} />
       {opts.logo && logoCfg && <LogoConfig opts={opts} set={set} />}
+      <div className="opt">
+        <div className="oico"><Icon n="palette" /></div>
+        <div className="otxt"><div className="ot">Colour grade</div><div className="od">Cinematic colour pass on every clip</div></div>
+        <div className="r"><Segmented value={opts.gradePreset || 'none'} onChange={(id) => set({ gradePreset: id })}
+          options={[{ id: 'none', label: 'Off' }, ...GRADE_PRESETS.map((g) => ({ id: g.id, label: g.label }))]} /></div>
+      </div>
     </Panel>
   );
 }

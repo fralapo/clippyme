@@ -79,6 +79,10 @@ export function HookStyleControls({ style, set }) {
           options={HOOK_OUTLINE.map(([v, l]) => ({ id: v, label: l }))} />
       </div>
       {ow !== '0' && <Swatches label="Outline color" value={s.outline_color} onPick={(c) => set({ outline_color: c })} />}
+      <div className="edit-opt" style={{ padding: '10px 0', border: 0 }}>
+        <div className="eo-txt"><div className="eo-t" style={{ fontSize: 13 }}>Animated entrance</div><div className="eo-d">Fade + slide-up when the hook appears</div></div>
+        <Switch on={!!s.animate} onChange={(v) => set({ animate: v })} />
+      </div>
       <div className="cf-row">
         <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
         <select className="sel" style={{ width: '100%' }} value={s.font || ''} onChange={(e) => set({ font: e.target.value })}>

@@ -75,17 +75,32 @@ export async function stopJob(jobId) {
   return res.json().catch(() => ({}));
 }
 
-export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params, logo_params, drop_ranges }) {
+export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params, logo_params, grade_params, drop_ranges }) {
   const res = await fetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ toggles, hook_params, subtitle_params, logo_params, drop_ranges: drop_ranges || [] }),
+    body: JSON.stringify({ toggles, hook_params, subtitle_params, logo_params, grade_params: grade_params || {}, drop_ranges: drop_ranges || [] }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
   return res.json(); // { composed_url }
+}
+
+// Conversational trim: a plain-English instruction → Gemini → spans to cut
+// (clip-relative seconds). Returns { drop_ranges: [[s,e],...], explanation }.
+export async function editClipAI(jobId, index, instruction, model) {
+  const res = await fetch(getApiUrl(`/api/edit-ai/${jobId}/${index}`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instruction, ...(model ? { model } : {}) }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
 }
 
 // Per-clip transcript segments (clip-relative seconds) for the manual-trim UI.
@@ -106,11 +121,13 @@ export async function exportClip(jobId, index, clip, state, preselections) {
   const hook = state?.hookParams ?? seedHookParams(clip, preselections);
   const subs = state?.subtitleParams ?? seedSubtitleParams(preselections);
   const logo = state?.logoParams ?? seedLogoParams(preselections);
+  const grade = state?.gradeParams ?? { preset: preselections?.grade?.preset || 'none' };
   const { composed_url } = await composeClip(jobId, index, {
     toggles,
     hook_params: toggles.hook ? hook : {},
     subtitle_params: toggles.subtitles ? subs : {},
     logo_params: toggles.logo ? logo : {},
+    grade_params: toggles.grade ? grade : {},
     drop_ranges: toggles.smartcut ? (state?.dropRanges || []) : [],
   });
   const href = safeResolveUrl(composed_url);
@@ -321,6 +338,9 @@ export function optsToPreselections(opts) {
     // Logo overlay is a compose-time layer (not a process-time arg) — persisted
     // here only so each generated clip inherits the toggle + placement default.
     logo: opts.logo ? { position: opts.logoPos || 'top-right', size: opts.logoSize || 'M' } : false,
+    // Colour grade default for every generated clip (compose-time layer). Off
+    // ('none') → omitted so seedToggles leaves the grade toggle off.
+    grade: opts.gradePreset && opts.gradePreset !== 'none' ? { preset: opts.gradePreset } : false,
   };
 }
 

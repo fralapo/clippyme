@@ -29,6 +29,8 @@ import tempfile
 import threading
 from typing import Optional
 
+from clippyme.pipeline.cut_ops import audio_fade_filter
+
 logger = logging.getLogger(__name__)
 
 
@@ -745,15 +747,21 @@ def _render_with_ffmpeg(
         segment_files = []
         for i, (start, end) in enumerate(segments):
             seg_path = os.path.join(temp_dir, f"seg_{i:03d}.mp4")
-            rc, _, _ = _run([
+            # video-use Hard Rule 3: 30ms audio fade in/out at every segment
+            # boundary so the concat doesn't click at each removed-silence edge.
+            seg_cmd = [
                 "ffmpeg", "-y",
                 "-ss", str(start), "-to", str(end),
                 "-i", clip_path,
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-c:a", "aac",
                 "-avoid_negative_ts", "make_zero",
-                seg_path,
-            ])
+            ]
+            fade = audio_fade_filter(float(end) - float(start))
+            if fade:
+                seg_cmd += ["-af", fade]
+            seg_cmd.append(seg_path)
+            rc, _, _ = _run(seg_cmd)
             if rc == 0 and os.path.exists(seg_path):
                 segment_files.append(seg_path)
 
