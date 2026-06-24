@@ -391,6 +391,11 @@ def _post_with_retries(
         # bytes first so a crafted error body can't inject escape sequences or
         # forged log lines when the message is printed to stdout/logs.
         snippet = re.sub(r"[\x00-\x1f\x7f]", " ", (response.text or "")[:400])
+        # Redact the API key in case the upstream echoes the Authorization header
+        # back in the error body — it must never reach a log line or exception.
+        _secret = headers.get("Authorization", "").removeprefix("Token ").strip()
+        if _secret:
+            snippet = snippet.replace(_secret, "***REDACTED***")
         raise DeepgramError(
             f"Deepgram returned HTTP {response.status_code}: {snippet}"
         )

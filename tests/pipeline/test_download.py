@@ -34,10 +34,13 @@ def test_reject_rebound_public_resolution_passes(monkeypatch):
     dl._reject_rebound_internal("http://example.com/x")  # no raise
 
 
-def test_reject_rebound_mixed_public_and_internal_passes(monkeypatch):
-    # Not ALL internal → allowed (only blocks when every address is internal).
+def test_reject_rebound_mixed_public_and_internal_raises(monkeypatch):
+    # ANY internal address → reject. A split-horizon / round-robin host that
+    # returns one public + one loopback/private address must NOT pass: yt-dlp
+    # could otherwise connect to the internal one (SSRF via DNS rebinding).
     monkeypatch.setattr(dl.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34", "10.0.0.1"))
-    dl._reject_rebound_internal("http://example.com/x")  # no raise
+    with pytest.raises(ValueError):
+        dl._reject_rebound_internal("http://example.com/x")
 
 
 def test_reject_rebound_no_host_returns_none():

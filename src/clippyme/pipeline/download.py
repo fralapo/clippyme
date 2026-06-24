@@ -40,11 +40,15 @@ def _reject_rebound_internal(url: str) -> None:
                     addrs.append(ipaddress.ip_address(info[4][0]))
                 except ValueError:
                     continue
-        if addrs and all(
+        if any(
             a.is_private or a.is_loopback or a.is_link_local or a.is_reserved or a.is_unspecified
             for a in addrs
         ):
-            raise ValueError(f"refusing download: {host} resolves only to internal addresses")
+            # Reject if ANY resolved address is internal: a split-horizon /
+            # round-robin host that returns one public + one loopback address
+            # would otherwise pass an all()-check, then yt-dlp could connect to
+            # the internal one (SSRF via DNS).
+            raise ValueError(f"refusing download: {host} resolves to an internal address")
     except ValueError:
         raise
     except Exception:

@@ -3,6 +3,17 @@ import re
 import subprocess
 
 
+def _strip_ass_braces(text: str) -> str:
+    """Remove ASS/libass override-block braces from transcript text.
+
+    A word token like ``{\\pos(0,0)}`` or ``{\\an8}`` (ASR can echo adversarial
+    on-screen/audio text) would otherwise be interpreted as a libass directive
+    when the SRT/ASS file is later rendered via the ``subtitles=``/``ass=``
+    filter. Applies to BOTH the karaoke ASS and the classic SRT paths.
+    """
+    return (text or "").replace('{', '').replace('}', '')
+
+
 _cuda_works = None  # cached after first check
 
 def _check_cuda():
@@ -150,7 +161,7 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
                 # Usually end of last word.
                 block_end = current_block[-1]['end'] - clip_start
                 
-                text = " ".join([w['word'] for w in current_block]).strip()
+                text = " ".join([_strip_ass_braces(w['word']) for w in current_block]).strip()
                 srt_content += format_srt_block(index, block_start, block_end, text)
                 index += 1
                 
@@ -162,7 +173,7 @@ def generate_srt(transcript, clip_start, clip_end, output_path, max_chars=20, ma
     # Final block
     if current_block:
         block_end = current_block[-1]['end'] - clip_start
-        text = " ".join([w['word'] for w in current_block]).strip()
+        text = " ".join([_strip_ass_braces(w['word']) for w in current_block]).strip()
         srt_content += format_srt_block(index, block_start, block_end, text)
         
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -503,11 +514,7 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         karaoke_parts = []
         for w in group:
             duration_cs = max(1, int((w['end'] - w['start']) * 100))
-            text = w['word'].strip()
-            # Strip ASS override-block braces from transcript text so a word
-            # token like "{\pos(0,0)}" can't smuggle libass directives into
-            # the Dialogue event (ASR can echo adversarial on-screen/audio text).
-            text = text.replace('{', '').replace('}', '')
+            text = _strip_ass_braces(w['word'].strip())
             if style["uppercase"]:
                 text = text.upper()
             karaoke_parts.append(f"{{\\k{duration_cs}}}{text}")
@@ -746,7 +753,9 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         output_path
     ]
 
-    print(f"🎬 Burning subtitles: {' '.join(cmd)}")
+    # Don't print the full command: it embeds absolute filesystem paths that
+    # would surface in the job log served by /api/status. Terse line only.
+    print("🎬 Burning subtitles…")
     result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
     if result.returncode != 0:

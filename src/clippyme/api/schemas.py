@@ -213,7 +213,9 @@ class ComposeRequest(BaseModel):
 class EditAIRequest(BaseModel):
     """Natural-language clip-trim request — Gemini returns spans to cut."""
     instruction: str = Field(..., min_length=1, max_length=1000)
-    model: Optional[str] = Field(None, max_length=64)
+    model: Optional[str] = Field(
+        None, max_length=64, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$"
+    )
 
 
 class PublishRequest(BaseModel):

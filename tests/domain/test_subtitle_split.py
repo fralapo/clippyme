@@ -11,7 +11,30 @@ from clippyme.domain.subtitles import (
     _group_words,
     _group_words_by_count,
     _is_connector,
+    _strip_ass_braces,
+    generate_srt,
 )
+
+
+def test_strip_ass_braces_removes_override_blocks():
+    assert _strip_ass_braces("{\\an8}hello") == "\\an8hello"
+    assert _strip_ass_braces("plain") == "plain"
+    assert _strip_ass_braces("") == ""
+    assert _strip_ass_braces(None) == ""
+
+
+def test_generate_srt_strips_libass_override_braces(tmp_path):
+    # ASR-echoed on-screen text with libass override braces must not survive
+    # into the SRT body (it would be interpreted as a directive at render).
+    out = tmp_path / "out.srt"
+    transcript = {"segments": [{"words": [
+        {"word": "{\\an8}top", "start": 0.0, "end": 0.4},
+        {"word": "secret}", "start": 0.4, "end": 0.9},
+    ]}]}
+    generate_srt(transcript, 0.0, 1.0, str(out))
+    body = out.read_text(encoding="utf-8")
+    assert "{" not in body and "}" not in body
+    assert "an8top" in body
 
 
 def _w(word, start, end):

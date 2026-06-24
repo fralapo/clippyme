@@ -230,6 +230,10 @@ class ZernioClient:
                     data=f,
                     headers={"Content-Type": content_type},
                     timeout=UPLOAD_TIMEOUT_SECONDS,
+                    # Don't follow 3xx: the upload URL is validated as non-internal
+                    # ONCE above, but a redirect could bounce the PUT to an internal
+                    # host (cloud metadata / LAN) after the check (SSRF write).
+                    allow_redirects=False,
                 )
             except requests.RequestException as e:
                 raise ZernioError(f"upload network error: {e}") from e

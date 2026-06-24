@@ -36,7 +36,15 @@ def _read_raw_config() -> dict:
 
 def _write_raw_config(data: dict) -> bool:
     try:
-        os.makedirs(DATA_DIR, exist_ok=True)
+        # 0o700 so the secrets dir isn't world-listable: only config.json is
+        # locked to 0o600, but other files dropped here (cookies.txt) inherit
+        # the parent dir's perms, and a 0o755 dir lets other host processes
+        # enumerate the directory. chmod too in case the dir already exists.
+        os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(DATA_DIR, 0o700)
+        except OSError as e:
+            logger.warning("Could not enforce 0o700 on data dir: %s", e)
         # Write with mode 0o600 so the file (which holds Gemini, Deepgram and
         # Zernio API keys) is not world-readable under the default Docker umask.
         fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
