@@ -143,6 +143,7 @@ Runtime env overrides (rarely needed):
 |---|---|---|
 | `TRANSCRIPTION_PROVIDER` | `deepgram` | Or `whisper` to force local. |
 | `CLIPPYME_TRANSCRIBE_AUDIO_ONLY` | `true` | Strip to audio-only FLAC before transcription; `false` sends the full video. |
+| `CLIPPYME_SILENCE_SNAP` | `1` | Refine clip edges to the nearest waveform silence trough (ffmpeg `silencedetect`); `0`/`false` keeps the transcript-derived edges. |
 | `DEEPGRAM_MODEL` | `nova-3` | |
 | `DEEPGRAM_LANGUAGE` | `multi` | |
 | `REFRAME_COMFORT` | `1` | Anti-nausea default (global-smooth + per-scene stationary + zoom lock). `0` = original single-pass tracker. |
