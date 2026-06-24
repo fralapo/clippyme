@@ -110,13 +110,54 @@ def test_fetch_latest_release_tag_strips_v(monkeypatch):
             return False
 
     payload = _Resp(_json.dumps({"tag_name": "v30.5.0"}).encode())
-    monkeypatch.setattr(au.urllib.request, "urlopen", lambda *a, **k: payload)
+    # The API fetch now goes through the no-redirect opener (M2), so patch that.
+    monkeypatch.setattr(au._API_OPENER, "open", lambda *a, **k: payload)
     assert au._fetch_latest_release_tag() == "30.5.0"
+
+
+def test_fetch_latest_release_parses_asset_digests(monkeypatch):
+    import io
+    import json as _json
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    body = {
+        "tag_name": "v30.5.0",
+        "assets": [
+            {"name": "auto-editor-linux-x86_64",
+             "browser_download_url": "https://example.test/dl/ae",
+             "digest": "sha256:abc123"},
+            {"name": "noname-skip"},
+        ],
+    }
+    monkeypatch.setattr(au._API_OPENER, "open", lambda *a, **k: _Resp(_json.dumps(body).encode()))
+    rel = au._fetch_latest_release()
+    assert rel["tag"] == "30.5.0"
+    assert rel["assets"]["auto-editor-linux-x86_64"]["digest"] == "sha256:abc123"
+    assert rel["assets"]["auto-editor-linux-x86_64"]["url"] == "https://example.test/dl/ae"
 
 
 def test_fetch_latest_release_tag_handles_network_failure(monkeypatch):
     def _boom(*a, **k):
         raise OSError("no network")
 
-    monkeypatch.setattr(au.urllib.request, "urlopen", _boom)
+    monkeypatch.setattr(au._API_OPENER, "open", _boom)
     assert au._fetch_latest_release_tag() is None
+
+
+def test_verify_digest_match_mismatch_and_absent(tmp_path):
+    import hashlib
+
+    p = tmp_path / "bin"
+    p.write_bytes(b"\x7fELFpayload")
+    good = "sha256:" + hashlib.sha256(b"\x7fELFpayload").hexdigest()
+    assert au._verify_digest(str(p), good) is True
+    assert au._verify_digest(str(p), "sha256:deadbeef") is False
+    # No digest / unsupported algo → None (caller installs with sanity-only).
+    assert au._verify_digest(str(p), None) is None
+    assert au._verify_digest(str(p), "md5:whatever") is None

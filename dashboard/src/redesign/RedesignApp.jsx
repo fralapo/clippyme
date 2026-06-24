@@ -71,6 +71,13 @@ function Toasts({ items }) {
 }
 
 export default function RedesignApp() {
+  // The Gemini key is persisted in localStorage in cleartext. This is an
+  // accepted tradeoff for the single-user self-host model (no server-side
+  // session store, key never leaves the browser except as the X-Gemini-Key
+  // header to the same-origin backend). Any same-origin XSS would expose it —
+  // the production CSP in vite.config.js (no inline/eval scripts) is the
+  // mitigation. If multi-user is ever added, move this to a short-lived
+  // server-issued token or sessionStorage.
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [tab, setTab] = useState('create');

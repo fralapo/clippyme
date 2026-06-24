@@ -64,9 +64,6 @@ def build_edit_prompt(segments: list[dict], instruction: str, clip_duration: flo
     )
 
 
-_JSON_OBJ_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
 def parse_edit_response(text: str, clip_duration: float) -> dict:
     """Parse the model's JSON into {"drops": [[s,e],...], "explanation": str}.
 
@@ -80,11 +77,16 @@ def parse_edit_response(text: str, clip_duration: float) -> dict:
     if raw.startswith("```"):
         raw = raw.strip("`")
         raw = re.sub(r"^json\s*", "", raw, flags=re.IGNORECASE).strip()
-    m = _JSON_OBJ_RE.search(raw)
-    if not m:
+    # Locate the JSON object by first '{' / last '}' rather than a greedy
+    # DOTALL regex — the old `\{.*\}` could catastrophically backtrack on
+    # adversarial model output (the instruction that shapes it is user-
+    # controlled). find/rfind is linear and can't be made to hang.
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end <= start:
         return {"drops": [], "explanation": ""}
     try:
-        obj = json.loads(m.group(0))
+        obj = json.loads(raw[start:end + 1])
     except (ValueError, TypeError):
         return {"drops": [], "explanation": ""}
 

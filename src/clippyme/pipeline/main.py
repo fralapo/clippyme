@@ -825,6 +825,12 @@ if __name__ == '__main__':
     # reads GEMINI_MODEL at call time (main.py get_viral_clips). Lets the user
     # pick a different model per run without changing the global Settings value.
     if args.model:
+        # Validate here too, not just at the API→subprocess boundary: a direct
+        # CLI invocation (`--model '$(evil)'`) would otherwise set an arbitrary
+        # value in the child env. Mirrors GEMINI_MODEL_RE in job_results.
+        if not re.match(r"^gemini-[A-Za-z0-9.\-]{1,64}$", args.model):
+            print(f"❌ invalid --model: {args.model!r}")
+            sys.exit(2)
         os.environ["GEMINI_MODEL"] = args.model
         print(f"🤖  Gemini model override: {args.model}")
 
@@ -833,6 +839,11 @@ if __name__ == '__main__':
     # choice (it reads DEEPGRAM_LANGUAGE at call time). Also used to hint the
     # Whisper fallback path via faster-whisper's auto-detect being bypassed.
     if args.language:
+        # Same defense-in-depth as --model: bound the CLI value before it lands
+        # in the child env (consumed by the Deepgram/ElevenLabs REST calls).
+        if not re.match(r"^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,8})?$", args.language):
+            print(f"❌ invalid --language: {args.language!r}")
+            sys.exit(2)
         os.environ["DEEPGRAM_LANGUAGE"] = args.language
         os.environ["ELEVENLABS_LANGUAGE"] = args.language
         os.environ["CLIPPYME_LANGUAGE"] = args.language

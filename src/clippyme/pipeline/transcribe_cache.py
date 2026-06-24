@@ -23,7 +23,24 @@ logger = logging.getLogger("clippyme")
 # the process is launched from an unexpected CWD. An explicit env override is
 # honoured for non-standard install prefixes.
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
-CACHE_DIR = os.environ.get("CLIPPYME_CACHE_DIR") or os.path.join(_REPO_ROOT, "data", "cache")
+
+
+def _resolve_cache_dir() -> str:
+    """Resolve the cache directory, honouring the CLIPPYME_CACHE_DIR override.
+
+    The override is an **operator-only / trusted** setting (it must not be wired
+    to any request input). We normalise it to an absolute path so a relative
+    value can't resolve against an unexpected CWD; the cache *filenames* are
+    already SHA256-derived (``[0-9a-f]{16}_transcript.json``) so no request data
+    reaches the path.
+    """
+    override = (os.environ.get("CLIPPYME_CACHE_DIR") or "").strip()
+    if override:
+        return os.path.abspath(override)
+    return os.path.join(_REPO_ROOT, "data", "cache")
+
+
+CACHE_DIR = _resolve_cache_dir()
 CACHE_TTL_DAYS = 7
 
 

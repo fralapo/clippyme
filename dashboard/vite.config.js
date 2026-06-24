@@ -3,8 +3,40 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
+// Content-Security-Policy injected into the PRODUCTION build only. It blocks
+// inline/eval'd scripts and foreign script origins, which is the practical
+// mitigation for XSS — the main threat to the Gemini key held in localStorage
+// (see RedesignApp.jsx). Build-only via `apply: 'build'` because the Vite dev
+// server / HMR needs 'unsafe-eval', which we never want shipped. 'unsafe-inline'
+// is allowed for styles only (Tailwind v4 / React inline styles), not scripts.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "media-src 'self' blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+].join('; ')
+
+const cspPlugin = () => ({
+  name: 'clippyme-inject-csp',
+  apply: 'build',
+  transformIndexHtml() {
+    return [{
+      tag: 'meta',
+      attrs: { 'http-equiv': 'Content-Security-Policy', content: CSP },
+      injectTo: 'head-prepend',
+    }]
+  },
+})
+
 export default defineConfig({
-  plugins: [tailwindcss(), react()],
+  plugins: [tailwindcss(), react(), cspPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
