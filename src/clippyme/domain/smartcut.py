@@ -30,6 +30,7 @@ import threading
 from typing import Optional
 
 from clippyme.pipeline.cut_ops import audio_fade_filter
+from clippyme.domain.encode import x264_video_args
 
 logger = logging.getLogger(__name__)
 
@@ -753,12 +754,12 @@ def _render_with_ffmpeg(
                 "ffmpeg", "-y",
                 "-ss", str(start), "-to", str(end),
                 "-i", clip_path,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-                # -pix_fmt yuv420p + -movflags +faststart: a single-segment edit
-                # is moved straight to the output (see below) without passing
-                # through the concat re-encode, so the per-segment encode must
-                # already be web-decodable + progressive on its own.
-                "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                # Shared near-visually-lossless encode (CRF 18 / medium) with
+                # yuv420p + faststart: a single-segment edit is moved straight to
+                # the output (see below) without passing through the concat
+                # re-encode, so the per-segment encode must already be
+                # web-decodable + progressive on its own. See domain/encode.py.
+                *x264_video_args(),
                 "-c:a", "aac",
                 "-avoid_negative_ts", "make_zero",
             ]
@@ -794,10 +795,9 @@ def _render_with_ffmpeg(
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", concat_list,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            # Shared near-visually-lossless encode (CRF 18 / medium) + faststart.
+            *x264_video_args(),
             "-c:a", "aac",
-            "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
             output_path,
         ])
         if rc != 0:

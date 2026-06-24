@@ -12,6 +12,8 @@ import logging
 import os
 import subprocess
 
+from clippyme.domain.encode import x264_video_args
+
 logger = logging.getLogger(__name__)
 
 # Anchor presets → (x_expr, y_expr) using ffmpeg overlay variables. `M` is the
@@ -88,9 +90,9 @@ def add_logo_to_video(
         "-i", logo_path,
         "-filter_complex", filter_complex,
         "-c:a", "copy",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "22",
-        # Logo is the last compose layer → +faststart for progressive playback.
-        "-movflags", "+faststart",
+        # Shared near-visually-lossless encode (CRF 18 / medium). Logo is the
+        # last compose layer → +faststart for progressive playback. encode.py.
+        *x264_video_args(),
         output_path,
     ]
     try:

@@ -19,6 +19,7 @@ import mediapipe as mp
 from tqdm import tqdm
 from ultralytics import YOLO
 
+from clippyme.domain.encode import x264_video_args
 from clippyme.pipeline.hardware import DEVICE
 from clippyme.pipeline.media_probe import (
     audio_sync_seek_args,
@@ -1475,15 +1476,19 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     command = [
         'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
         '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}', '-pix_fmt', 'bgr24',
-        '-r', str(fps), '-i', '-', '-c:v', 'libx264',
-        # -pix_fmt yuv420p: the raw input is bgr24; without this libx264 may pick a
-        # non-subsampled format (yuv444p) that some players/mobile decoders reject.
-        # Later post-process passes (zoom/subtitles) already force 420p, but a clip
-        # with those skipped would otherwise ship a non-420p codec.
-        # -vsync cfr: lock output to a constant frame rate matching `-r`.
-        # (Both ported from kamilstanuch/Autocrop-vertical.)
-        '-pix_fmt', 'yuv420p', '-vsync', 'cfr',
-        '-preset', 'fast', '-crf', '23', '-an', temp_video_output
+        '-r', str(fps), '-i', '-',
+        # Master generation: this is the first (and most important) encode of the
+        # reframed frames — everything downstream re-encodes from it, so it runs
+        # at the shared near-visually-lossless CRF (18 / medium) instead of the
+        # old CRF 23 that softened the whole chain. pix_fmt yuv420p is forced
+        # inside x264_video_args: the raw input is bgr24 and without it libx264
+        # may pick yuv444p (rejected by many players/mobile decoders).
+        # faststart=False: this is an intermediate file; the final mux stream-
+        # copies it, which is where +faststart is applied.
+        # -vsync cfr: lock output to a constant frame rate matching `-r`
+        # (ported from kamilstanuch/Autocrop-vertical).
+        *x264_video_args(faststart=False),
+        '-vsync', 'cfr', '-an', temp_video_output
     ]
 
     ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

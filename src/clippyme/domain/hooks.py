@@ -4,6 +4,8 @@ import subprocess
 import urllib.request
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
+from clippyme.domain.encode import x264_video_args
+
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerif/NotoSerif-Bold.ttf"
 
 # Hard cap for runtime font downloads — defends against a hostile/compromised
@@ -354,11 +356,11 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
             "-i", img_path,
             "-filter_complex", filter_complex,
             "-c:a", "copy",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-            # -pix_fmt yuv420p: the hook overlay composites an RGBA PNG, so
-            # without this libx264 can pick yuv444p and the result is undecodable
-            # in Safari / many social players. +faststart for progressive play.
-            "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+            # Shared near-visually-lossless encode (CRF 18 / medium). pix_fmt
+            # yuv420p is forced inside x264_video_args: the hook composites an
+            # RGBA PNG, so without it libx264 can pick yuv444p (undecodable in
+            # Safari / many social players). +faststart for progressive play.
+            *x264_video_args(),
             output_path,
         ]
         subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

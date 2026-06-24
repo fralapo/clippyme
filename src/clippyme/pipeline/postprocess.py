@@ -12,6 +12,8 @@ import json
 import os
 import subprocess
 
+from clippyme.domain.encode import x264_video_args
+
 
 def _safe_float(value, name):
     """Coerce a loudnorm-measured value to float, rejecting anything else.
@@ -134,10 +136,10 @@ def apply_subtle_zoom(video_path, zoom_end=1.05):
         cmd = [
             'ffmpeg', '-y', '-i', video_path,
             '-vf', zoom_filter,
-            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23',
-            # +faststart so the clip is progressively playable if normalize_audio
-            # (the next pass) is skipped/fails and this zoom output stays terminal.
-            '-movflags', '+faststart',
+            # Shared near-visually-lossless encode (CRF 18 / medium). +faststart
+            # so the clip is progressively playable if normalize_audio (the next
+            # pass) is skipped/fails and this zoom output stays terminal.
+            *x264_video_args(),
             '-c:a', 'copy', temp_out
         ]
         result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)

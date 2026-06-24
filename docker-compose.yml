@@ -107,6 +107,13 @@ services:
       # FrameShift GUI: face 1.0, person 0.8, default 0.5). Override per class,
       # e.g. `face:1,person:0.8,default:0.5,dog:3`. Empty = GUI defaults.
       - REFRAME_FRAMESHIFT_WEIGHTS=${REFRAME_FRAMESHIFT_WEIGHTS:-}
+      # Encode quality (shared by every libx264 render/compose pass — reframe,
+      # zoom, grade, subtitles, smart-cut, hook, logo). CRF 18 / preset medium is
+      # near-visually-lossless so the stacked re-encodes don't compound into soft
+      # output. Lower CRF = higher quality + bigger files (0-51); a faster preset
+      # (e.g. `fast`/`veryfast`) trades a little quality/size for render speed.
+      - CLIPPYME_X264_CRF=${CLIPPYME_X264_CRF:-18}
+      - CLIPPYME_X264_PRESET=${CLIPPYME_X264_PRESET:-medium}
       # Transcription: strip to audio-only (FLAC) before sending to the provider.
       # DEFAULT ON; set to false to upload/decode the full video.
       - CLIPPYME_TRANSCRIBE_AUDIO_ONLY=${CLIPPYME_TRANSCRIBE_AUDIO_ONLY:-true}

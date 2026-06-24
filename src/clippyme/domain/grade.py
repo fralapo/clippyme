@@ -15,6 +15,8 @@ import logging
 import os
 import subprocess
 
+from clippyme.domain.encode import x264_video_args
+
 logger = logging.getLogger(__name__)
 
 # preset name -> raw ffmpeg video filter chain (no leading -vf).
@@ -66,11 +68,10 @@ def apply_grade(input_path: str, output_path: str, preset: str) -> bool:
         "ffmpeg", "-y",
         "-i", input_path,
         "-vf", vf,
-        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        # +faststart: any compose layer may be the last one before the final
-        # byte-for-byte copy, so every layer emits a web-progressive mp4.
-        "-movflags", "+faststart",
+        # Shared near-visually-lossless encode (CRF 18 / medium). +faststart so
+        # any compose layer can be the last one before the final byte-for-byte
+        # copy and still emit a web-progressive mp4. See domain/encode.py.
+        *x264_video_args(),
         "-c:a", "copy",
         output_path,
     ]

@@ -2,6 +2,8 @@ import os
 import re
 import subprocess
 
+from clippyme.domain.encode import x264_video_args
+
 
 def _strip_ass_braces(text: str) -> str:
     """Remove ASS/libass override-block braces from transcript text.
@@ -749,9 +751,9 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         '-i', video_path,
         '-vf', vf_filter,
         '-c:a', 'copy',
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23',
-        # +faststart so a subtitle-only composed clip streams progressively.
-        '-movflags', '+faststart',
+        # Shared near-visually-lossless encode (CRF 18 / medium) + faststart so a
+        # subtitle-only composed clip streams progressively. See domain/encode.py.
+        *x264_video_args(),
         output_path
     ]
 
