@@ -68,6 +68,9 @@ def apply_grade(input_path: str, output_path: str, preset: str) -> bool:
         "-vf", vf,
         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
         "-pix_fmt", "yuv420p",
+        # +faststart: any compose layer may be the last one before the final
+        # byte-for-byte copy, so every layer emits a web-progressive mp4.
+        "-movflags", "+faststart",
         "-c:a", "copy",
         output_path,
     ]

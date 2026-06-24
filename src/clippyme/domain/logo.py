@@ -89,6 +89,8 @@ def add_logo_to_video(
         "-filter_complex", filter_complex,
         "-c:a", "copy",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "fast", "-crf", "22",
+        # Logo is the last compose layer → +faststart for progressive playback.
+        "-movflags", "+faststart",
         output_path,
     ]
     try:

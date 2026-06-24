@@ -73,6 +73,12 @@ def normalize_audio(video_path):
             ),
             '-c:v', 'copy',
             '-c:a', 'aac', '-b:a', '192k',
+            # +faststart: this is the LAST writer of the base clip (zoom runs
+            # before it, then this copy-remux), so the moov atom must land at
+            # the front here for the browser <video> to start playing before
+            # the full file downloads. A faststart written by the zoom pass
+            # above would be undone by this copy-remux, so it's set here too.
+            '-movflags', '+faststart',
             temp_out
         ]
         norm_result = subprocess.run(apply_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)
@@ -129,6 +135,9 @@ def apply_subtle_zoom(video_path, zoom_end=1.05):
             'ffmpeg', '-y', '-i', video_path,
             '-vf', zoom_filter,
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'fast', '-crf', '23',
+            # +faststart so the clip is progressively playable if normalize_audio
+            # (the next pass) is skipped/fails and this zoom output stays terminal.
+            '-movflags', '+faststart',
             '-c:a', 'copy', temp_out
         ]
         result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=300)

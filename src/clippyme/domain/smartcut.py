@@ -754,6 +754,11 @@ def _render_with_ffmpeg(
                 "-ss", str(start), "-to", str(end),
                 "-i", clip_path,
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                # -pix_fmt yuv420p + -movflags +faststart: a single-segment edit
+                # is moved straight to the output (see below) without passing
+                # through the concat re-encode, so the per-segment encode must
+                # already be web-decodable + progressive on its own.
+                "-pix_fmt", "yuv420p", "-movflags", "+faststart",
                 "-c:a", "aac",
                 "-avoid_negative_ts", "make_zero",
             ]
@@ -792,6 +797,7 @@ def _render_with_ffmpeg(
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "aac",
             "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart",
             output_path,
         ])
         if rc != 0:
