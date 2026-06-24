@@ -237,6 +237,8 @@ async def _apply_subtitles(
                 font_size=subtitle_params.get("font_size"),
                 position=subtitle_params.get("position", "bottom"),
                 offset_y=sub_offset_y,
+                outline_color=subtitle_params.get("outline_color"),
+                align=subtitle_params.get("align", "center"),
             ),
         )
         if not success:
@@ -278,6 +280,7 @@ async def _apply_subtitles(
                 bg_color=subtitle_params.get("bg_color", "#000000"),
                 bg_opacity=subtitle_params.get("bg_opacity", 0.0),
                 offset_y=sub_offset_y,
+                h_align=subtitle_params.get("align", "center"),
             ),
         )
     return sub_output

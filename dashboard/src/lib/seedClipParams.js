@@ -61,6 +61,11 @@ export function seedSubtitleParams(preselections) {
         offset_y: subs?.offset_y ?? 0,
         font_color: subs?.font_color || '#FFFFFF',
         position: subs?.position || 'bottom',
+        // Horizontal alignment: 'center' (default) or 'left' (a bandiera). No
+        // 'right' — the social UI lives down the right edge.
+        align: subs?.align || 'center',
+        // Karaoke stroke (outline) colour — defaults black; recolourable.
+        outline_color: subs?.outline_color || '#000000',
         // Classic-mode stroke + background (passed through to burn_subtitles).
         border_color: subs?.border_color || '#000000',
         border_width: subs?.border_width ?? 2,

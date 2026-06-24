@@ -317,12 +317,19 @@ export function optsToPreselections(opts) {
     subtitles: opts.subtitles
       ? {
           mode: opts.subMode, preset: opts.subPreset, position: opts.subPosition || 'bottom',
+          // Horizontal alignment applies to both modes ('center' | 'left').
+          align: opts.subAlign || 'center',
           // Vertical nudge applies to both modes.
           offset_y: opts.subOffsetY || 0,
           // Karaoke font-size override (0 = Auto → use the preset size; omitted
-          // so seedSubtitleParams doesn't force a value).
-          ...(opts.subMode === 'karaoke' && opts.subFontSize > 0
-            ? { font_size: opts.subFontSize }
+          // so seedSubtitleParams doesn't force a value) + text/stroke colours
+          // (stroke defaults black; both recolourable per preset).
+          ...(opts.subMode === 'karaoke'
+            ? {
+                font_color: opts.subColor || '#FFFFFF',
+                outline_color: opts.subStroke || '#000000',
+                ...(opts.subFontSize > 0 ? { font_size: opts.subFontSize } : {}),
+              }
             : {}),
           // Classic-mode typography (karaoke draws style from the preset, so
           // these are only meaningful for classic).

@@ -388,12 +388,48 @@ def _offset_margin(position_norm, base_margin_v, offset_y):
     return max(0, base_margin_v - delta)
 
 
+# Horizontal alignment. Only LEFT (ragged / "a bandiera") and CENTER are offered:
+# right-alignment is deliberately excluded because the social UI (like / comment /
+# share buttons) lives down the right edge and would overlap right-aligned text.
+_SUB_MARGIN_EDGE = 110          # ~10% safe zone from a frame edge (TikTok/Reels)
+_SUB_MARGIN_LEFT_RIGHT = 220    # left-align: keep the text column off the right
+                                # edge (where the social buttons sit) by wrapping
+                                # earlier with a wider right margin
+# ASS \an numpad code for the centred caption at each vertical anchor.
+_AN_CENTER_BY_VPOS = {"top": 8, "center": 5, "bottom": 2}
+
+
+def normalize_h_align(align):
+    """Normalize a horizontal-alignment value to 'left' or 'center'.
+
+    Anything that isn't an explicit left request (incl. 'right', which is
+    intentionally unsupported) collapses to 'center' — the default.
+    """
+    a = str(align or "center").strip().lower()
+    return "left" if a in ("left", "start", "bandiera") else "center"
+
+
+def ass_alignment_and_margins(vpos, align):
+    """Pure: ``(ass_an, margin_l, margin_r)`` for a karaoke ASS style line.
+
+    ``vpos`` is the (already re-anchored) vertical anchor 'top'/'center'/'bottom';
+    ``align`` is 'left' or 'center'. Left uses the numpad code one less than the
+    centred one (8→7, 5→4, 2→1) and a wider right margin so ragged-left text
+    keeps clear of the right-edge social buttons; the left margin stays at the
+    edge safe-zone so the text still has a little breathing room from the border.
+    """
+    base = _AN_CENTER_BY_VPOS.get(vpos, 2)
+    if normalize_h_align(align) == "left":
+        return base - 1, _SUB_MARGIN_EDGE, _SUB_MARGIN_LEFT_RIGHT
+    return base, _SUB_MARGIN_EDGE, _SUB_MARGIN_EDGE
+
+
 def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
                          preset="classic_white", mode="word_group",
                          words_per_group=3, uppercase=True,
                          font_name=None, font_color=None, highlight_color=None,
                          font_size=None, outline_width=None, position="bottom",
-                         offset_y=0):
+                         offset_y=0, outline_color=None, align="center"):
     """
     Generate an ASS subtitle file with karaoke word-by-word highlighting.
     Uses \\k tags so the current word snaps from secondary (base) to primary (highlight) color.
@@ -423,13 +459,20 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
     # Validate caller-supplied colours the same way burn_subtitles does — they
     # are interpolated into the .ass file and must not silently coerce to white
     # (hex_to_ass_color's fallback) on a malformed value.
-    for _label, _val in (("font_color", font_color), ("highlight_color", highlight_color)):
+    for _label, _val in (("font_color", font_color), ("highlight_color", highlight_color),
+                         ("outline_color", outline_color)):
         if _val and not _HEX_RE.match(str(_val)):
             raise ValueError(f"invalid {_label}: {_val!r}")
     if font_color:
         style["text_color"] = font_color
     if highlight_color:
         style["highlight_color"] = highlight_color
+    # Stroke (outline) colour override. Each preset ships its own (mostly black);
+    # the frontend exposes a per-preset picker that defaults to black, so the
+    # user can recolour the text + stroke while the stroke stays black unless
+    # they change it.
+    if outline_color:
+        style["outline_color"] = outline_color
     if font_size:
         style["fontsize"] = _clamp_fontsize(font_size, style["fontsize"])
     if outline_width is not None:
@@ -443,22 +486,26 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
     if position_norm == "middle":
         position_norm = "center"  # frontend alias
     if position_norm == "top":
-        ass_alignment = 8  # top-center
+        vpos = "top"
         margin_v = _offset_margin("top", 260, offset_y)
     elif position_norm == "center":
         if offset_y:
             # libass IGNORES MarginV for the centred anchor (\an5), so a non-zero
-            # nudge would silently no-op. Re-anchor to the top anchor (\an8) with
-            # an absolute margin measured from the vertical centre (960px of the
+            # nudge would silently no-op. Re-anchor to the top anchor with an
+            # absolute margin measured from the vertical centre (960px of the
             # 1920px frame) so the slider actually moves the caption.
-            ass_alignment = 8
+            vpos = "top"
             margin_v = _offset_margin("top", 960, offset_y)
         else:
-            ass_alignment = 5  # center-center
+            vpos = "center"
             margin_v = 0
     else:
-        ass_alignment = 2  # bottom-center
+        vpos = "bottom"
         margin_v = _offset_margin("bottom", style.get("margin_v", 350), offset_y)
+    # Horizontal alignment (left = ragged "a bandiera" / center) → ASS \an code +
+    # left/right margins. Right is intentionally unavailable (social UI lives
+    # there). margin_l/margin_r replace the old fixed 110/110.
+    ass_alignment, margin_l, margin_r = ass_alignment_and_margins(vpos, align)
 
     # Extract words in range
     words = []
@@ -490,7 +537,7 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         f"Style: Viral,{style['font']},{style['fontsize']},"
         f"{primary_colour},{secondary_colour},{outline_colour},{back_colour},"
         f"-1,0,0,0,100,100,0,0,{style['border_style']},{style['outline_width']},{style.get('shadow', 0)},"
-        f"{ass_alignment},110,110,{margin_v},1\n\n"  # MarginL/R 110px ≈ 10% safe zone (TikTok/Reels)
+        f"{ass_alignment},{margin_l},{margin_r},{margin_v},1\n\n"  # MarginL/R: edge safe-zone (TikTok/Reels), wider right when left-aligned
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -680,7 +727,8 @@ _FONT_NAME_RE = re.compile(r'^[A-Za-z0-9 _\-]{1,40}$')
 def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
-                   bg_color="#000000", bg_opacity=0.0, offset_y=0):
+                   bg_color="#000000", bg_opacity=0.0, offset_y=0,
+                   h_align="center"):
     """
     Burns subtitles into the video using FFmpeg.
     Supports .srt (with force_style) and .ass (native ASS rendering with fontsdir).
@@ -702,8 +750,11 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         # Use the 'ass' filter with fontsdir so custom fonts are found.
         vf_filter = f"ass='{safe_sub_path}':fontsdir='{fonts_path}'"
     else:
-        # SRT: build force_style for legacy subtitle rendering
-        ass_alignment = 2
+        # SRT: build force_style for legacy subtitle rendering. The legacy SSA
+        # Alignment codes pack BOTH the vertical anchor and the horizontal align:
+        # bottom 1/2/3, top 5/6/7, middle 9/10/11 = left/centre/right. We only
+        # offer left + centre (right is where the social UI sits). `alignment`
+        # carries the vertical position; `h_align` the horizontal one.
         align_lower = str(alignment).lower()
         if align_lower == 'top':
             ass_alignment = 6
@@ -711,8 +762,14 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
             # 'center' is the value the frontend always sends; alias it to the
             # legacy SSA middle-centre code (it used to fall through to bottom).
             ass_alignment = 10
-        elif align_lower == 'bottom':
+        else:  # bottom (and any unknown) → bottom-centre
             ass_alignment = 2
+        h_left = normalize_h_align(h_align) == "left"
+        if h_left:
+            ass_alignment -= 1  # 6→5, 10→9, 2→1 (centre → left at same anchor)
+            srt_margin_l, srt_margin_r = _SUB_MARGIN_EDGE, _SUB_MARGIN_LEFT_RIGHT
+        else:
+            srt_margin_l, srt_margin_r = _SUB_MARGIN_EDGE, _SUB_MARGIN_EDGE
 
         final_fontsize = _clamp_fontsize(int(fontsize * 0.85), 10)
 
@@ -741,6 +798,8 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
             f"BorderStyle={border_style},"
             f"Outline={outline_w},"
             f"Shadow=0,"
+            f"MarginL={srt_margin_l},"
+            f"MarginR={srt_margin_r},"
             f"MarginV={srt_margin_v},"
             f"Bold=1"
         )

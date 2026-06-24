@@ -85,6 +85,12 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const [position, setPosition] = useState(sp.position || preSubs.position || 'bottom');
   const [subFont, setSubFont] = useState(sp.font || preSubs.font || 'Montserrat-Black');
   const [subColor, setSubColor] = useState(sp.font_color || preSubs.font_color || '#FFFFFF');
+  // Karaoke stroke (outline) colour — defaults to black; the user can recolour
+  // it per preset, but the default stays black.
+  const [subStroke, setSubStroke] = useState(sp.outline_color || preSubs.outline_color || '#000000');
+  // Horizontal alignment: 'center' or 'left' (a bandiera). No 'right' — the
+  // social UI (like/comment/share) lives down the right edge.
+  const [align, setAlign] = useState(sp.align || preSubs.align || 'center');
   const [offsetY, setOffsetY] = useState(Number(sp.offset_y ?? preSubs.offset_y ?? 0));
   const [kSize, setKSize] = useState(Number(sp.font_size ?? preSubs.font_size ?? 0));
   const [cOutline, setCOutline] = useState(Number(sp.border_width ?? preSubs.border_width ?? 2));
@@ -184,10 +190,10 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const apply = () => {
     // Build from the clean seed + current UI state only (no raw `...sp` spread,
     // which would leak stale style keys into a karaoke re-compose).
-    const subtitleParams = { ...seedSubtitleParams(preselections), mode, preset, position,
+    const subtitleParams = { ...seedSubtitleParams(preselections), mode, preset, position, align,
       offset_y: offsetY,
       ...(mode === 'karaoke'
-        ? { font_size: kSize > 0 ? kSize : undefined }
+        ? { font_size: kSize > 0 ? kSize : undefined, font_color: subColor, outline_color: subStroke }
         : { font: subFont, font_color: subColor, border_width: cOutline,
             bg_opacity: cBg ? 0.6 : 0, bg_color: '#000000' }) };
     const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), ...hookStyle, text: hookText };
@@ -334,6 +340,26 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                           <input type="range" min="0" max="80" step="1" value={kSize} aria-label="Subtitle font size"
                             onChange={(e) => setKSize(Number(e.target.value))} style={{ width: '100%' }} />
                         </div>
+                        <div className="cf-row" style={{ display: 'flex', gap: 12 }}>
+                          <label style={{ flex: 1 }}>
+                            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Text color</span>
+                            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                              <input type="color" aria-label="Subtitle text color" value={subColor}
+                                onChange={(e) => setSubColor(e.target.value)}
+                                style={{ width: 40, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+                              <span className="eo-d">{subColor.toUpperCase()}</span>
+                            </span>
+                          </label>
+                          <label style={{ flex: 1 }}>
+                            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Stroke color</span>
+                            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                              <input type="color" aria-label="Subtitle stroke color" value={subStroke}
+                                onChange={(e) => setSubStroke(e.target.value)}
+                                style={{ width: 40, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+                              <span className="eo-d">{subStroke.toUpperCase()}</span>
+                            </span>
+                          </label>
+                        </div>
                       </>
                     )}
                     {mode === 'classic' && (
@@ -372,6 +398,12 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                       <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
                       <Segmented full value={position} onChange={setPosition}
                         options={[{ id: 'top', label: 'Top' }, { id: 'center', label: 'Center' }, { id: 'bottom', label: 'Bottom' }]} />
+                    </div>
+                    <div className="cf-row">
+                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Alignment</span>
+                      <Segmented full value={align} onChange={setAlign}
+                        options={[{ id: 'left', label: 'Left' }, { id: 'center', label: 'Center' }]} />
+                      <div className="eo-d" style={{ marginTop: 6 }}>Left = ragged (a bandiera) with a margin from the edge · no right (social buttons there)</div>
                     </div>
                     <div className="cf-row">
                       <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>

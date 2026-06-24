@@ -194,6 +194,26 @@ function SubConfig({ opts, set }) {
             <input type="range" min="0" max="80" step="1" value={opts.subFontSize || 0} aria-label="Subtitle font size"
               onChange={(e) => set({ subFontSize: Number(e.target.value) })} style={{ width: '100%' }} />
           </div>
+          <div className="cf-row" style={{ display: 'flex', gap: 12 }}>
+            <label style={{ flex: 1 }}>
+              <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Text color</span>
+              <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="color" aria-label="Subtitle text color" value={opts.subColor || '#FFFFFF'}
+                  onChange={(e) => set({ subColor: e.target.value })}
+                  style={{ width: 40, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+                <span className="od">{(opts.subColor || '#FFFFFF').toUpperCase()}</span>
+              </span>
+            </label>
+            <label style={{ flex: 1 }}>
+              <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Stroke color</span>
+              <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <input type="color" aria-label="Subtitle stroke color" value={opts.subStroke || '#000000'}
+                  onChange={(e) => set({ subStroke: e.target.value })}
+                  style={{ width: 40, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+                <span className="od">{(opts.subStroke || '#000000').toUpperCase()}</span>
+              </span>
+            </label>
+          </div>
         </>
       )}
       {opts.subMode === 'classic' && (
@@ -233,6 +253,12 @@ function SubConfig({ opts, set }) {
         <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
         <Segmented full value={opts.subPosition || 'bottom'} onChange={(id) => set({ subPosition: id })}
           options={[{ id: 'top', label: 'Top' }, { id: 'center', label: 'Center' }, { id: 'bottom', label: 'Bottom' }]} />
+      </div>
+      <div className="cf-row">
+        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Alignment</span>
+        <Segmented full value={opts.subAlign || 'center'} onChange={(id) => set({ subAlign: id })}
+          options={[{ id: 'left', label: 'Left' }, { id: 'center', label: 'Center' }]} />
+        <div className="od" style={{ marginTop: 6 }}>Left = ragged (a bandiera), margin from edge · no right (social buttons)</div>
       </div>
       <div className="cf-row">
         <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
