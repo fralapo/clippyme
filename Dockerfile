@@ -21,7 +21,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     python3.11 python3.11-venv python3.11-dev python3.11-distutils \
     ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
-    curl unzip ca-certificates && \
+    curl unzip ca-certificates gosu && \
     curl -fsSL https://deno.land/install.sh | sh -s v2.8.3 && \
     mv /root/.deno/bin/deno /usr/local/bin/ && \
     rm -rf /root/.deno && \
@@ -57,7 +57,7 @@ FROM python:3.11-slim AS runtime-cpu
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
-    curl unzip ca-certificates && \
+    curl unzip ca-certificates gosu && \
     curl -fsSL https://deno.land/install.sh | sh -s v2.8.3 && \
     mv /root/.deno/bin/deno /usr/local/bin/ && \
     rm -rf /root/.deno && \
@@ -143,7 +143,15 @@ COPY --chown=appuser:appuser . .
 # `python -m clippyme.pipeline.main` and `uvicorn clippyme.api.app:app` resolve.
 USER root
 RUN pip install --no-cache-dir -e .
-USER appuser
+
+# Entrypoint normalizes ownership of the (bind-mountable) data/ dir as root,
+# then drops to appuser via gosu before launching the server. Copied to a
+# path OUTSIDE /app so the `.:/app` bind mount can't shadow it; baked with
+# 0755 + LF (enforced by .gitattributes) so the shebang always resolves.
+# PID1 stays root ON PURPOSE so the chown can run; the actual uvicorn process
+# runs unprivileged (see docker-entrypoint.sh).
+COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
 EXPOSE 8000
 
