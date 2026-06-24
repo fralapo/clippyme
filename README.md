@@ -55,11 +55,11 @@ Fork of OpenShorts, hardened and extended: cloud-or-local transcription, Gemini 
 Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 
 1. **Download** with `yt-dlp` (Deno-based JS runtime to bypass YouTube bot detection, optional cookies for age-gated content).
-2. **Transcribe** with **Deepgram Nova-3** by default (multi-language, code-switching EN/IT) — automatic fallback to local **Faster-Whisper** if no key or network failure. The video is stripped to a mono-16 kHz FLAC first, so only audio is uploaded/decoded (a few MB instead of the full mp4). Cached on disk for 7 days keyed by URL hash.
+2. **Transcribe** with one of three providers, chosen in Settings: **Deepgram Nova-3** by default (multi-language, code-switching EN/IT), **ElevenLabs Scribe** (emits `(laughter)`/`(applause)` audio-event tags that feed the viral prompt as a free emotional-payoff signal, with an optional Voice Isolator pre-pass for noisy sources), or local **Faster-Whisper**. Both cloud providers fall back to Faster-Whisper on any failure, so a bad key never breaks a job. The video is stripped to a mono-16 kHz FLAC first, so only audio is uploaded/decoded (a few MB instead of the full mp4). Cached on disk for 7 days keyed by URL hash.
 3. **Detect viral moments** with **Google Gemini** (`gemini-3.5-flash` by default). A 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) plus a 5-level robust JSON parser tolerates malformed model output. **No-AI fallback:** if no Gemini key is set or the call fails, the transcript is topic-segmented into several clips by dependency-light lexical **TextTiling** (ported from [ClipsAI](https://github.com/ClipsAI/clipsai)) instead of dumping the whole video as one clip — heuristic, not viral-ranked, but offline and free. **Clean clip edges:** each selected `[start, end]` is then snapped to transcript boundaries — first to the nearest **word** edge, then extended to the surrounding **sentence** (start back to the sentence onset, end forward to the sentence-final word) so a clip never opens or closes mid-word or mid-sentence. The sentence pass is asymmetric and clamped (≤60 s, no overlap with a neighbouring clip), guards against false sentence-ends (abbreviations, decimals, acronyms), and gracefully no-ops on unpunctuated transcripts — so it is never worse than the word-only snap. A final **waveform** pass then nudges each edge into the nearest actual audio **silence trough** (ffmpeg `silencedetect`) so a cut never clips a word's attack or release — moving only toward quiet, and a no-op when no silence sits near the edge.
 4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene. Hardened against messy real-world inputs: variable-frame-rate normalization, audio `start_time` compensation (YouTube A/V desync), and corrupt-frame resilience — all no-ops on clean sources.
-5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection.
-6. **Optional editing** at download time (compose-on-demand): **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish, plus a separate manual transcript trim), **Hook** text overlay (Pillow + emoji, with Instagram-Stories-style banner / colours / outline / font — defaulting to bannerless white Anton with a thin black outline), **Subtitles** (6 ASS karaoke presets or classic SRT with a live preview), and a **Brand logo** watermark. The per-clip editor is a tabbed modal; settings can be applied to one clip, copied to all clips, or staged across a multi-select. Custom subtitle/hook fonts and the logo are uploaded once in Settings.
+5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection. Every rendered mp4 is written with a leading `moov` atom (`+faststart`), so it starts playing in the browser before the full file downloads and uploads cleanly to social.
+6. **Optional editing** at download time (compose-on-demand): a **Colour grade** preset (warm_cinematic / cool_crisp / neutral_punch / vivid_pop), **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish, plus a separate manual transcript trim and a conversational AI trim), **Hook** text overlay (Pillow + emoji, with Instagram-Stories-style banner / colours / outline / font — defaulting to bannerless white Anton with a thin black outline), **Subtitles** (6 ASS karaoke presets or classic SRT with a live preview), and a **Brand logo** watermark. The per-clip editor is a tabbed modal; settings can be applied to one clip, copied to all clips, or staged across a multi-select. Custom subtitle/hook fonts and the logo are uploaded once in Settings.
 7. **Publish or schedule** to TikTok / Instagram / YouTube via **Zernio**, with a SmartScheduler that picks Italian-prime-time slots, avoids same-day collisions, and (when scheduling) spreads one clip per day to stay under per-platform daily caps. Any residual Zernio daily-limit 429 is surfaced verbatim per clip.
 
 While a job runs you stay in control:
@@ -75,8 +75,8 @@ While a job runs you stay in control:
 | Layer | Tech |
 |---|---|
 | Backend | Python 3.11, FastAPI, Pydantic v2, asyncio queue |
-| Pipeline | yt-dlp · Deepgram REST · Faster-Whisper · PySceneDetect · YOLOv8 (Ultralytics) · MediaPipe · ffmpeg · auto-editor (Nim binary) · Pillow |
-| AI | Google Gemini (viral detection) · Deepgram Nova-3 (transcription) |
+| Pipeline | yt-dlp · Deepgram REST · ElevenLabs Scribe REST · Faster-Whisper · PySceneDetect · YOLOv8 (Ultralytics) · MediaPipe · ffmpeg · auto-editor (Nim binary) · Pillow |
+| AI | Google Gemini (viral detection) · Deepgram Nova-3 / ElevenLabs Scribe (transcription) |
 | Frontend | React 18 · Vite 5 · Tailwind CSS v4 · lucide-react · custom toasts/primitives |
 | Publishing | Zernio multi-platform API |
 | Deploy | Docker Compose (CPU multi-arch + optional NVIDIA GPU profile) |
@@ -133,6 +133,7 @@ All API keys, model selection, and cookies are managed **from the dashboard Sett
 |---|---|---|
 | `GEMINI_API_KEY` | Viral moment detection | Default model `gemini-3.5-flash`; override per job or set the default in Settings (live model discovery). |
 | `DEEPGRAM_API_KEY` | Cloud transcription (default) | Falls back to local Faster-Whisper if missing. |
+| `ELEVENLABS_API_KEY` | Alternative cloud transcription (Scribe) | Adds audio-event tags + optional Voice Isolator; also falls back to Faster-Whisper. |
 | `HUGGINGFACE_TOKEN` | Optional gated models for Whisper | |
 | Zernio | Social publishing | Per-platform account IDs auto-discovered via "Discover from Zernio". |
 | Cookies | YouTube age-gated / region-locked content | Upload a Netscape `cookies.txt` from the Settings tab. Stored at `data/cookies.txt`, mode `0600`, max 10 MB. |
@@ -141,7 +142,8 @@ Runtime env overrides (rarely needed):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TRANSCRIPTION_PROVIDER` | `deepgram` | Or `whisper` to force local. |
+| `TRANSCRIPTION_PROVIDER` | `deepgram` | Or `elevenlabs` (Scribe), or `whisper` to force local. |
+| `ELEVENLABS_AUDIO_ISOLATION` | `false` | Run the ElevenLabs Voice Isolator before ASR to strip background noise/music on noisy sources. |
 | `CLIPPYME_TRANSCRIBE_AUDIO_ONLY` | `true` | Strip to audio-only FLAC before transcription; `false` sends the full video. |
 | `CLIPPYME_SILENCE_SNAP` | `1` | Refine clip edges to the nearest waveform silence trough (ffmpeg `silencedetect`); `0`/`false` keeps the transcript-derived edges. |
 | `DEEPGRAM_MODEL` | `nova-3` | |
@@ -228,9 +230,10 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `POST` | `/api/resume/{job_id}` | Resume a paused job. |
 | `POST` | `/api/stop/{job_id}` | Stop early but **keep the clips finished so far**. |
 | `POST` | `/api/cancel/{job_id}` | Kill the subprocess **and discard all output**. |
-| `POST` | `/api/compose/{job_id}/{clip_index}` | Compose Subtitles + Smart Cut + Hook + Logo on demand. |
+| `POST` | `/api/compose/{job_id}/{clip_index}` | Compose Grade + Subtitles + Smart Cut + Hook + Logo on demand. |
 | `POST` | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut a single clip (optional `drop_ranges` for manual trim). |
 | `GET` | `/api/transcript/{job_id}/{clip_index}` | Per-clip transcript segments for the manual-trim UI. |
+| `POST` | `/api/edit-ai/{job_id}/{clip_index}` | Conversational trim: a plain-English instruction → Gemini → spans to cut. |
 | `POST` | `/api/reframe/{job_id}/{clip_index}` | Switch a clip's reframe mode. |
 | `GET` | `/api/history` | Past jobs from disk. |
 | `POST` | `/api/history/{job_id}/restore` | Reload a past job into memory. |
@@ -255,10 +258,11 @@ Static mounts: `/videos`, `/thumbnails`, `/fonts` (read-only).
 
 ## Editing toggles (compose-on-download)
 
-Every finished clip has an **Edit & reprocess** panel — one button on the clip card opens a **tabbed modal** (Reframe · Captions · Hook · Smart Cut · Trim · Logo) that gathers all the options in one place so you set everything first and apply once, instead of the clip reprocessing on every tweak. The compose layers:
+Every finished clip has an **Edit & reprocess** panel — one button on the clip card opens a **tabbed modal** (Reframe · Grade · Captions · Hook · Smart Cut · Trim · Logo) that gathers all the options in one place so you set everything first and apply once, instead of the clip reprocessing on every tweak. The compose layers:
 
+- **Colour grade** — one of four ffmpeg presets (warm_cinematic / cool_crisp / neutral_punch / vivid_pop). Runs first so the overlays below keep their authored colours.
 - **Smart Cut** — auto-removes silences and filler words via auto-editor v3 timeline; falls back to ffmpeg concat demuxer if the binary is missing.
-- **Trim** (its own tab) — shows the clip's transcript as a tap-to-cut checklist for hand-removing specific lines, kept separate from the automatic pass. The picked spans (`drop_ranges`) ride through download and publish; dropping a line implies the Smart Cut compose stage.
+- **Trim** (its own tab) — shows the clip's transcript as a tap-to-cut checklist for hand-removing specific lines, kept separate from the automatic pass. A plain-English **AI trim** box turns an instruction like "cut the intro" into the same spans. The picked spans (`drop_ranges`) ride through download and publish; dropping a line implies the Smart Cut compose stage.
 - **Hook** — text overlay, auto-prefilled from the Gemini hook suggestion. Beyond position/size it offers **Instagram-Stories-style text styling**: a toggleable coloured banner behind the text (colour + opacity), independent text colour, an outline/stroke (None/Thin/Thick + colour), and a font choice. The default look is bannerless white **Anton** with a thin black outline. A live WYSIWYG preview sits above the controls. Supports emoji.
 - **Subtitles** — 6 viral karaoke presets (`classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`) or classic SRT with font/color/position controls. The Create-tab grid (`dashboard/src/redesign/data.js`) is a cosmetic CSS preview (system fonts; highlight colours match the backend), not pixel-faithful.
 - **Brand logo** — burns an uploaded transparent PNG onto the clip (7 anchor positions × S/M/L size × opacity). Upload it once in Settings → Brand assets.
@@ -267,7 +271,7 @@ Every finished clip has an **Edit & reprocess** panel — one button on the clip
 
 **Custom fonts**: upload a `.ttf`/`.otf` (e.g. a licensed Stratos) in Settings → Brand assets and it appears in the classic-subtitle and hook font pickers — resolved at burn time from the writable `data/fonts/` dir alongside the bundled faces.
 
-Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-renders the framing (only when the reframe mode changed) and then composes the active layers in one pass via `/api/compose/{job_id}/{clip_index}` — order is **Subtitles → Smart Cut → Hook → Logo** (subtitles burn first so their absolute timing never drifts when Smart Cut removes silences; the logo sits on top of everything). Reprocessing runs in the **background** — Apply closes the modal immediately and the clip card shows a *Reprocessing…* overlay, so you can edit other clips meanwhile. The preview updates to the composed result, and downloading runs the same compose, so what you see is what you get.
+Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-renders the framing (only when the reframe mode changed) and then composes the active layers in one pass via `/api/compose/{job_id}/{clip_index}` — order is **Grade → Subtitles → Smart Cut → Hook → Logo** (grade first so the overlays keep their authored colour; subtitles burn next so their absolute timing never drifts when Smart Cut removes silences; the logo sits on top of everything). Reprocessing runs in the **background** — Apply closes the modal immediately and the clip card shows a *Reprocessing…* overlay, so you can edit other clips meanwhile. The preview updates to the composed result, and downloading runs the same compose, so what you see is what you get.
 
 **Apply runs in the background.** Hitting Apply closes the modal immediately and the reframe/compose work runs without blocking the page — the clip card shows a *Reprocessing…* overlay while it renders, and you can edit, reprocess, and publish other clips at the same time. Each clip is an independent job, so several can render at once.
 
