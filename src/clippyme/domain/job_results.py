@@ -9,8 +9,19 @@ import re
 
 logger = logging.getLogger("clippyme")
 
-ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled", "object"})
+# Reframe modes. 'subject' (FrameShift face-first crop) was formerly named
+# 'object'; 'object' is kept as a legacy alias so jobs/preselections persisted
+# under the old name still work. Both are accepted at the boundary and
+# normalized to 'subject' internally via canonical_reframe_mode().
+ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled", "subject", "object"})
+REFRAME_MODE_ALIASES = {"object": "subject"}
 MAX_INSTRUCTIONS_LEN = 2000
+
+
+def canonical_reframe_mode(mode):
+    """Map a legacy reframe-mode alias to its canonical value (``object`` →
+    ``subject``). Leaves any other value (incl. None) unchanged."""
+    return REFRAME_MODE_ALIASES.get(mode, mode)
 
 # Per-job Gemini model override must look like a real Gemini model id. We don't
 # pin an exact allow-list here (newer families like gemini-3* ship continuously

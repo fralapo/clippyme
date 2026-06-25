@@ -119,7 +119,7 @@ cd dashboard && npm install && npm run dev
 
 # Pipeline CLI (one-shot, no API)
 python -m clippyme.pipeline.main <url_or_path> [--instructions "focus on hooks"] \
-                                                [--reframe-mode auto|object|disabled] \
+                                                [--reframe-mode auto|subject|disabled] \
                                                 [--no-zoom]
 ```
 
@@ -285,7 +285,7 @@ Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-rende
 Pick one of three modes per job (and per clip after the fact, from the **Edit & reprocess** panel or `POST /api/reframe`):
 
 - **Auto**: face tracking. The default; runs the per-scene strategy picker below.
-- **Object**: [FrameShift](https://github.com/fralapo/FrameShift) face-first crop. Computes a weighted-interest centroid over **every** detection in the frame — faces (weight 1.0), persons (0.8) and other on-screen objects (default 0.5, the FrameShift GUI sliders), each scaled by area and confidence — then crops a 9:16 window on it. A face pulls the camera hardest, so a talking head stays framed while relevant objects (a product, a dog, a car) still bias the crop; a shot with no detectable subject falls back to a black-padded letterbox. Tune the weights with `REFRAME_FRAMESHIFT_WEIGHTS`.
+- **Subject** (the CLI value is `subject`; `object` still works as a legacy alias): [FrameShift](https://github.com/fralapo/FrameShift) face-first crop. Computes a weighted-interest centroid over **every** detection in the frame — faces (weight 1.0), persons (0.8) and other on-screen objects (default 0.5, the FrameShift GUI sliders), each scaled by area and confidence — then crops a 9:16 window on it. A face pulls the camera hardest, so a talking head stays framed while relevant objects (a product, a dog, a car) still bias the crop; a shot with no detectable subject falls back to a black-padded letterbox. Tune the weights with `REFRAME_FRAMESHIFT_WEIGHTS`.
 - **Off**: no reframe: a 4:3 center crop inside the 9:16 frame with black bars.
 
 Inside **Auto**, three per-scene strategies are decided by sampling 7 frames per scene:
@@ -300,7 +300,7 @@ Inside **Auto**, three per-scene strategies are decided by sampling 7 frames per
 
 **Comfort mode (`REFRAME_COMFORT`, default on):** continuous face-tracking is what makes auto-reframes feel like seasickness, the camera is always gently moving, and the changing velocity (plus a zoom that breathes mid-shot) is the actual nausea trigger, not pixel jitter. So the default render now biases toward a *still* camera the way [AutoFlip](https://research.google/blog/autoflip-an-open-source-framework-for-intelligent-video-reframing/) does: a two-pass global trajectory smoother (method `savgol`/`kalman`/`l2`) Savitzky-Golay-smooths the whole camera path per scene, a per-scene **stationary lock** (`REFRAME_STATIONARY_THRESH`, default `0.30`) pins near-static scenes to a locked tripod (with `REFRAME_SNAP_CENTER`), and **per-scene zoom lock** (`REFRAME_ZOOM_LOCK`) holds one zoom level per shot so the frame never breathes. It costs a second video decode; set `REFRAME_COMFORT=0` to fall back to the original single-pass streaming tracker. See [`docs/reframe-improvements-research.md`](docs/reframe-improvements-research.md) for the measured comparison.
 
-Override per job with `--reframe-mode auto|object|disabled` (`object` = the FrameShift face-first crop above; `disabled` = 4:3 center crop with black bars).
+Override per job with `--reframe-mode auto|subject|disabled` (`subject` = the FrameShift face-first crop above, with `object` accepted as a legacy alias; `disabled` = 4:3 center crop with black bars).
 
 After a job completes, every clip can be flipped between all three modes post-hoc via `POST /api/reframe/{job_id}/{clip_index}` (the **Edit & reprocess** panel exposes the three modes and applies the switch on **Apply**). The original 16:9 source slice is preserved as `source_<clip>.mp4` to make this latency-tolerant. Legacy jobs without the preserved slice return HTTP 409.
 

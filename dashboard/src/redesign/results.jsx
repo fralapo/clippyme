@@ -4,8 +4,10 @@ import { useState } from 'react';
 import { Icon, Btn, Badge } from './primitives';
 import { clipPreviewSrc, fmtDuration, downloadClip, exportClip } from './realApi';
 
-const REFRAME_ICON = { auto: 'crop', object: 'layers', disabled: 'square' };
-const REFRAME_LABEL = { auto: 'Auto', object: 'Object', disabled: 'Off' };
+// 'object' kept as a legacy alias of 'subject' (FrameShift face-first) so a clip
+// whose metadata still says 'object' renders the right badge.
+const REFRAME_ICON = { auto: 'crop', subject: 'scan-face', object: 'scan-face', disabled: 'square' };
+const REFRAME_LABEL = { auto: 'Auto', subject: 'Subject', object: 'Subject', disabled: 'Off' };
 
 function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, onApplyToAll, selectMode, onPublish, pushToast }) {
   const [downloading, setDownloading] = useState(false);

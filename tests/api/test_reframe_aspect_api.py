@@ -59,12 +59,14 @@ def teardown_function():
 @pytest.mark.parametrize("aspect", ["1:1", "16:9", "9:16"])
 def test_reframe_passes_job_aspect(monkeypatch, tmp_path, aspect):
     client, captured = _make_client(monkeypatch, tmp_path, aspect=aspect)
+    # Post the LEGACY 'object' alias and confirm it is normalized to the
+    # canonical 'subject' in the subprocess argv (alias end-to-end).
     r = client.post(f"/api/reframe/{JOB_ID}/0", json={"reframe_mode": "object"})
     assert r.status_code == 200, r.text
     cmd = captured["cmd"]
     assert "--aspect" in cmd, cmd
     assert cmd[cmd.index("--aspect") + 1] == aspect
-    assert cmd[cmd.index("--reframe-mode") + 1] == "object"
+    assert cmd[cmd.index("--reframe-mode") + 1] == "subject"
 
 
 def test_reframe_no_aspect_in_metadata_omits_flag(monkeypatch, tmp_path):

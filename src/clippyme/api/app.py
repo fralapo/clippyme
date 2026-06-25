@@ -35,7 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
-from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd, _pick_latest_metadata
+from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd, _pick_latest_metadata, canonical_reframe_mode
 from clippyme.domain.compose import compose_layers
 from clippyme.domain.errors import ClippyMeError
 from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
@@ -1013,7 +1013,7 @@ async def edit_clip_ai(
 
 @app.post("/api/reframe/{job_id}/{clip_index}")
 async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, request: Request):
-    """Switch a clip between reframe modes (auto / object / disabled) after generation.
+    """Switch a clip between reframe modes (auto / subject / disabled) after generation.
 
     Requires the per-clip 16:9 source slice (``source_<clip>.mp4``) to still
     exist on disk. Spawns ``main.py --reframe-only`` as a subprocess to reuse
@@ -1026,8 +1026,11 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job_id")
     mode = (req.reframe_mode or "auto").strip().lower()
-    if mode not in ("auto", "disabled", "object"):
-        raise HTTPException(status_code=400, detail="reframe_mode must be 'auto', 'object', or 'disabled'")
+    if mode not in ("auto", "disabled", "subject", "object"):
+        raise HTTPException(status_code=400, detail="reframe_mode must be 'auto', 'subject', or 'disabled'")
+    # 'object' is the legacy name for 'subject' — normalize so the subprocess
+    # argv + metadata are written with the canonical value.
+    mode = canonical_reframe_mode(mode)
 
     output_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(output_dir):

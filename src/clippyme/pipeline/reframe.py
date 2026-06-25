@@ -1373,6 +1373,10 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     """
     Core logic to convert horizontal video to vertical using scene detection and Active Speaker Tracking (MediaPipe).
     """
+    # 'object' is the legacy name for the FrameShift face-first 'subject' mode —
+    # normalize once here so the rest of this function only ever sees 'subject'.
+    if reframe_mode == 'object':
+        reframe_mode = 'subject'
     script_start_time = time.time()
     
     # Define temporary file paths based on the output name
@@ -1418,8 +1422,8 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     if reframe_mode == 'disabled':
         print("   🚫 Reframe mode: DISABLED — clip placed inside a 9:16 frame with letterbox (black bars top & bottom).")
         print("      (Scene detection still runs for consistency; face tracking is skipped.)")
-    elif reframe_mode == 'object':
-        print("   🧩 Reframe mode: OBJECT — FrameShift face-first 9:16 crop (faces 1.0 → persons 0.8 → objects 0.5).")
+    elif reframe_mode == 'subject':
+        print("   🧩 Reframe mode: SUBJECT — FrameShift face-first 9:16 crop (faces 1.0 → persons 0.8 → objects 0.5).")
         print("      (Weighted-interest centroid per frame; black-padded letterbox when no subject is detected.)")
     else:
         print("   🎯 Reframe mode: AUTO — face tracking + dynamic 9:16 crop.")
@@ -1464,8 +1468,8 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
     if reframe_mode == 'disabled':
         print("\n   🤖 Step 3: Skipping scene analysis (reframe disabled).")
         scene_strategies = ['DISABLED'] * len(scenes)
-    elif reframe_mode == 'object':
-        print("\n   🤖 Step 3: Skipping scene analysis (object mode — every scene is FrameShift face-first cropped).")
+    elif reframe_mode == 'subject':
+        print("\n   🤖 Step 3: Skipping scene analysis (subject mode — every scene is FrameShift face-first cropped).")
         scene_strategies = ['OBJECT'] * len(scenes)
     else:
         print("\n   🤖 Step 3: Analyzing Scenes for Strategy (Single vs Group)...")

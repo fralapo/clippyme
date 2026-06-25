@@ -305,7 +305,9 @@ export function optsToPreselections(opts) {
   return {
     // Tri-state reframe mode. Fall back to the legacy boolean (`reframe`) for
     // any persisted preselections saved before the 3-mode selector landed.
-    reframe_mode: opts.reframeMode || (opts.reframe === false ? 'disabled' : 'auto'),
+    // 'object' is the legacy name for 'subject' (FrameShift face-first); the
+    // backend accepts both but normalize here so new jobs persist the new name.
+    reframe_mode: (opts.reframeMode === 'object' ? 'subject' : opts.reframeMode) || (opts.reframe === false ? 'disabled' : 'auto'),
     aspect: opts.aspect || '9:16',
     language: opts.language,
     no_zoom: !opts.zoom,

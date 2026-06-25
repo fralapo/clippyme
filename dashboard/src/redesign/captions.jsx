@@ -33,9 +33,12 @@ function pickHookStyle(src) {
 
 const REFRAME_OPTS = [
   { id: 'auto', label: 'Auto' },
-  { id: 'object', label: 'Object' },
+  { id: 'subject', label: 'Subject' },
   { id: 'disabled', label: 'Off' },
 ];
+// 'object' is the legacy name for the FrameShift 'subject' mode — normalize a
+// value persisted under the old name so the segmented control highlights right.
+const canonReframe = (m) => (m === 'object' ? 'subject' : (m || 'auto'));
 
 // Reconstruct which transcript segments were marked dropped from previously
 // saved drop_ranges: a segment is "dropped" if a saved span covers its
@@ -58,7 +61,7 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const preSubs = pre.subtitles || {};
 
   // Current on-disk reframe mode (what a fresh reframe would diff against).
-  const baseMode = appliedMode || initial?.reframeMode || clip.reframe_mode || 'auto';
+  const baseMode = canonReframe(appliedMode || initial?.reframeMode || clip.reframe_mode || 'auto');
 
   const [tab, setTab] = useState('reframe');
   const [reframeMode, setReframeMode] = useState(baseMode);
@@ -242,7 +245,7 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
               <div className="field" style={{ marginTop: 4 }}>
                 <span className="field-label">Reframe</span>
                 <Segmented full value={reframeMode} onChange={setReframeMode} options={REFRAME_OPTS} />
-                <div className="eo-d" style={{ marginTop: 6 }}>Auto face-track · Object element-crop · Off letterbox bands</div>
+                <div className="eo-d" style={{ marginTop: 6 }}>Auto face-track · Subject FrameShift crop · Off letterbox bands</div>
               </div>
             )}
 

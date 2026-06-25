@@ -59,10 +59,21 @@ def test_reframe_mode_auto_is_omitted():
     assert "--reframe-mode" not in cmd
 
 
-def test_reframe_mode_object_is_forwarded():
-    # 'object' (element-aware crop) is a non-default mode → passed through.
+def test_reframe_mode_subject_is_forwarded():
+    # 'subject' (FrameShift face-first) is a non-default mode → passed through.
+    cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="subject")
+    assert cmd[cmd.index("--reframe-mode") + 1] == "subject"
+
+
+def test_reframe_mode_object_legacy_alias_is_accepted():
+    # 'object' is the legacy alias; build_main_cmd still accepts + forwards it
+    # (main.py / reframe.py normalize it to 'subject' downstream).
+    from clippyme.domain.job_results import canonical_reframe_mode
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="object")
     assert cmd[cmd.index("--reframe-mode") + 1] == "object"
+    assert canonical_reframe_mode("object") == "subject"
+    assert canonical_reframe_mode("auto") == "auto"
+    assert canonical_reframe_mode(None) is None
 
 
 # --- per-job model override ------------------------------------------------

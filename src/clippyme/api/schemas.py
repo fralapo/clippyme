@@ -64,7 +64,7 @@ class ProcessRequest(BaseModel):
     # ALLOWED_LANGUAGES in job_results.build_main_cmd, instructions by
     # length cap).
     instructions: Optional[str] = Field(None, max_length=2000)
-    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|object)$")
+    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
     aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
     language: Optional[str] = Field(None, max_length=16)
     no_zoom: Optional[bool] = False
@@ -79,7 +79,7 @@ class ProcessRequest(BaseModel):
 class BatchRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=20)
     instructions: Optional[str] = Field(None, max_length=2000)
-    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|object)$")
+    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
     aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
 
     @field_validator("urls")
@@ -120,7 +120,7 @@ class ReframeRequest(BaseModel):
     Only valid when the per-clip 16:9 source slice was preserved on disk
     (i.e. jobs produced after the post-hoc reframe feature landed).
     """
-    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|object)$")
+    reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
 
 
 # Overlay params (hook_params / subtitle_params) are intentionally left as

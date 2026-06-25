@@ -789,9 +789,9 @@ if __name__ == '__main__':
     parser.add_argument('-c', '--cookies', type=str, help="Path to cookies.txt file for yt-dlp")
     parser.add_argument('--instructions', type=str, help="Custom instructions for AI clip selection (e.g., 'find the funniest parts')")
     parser.add_argument('--no-zoom', action='store_true', help="Disable subtle auto-zoom effect on clips")
-    parser.add_argument('--reframe-mode', choices=['auto', 'disabled', 'object'], default='auto',
-                        help='Reframe mode: auto (face tracking), object (element-aware crop), '
-                             'or disabled (4:3 crop with black bars)')
+    parser.add_argument('--reframe-mode', choices=['auto', 'disabled', 'subject', 'object'], default='auto',
+                        help='Reframe mode: auto (face tracking), subject (FrameShift face-first '
+                             'crop; "object" is a legacy alias), or disabled (4:3 crop with black bars)')
     parser.add_argument('--reframe-only', action='store_true',
                         help='Skip download/analysis/cutting: take --input (an existing 16:9 '
                              'source slice) and re-run reframing + zoom/normalize/cover only. '
