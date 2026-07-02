@@ -1,0 +1,33 @@
+# Production image: static Vite build served by nginx.
+#
+# The default `dashboard/Dockerfile` (Vite dev server + HMR + bind mount) stays
+# the day-to-day workflow; this file is opt-in via docker-compose.prod.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+#
+# Why it exists: the dev server ships 'unsafe-eval'-friendly HMR tooling and
+# rebuilds on the fly — fine on loopback, wrong for a deliberate deployment.
+# The build output gets the CSP meta tag injected (vite.config.js cspPlugin
+# is build-only) and nginx serves immutable hashed assets.
+
+FROM node:20-alpine AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/dist /usr/share/nginx/html
+
+# Same port as the dev server so the compose port mapping (and CLIPPYME_BIND
+# loopback default) carries over unchanged from docker-compose.yml.
+EXPOSE 5175
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -q --spider http://localhost:5175/ || exit 1

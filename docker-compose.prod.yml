@@ -1,0 +1,22 @@
+# Production override: static frontend build (nginx) instead of the Vite dev
+# server. Purely additive — the default `docker compose up` keeps the dev
+# workflow (HMR, bind mount) untouched.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+#
+# The backend service is unchanged: it already runs the same code in dev and
+# prod. This override only swaps how the dashboard is served. Ports/binding
+# carry over from docker-compose.yml (nginx listens on 5175, same
+# CLIPPYME_BIND loopback default and the same LAN-exposure caveat).
+#
+# Requires Docker Compose >= 2.24 for the !reset tag below.
+
+services:
+  frontend:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile.prod
+    image: clippyme-frontend-prod
+    # Drop the dev bind mounts: the built bundle lives inside the image, and
+    # mounting the source tree over a static-serving container is pure noise.
+    volumes: !reset []
