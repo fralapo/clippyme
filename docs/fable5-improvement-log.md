@@ -176,3 +176,36 @@ was simply absent from the results grid with zero breadcrumb in the job log.
 
 **Verification (Wave 4):** host `pytest -m "not integration"` → 593 passed;
 Docker `pytest -m integration` → 30 passed, 37.0s; CI ruff rule set → clean.
+Commit `3bc6023`.
+
+## Wave 5 — compose pass fusion (2026-07-02)
+
+**16. Grade + Subtitles fused into one encode.** When both toggles are active,
+`grade.build_grade_filter(preset)` rides as `pre_vf` on the subtitle burn
+(`burn_subtitles(pre_vf=…)` prepends it to the `ass`/`subtitles` filter).
+Inside one filtergraph the colour transform still hits the source pixels
+BEFORE the glyphs are composited, so the Grade→Subtitles ordering semantics
+are exactly preserved — one generation cheaper. Grade-only keeps its own pass;
+an unknown preset falls back to the standalone (no-op) path.
+
+**17. Hook + Logo fused into one encode.** Both are static overlays applied
+after Smart Cut. `hooks.build_hook_logo_filter` (pure, host-tested) builds a
+single `-filter_complex` compositing hook first, logo topmost — the exact
+z-order of the sequential passes (animated hook entrance preserved).
+`add_hook_to_video` gains an optional `logo` dict; the shared geometry/clamps
+moved to `logo.logo_filter_chain` so the fused and standalone paths can't
+drift. Degraded cases (empty hook text, no uploaded logo) fall back to the
+respective standalone pass.
+
+Net effect: a fully-toggled compose (grade+subs+smartcut+hook+logo) drops from
+5 sequential libx264 encodes to 3 — ~35-40% faster downloads and two fewer
+generational quality losses. The load-bearing Grade → Subtitles → Smart Cut →
+Hook → Logo order is untouched (fusion changes WHERE a step renders, not when).
+
+Tests: `tests/domain/test_compose_merge.py` (pure filters, `pre_vf` command
+assembly, compose wiring incl. fallbacks) + 3 new Docker render tests in
+`test_ffmpeg_render_integration.py` (hook+logo static/animated, graded
+subtitle burn).
+
+**Verification (Wave 5):** host `pytest -m "not integration"` → 604 passed;
+Docker `pytest -m integration` → 33 passed, 44.3s; CI ruff rule set → clean.

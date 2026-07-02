@@ -44,6 +44,23 @@ def logo_overlay_xy(position: str, margin_px: int) -> tuple[str, str]:
     return x_tpl.format(M=m), y_tpl.format(M=m)
 
 
+def logo_filter_chain(video_width, scale=0.18, opacity=1.0, margin=0.04,
+                      position=DEFAULT_POSITION):
+    """(scale/alpha filter chain, x_expr, y_expr) for overlaying the logo.
+
+    Shared by the standalone logo pass and the single-pass hook+logo encode so
+    the size/opacity clamps and geometry can't drift between them. Pure →
+    host-unit-testable.
+    """
+    scale = min(0.5, max(0.05, float(scale)))
+    opacity = min(1.0, max(0.0, float(opacity)))
+    logo_w = max(1, int(video_width * scale))
+    margin_px = int(video_width * max(0.0, float(margin)))
+    x_expr, y_expr = logo_overlay_xy(position, margin_px)
+    chain = f"scale={logo_w}:-1,format=rgba,colorchannelmixer=aa={opacity:.3f}"
+    return chain, x_expr, y_expr
+
+
 def add_logo_to_video(
     video_path: str,
     logo_path: str,
@@ -77,15 +94,9 @@ def add_logo_to_video(
                        os.path.basename(video_path), exc)
         video_width, video_height = 1080, 1920
 
-    scale = min(0.5, max(0.05, float(scale)))
-    opacity = min(1.0, max(0.0, float(opacity)))
-    logo_w = max(1, int(video_width * scale))
-    margin_px = int(video_width * max(0.0, float(margin)))
-    x_expr, y_expr = logo_overlay_xy(position, margin_px)
-
     # Scale the logo to the target width (height auto, aspect preserved), force
     # an alpha channel, then apply the opacity multiplier before overlaying.
-    logo_chain = f"scale={logo_w}:-1,format=rgba,colorchannelmixer=aa={opacity:.3f}"
+    logo_chain, x_expr, y_expr = logo_filter_chain(video_width, scale, opacity, margin, position)
     filter_complex = f"[1:v]{logo_chain}[lg];[0:v][lg]overlay={x_expr}:{y_expr}"
 
     ffmpeg_cmd = [

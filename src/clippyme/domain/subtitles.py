@@ -728,10 +728,17 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
                    bg_color="#000000", bg_opacity=0.0, offset_y=0,
-                   h_align="center"):
+                   h_align="center", pre_vf=None):
     """
     Burns subtitles into the video using FFmpeg.
     Supports .srt (with force_style) and .ass (native ASS rendering with fontsdir).
+
+    pre_vf: optional trusted filter chain (e.g. the colour-grade eq/colorbalance
+    chain from grade.build_grade_filter) prepended to the subtitle filter in the
+    SAME pass. Within one filtergraph the chain transforms the source pixels
+    BEFORE the subtitle glyphs are composited — semantically identical to a
+    separate grade encode followed by a subtitle encode, one generation cheaper.
+    Internal callers only; not user input.
     """
     if not _FONT_NAME_RE.match(font_name):
         raise ValueError(f"invalid font_name: {font_name!r}")
@@ -804,6 +811,9 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
             f"Bold=1"
         )
         vf_filter = f"subtitles='{safe_sub_path}':fontsdir='{fonts_path}':force_style='{style_string}'"
+
+    if pre_vf:
+        vf_filter = f"{pre_vf},{vf_filter}"
 
     cmd = [
         'ffmpeg', '-y',

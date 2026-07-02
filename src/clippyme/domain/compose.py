@@ -171,7 +171,11 @@ async def _apply_hook(
     clip_index: int,
     hook_params: dict,
     intermediate_files: list,
+    logo_params: dict = None,
 ) -> str:
+    """Hook overlay pass. When ``logo_params`` is given the brand logo is
+    composited in the SAME encode (hook below, logo topmost — identical
+    z-order to the sequential Hook → Logo passes, one generation cheaper)."""
     from clippyme.domain.hooks import add_hook_to_video
 
     hook_output = os.path.join(job_dir, f"composed_hook_{clip_index}.mp4")
@@ -185,6 +189,18 @@ async def _apply_hook(
                    "corner_radius", "outline_color", "outline_width", "font", "shadow",
                    "animate")
     style = {k: hook_params[k] for k in _style_keys if k in hook_params}
+    logo = None
+    if logo_params is not None:
+        lp = logo_params or {}
+        logo = {
+            "path": LOGO_PATH,
+            "position": lp.get("position"),
+            "scale": lp.get("scale", _LOGO_SIZE_MAP.get(lp.get("size"), 0.18)),
+            "opacity": lp.get("opacity", 1.0),
+            "margin": lp.get("margin", 0.04),
+        }
+        from clippyme.domain.logo import DEFAULT_POSITION
+        logo["position"] = logo["position"] or DEFAULT_POSITION
     await asyncio.to_thread(
         add_hook_to_video,
         current_input,
@@ -194,6 +210,7 @@ async def _apply_hook(
         font_scale,
         offset_y,
         style or None,
+        logo,
     )
     return hook_output
 
@@ -206,6 +223,7 @@ async def _apply_subtitles(
     clip_info: dict,
     subtitle_params: dict,
     intermediate_files: list,
+    pre_vf: str = None,
 ) -> str:
     sub_output = os.path.join(job_dir, f"composed_sub_{clip_index}.mp4")
     intermediate_files.append(sub_output)
@@ -245,19 +263,21 @@ async def _apply_subtitles(
         if not success:
             raise ValidationError("No words found for this clip range.")
         await asyncio.to_thread(
-            burn_subtitles,
-            current_input,
-            ass_path,
-            sub_output,
-            2,
-            16,
-            "Verdana",
-            "#FFFFFF",
-            "#000000",
-            2,
-            "#000000",
-            0.0,
-            sub_offset_y,
+            lambda: burn_subtitles(
+                current_input,
+                ass_path,
+                sub_output,
+                2,
+                16,
+                "Verdana",
+                "#FFFFFF",
+                "#000000",
+                2,
+                "#000000",
+                0.0,
+                sub_offset_y,
+                pre_vf=pre_vf,
+            ),
         )
     else:
         srt_path = os.path.join(job_dir, f"composed_subs_{clip_index}.srt")
@@ -282,6 +302,7 @@ async def _apply_subtitles(
                 bg_opacity=subtitle_params.get("bg_opacity", 0.0),
                 offset_y=sub_offset_y,
                 h_align=subtitle_params.get("align", "center"),
+                pre_vf=pre_vf,
             ),
         )
     return sub_output
@@ -408,7 +429,18 @@ async def _compose_layers_impl(
         # stay locked to the audio, no drift regardless of speech speed.
         # Step 3 overlays the static Hook on top of everything so it
         # remains visible for every surviving frame.
-        if active.get("grade"):
+        # Grade + Subtitles fusion: when BOTH are active, the grade chain rides
+        # as pre_vf on the subtitle burn — inside one filtergraph the colour
+        # transform still applies to the source pixels BEFORE the glyphs are
+        # composited, so the Grade→Subtitles semantics are identical, one
+        # encode generation cheaper. Grade-only keeps its own pass.
+        merged_grade_vf = None
+        if active.get("grade") and active.get("subtitles"):
+            from clippyme.domain.grade import DEFAULT_GRADE, build_grade_filter
+            merged_grade_vf = build_grade_filter(
+                (grade_params or {}).get("preset", DEFAULT_GRADE)) or None
+
+        if active.get("grade") and not merged_grade_vf:
             current_input = await _apply_grade(
                 current_input, job_dir, clip_index, grade_params, intermediate_files,
             )
@@ -424,9 +456,15 @@ async def _compose_layers_impl(
                 clip_info,
                 subtitle_params,
                 intermediate_files,
+                pre_vf=merged_grade_vf,
             )
+            if merged_grade_vf:
+                layers_applied.append("grade")
             layers_applied.append("subtitles")
-            logger.info("compose_layers: ✓ subtitles → %s", os.path.basename(current_input))
+            logger.info(
+                "compose_layers: ✓ %ssubtitles → %s",
+                "grade+" if merged_grade_vf else "", os.path.basename(current_input),
+            )
 
         if active.get("smartcut"):
             current_input = await _apply_smartcut(
@@ -441,36 +479,49 @@ async def _compose_layers_impl(
         hook_text = (hook_params or {}).get("text", "")
         if isinstance(hook_text, str):
             hook_text = hook_text.strip()
-        if active.get("hook"):
-            if not hook_text:
-                logger.warning(
-                    "compose_layers: hook toggle ON but text is empty — "
-                    "skipping hook layer. Ensure PublishModal / ResultCard "
-                    "sends a non-empty hook_params.text.",
-                )
-            else:
-                hp_clean = {**hook_params, "text": hook_text}
-                current_input = await _apply_hook(
-                    current_input, job_dir, clip_index, hp_clean, intermediate_files
-                )
-                layers_applied.append("hook")
-                logger.info("compose_layers: ✓ hook → %s", os.path.basename(current_input))
+        hook_active = bool(active.get("hook"))
+        if hook_active and not hook_text:
+            logger.warning(
+                "compose_layers: hook toggle ON but text is empty — "
+                "skipping hook layer. Ensure PublishModal / ResultCard "
+                "sends a non-empty hook_params.text.",
+            )
+            hook_active = False
+        logo_active = bool(active.get("logo"))
+        if logo_active and not os.path.exists(LOGO_PATH):
+            logger.warning(
+                "compose_layers: logo toggle ON but no logo uploaded at %s "
+                "— skipping logo layer.", LOGO_PATH,
+            )
+            logo_active = False
 
-        # Logo absolutely last: a static brand mark that must sit on top of
-        # subtitles AND hook, on every kept frame. Silently skipped if the
-        # toggle is on but no logo has been uploaded yet.
-        if active.get("logo"):
-            if not os.path.exists(LOGO_PATH):
-                logger.warning(
-                    "compose_layers: logo toggle ON but no logo uploaded at %s "
-                    "— skipping logo layer.", LOGO_PATH,
-                )
-            else:
-                current_input = await _apply_logo(
-                    current_input, job_dir, clip_index, logo_params, intermediate_files
-                )
-                layers_applied.append("logo")
-                logger.info("compose_layers: ✓ logo → %s", os.path.basename(current_input))
+        if hook_active and logo_active:
+            # Hook + Logo fusion: both are static overlays applied after Smart
+            # Cut, so they composite in ONE encode (hook below, logo topmost —
+            # the exact z-order of the sequential passes), one generation
+            # cheaper on a fully-toggled clip.
+            hp_clean = {**hook_params, "text": hook_text}
+            current_input = await _apply_hook(
+                current_input, job_dir, clip_index, hp_clean, intermediate_files,
+                logo_params=logo_params or {},
+            )
+            layers_applied += ["hook", "logo"]
+            logger.info("compose_layers: ✓ hook+logo → %s", os.path.basename(current_input))
+        elif hook_active:
+            hp_clean = {**hook_params, "text": hook_text}
+            current_input = await _apply_hook(
+                current_input, job_dir, clip_index, hp_clean, intermediate_files
+            )
+            layers_applied.append("hook")
+            logger.info("compose_layers: ✓ hook → %s", os.path.basename(current_input))
+        elif logo_active:
+            # Logo absolutely last: a static brand mark that must sit on top of
+            # subtitles AND hook, on every kept frame.
+            current_input = await _apply_logo(
+                current_input, job_dir, clip_index, logo_params, intermediate_files
+            )
+            layers_applied.append("logo")
+            logger.info("compose_layers: ✓ logo → %s", os.path.basename(current_input))
 
         if os.path.abspath(current_input) != os.path.abspath(composed_path):
             shutil.copy2(current_input, composed_path)

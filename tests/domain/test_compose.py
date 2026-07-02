@@ -34,7 +34,8 @@ def _install_recording_stubs(monkeypatch, order):
     call order and emit a real file in job_dir (so the final copy2 works)."""
 
     async def fake_subtitles(current_input, job_dir, clip_index, metadata,
-                             clip_info, subtitle_params, intermediate_files):
+                             clip_info, subtitle_params, intermediate_files,
+                             pre_vf=None):
         order.append("subtitles")
         out = os.path.join(job_dir, f"composed_sub_{clip_index}.mp4")
         _touch(out)

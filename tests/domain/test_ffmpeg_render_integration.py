@@ -100,3 +100,56 @@ def test_smartcut_afade_segments_render(clip, tmp_path):
     assert ok is True
     assert os.path.getsize(out) > 0
     assert "audio" in _streams(out)
+
+
+def _make_logo_png(path):
+    from PIL import Image
+    Image.new("RGBA", (64, 64), (255, 0, 0, 200)).save(path)
+
+
+def test_hook_plus_logo_single_pass_renders(clip, tmp_path):
+    """Wave-5 fusion: hook + brand logo composited in ONE encode."""
+    from clippyme.domain.hooks import add_hook_to_video
+
+    logo_png = str(tmp_path / "logo.png")
+    _make_logo_png(logo_png)
+    out = str(tmp_path / "hook_logo.mp4")
+    ok = add_hook_to_video(
+        clip, "BRANDED", out, position="top", style={"animate": False},
+        logo={"path": logo_png, "position": "top-right",
+              "scale": 0.2, "opacity": 0.9, "margin": 0.04},
+    )
+    assert ok is True
+    assert os.path.getsize(out) > 0
+    s = _streams(out)
+    assert "video" in s and "audio" in s
+
+
+def test_hook_plus_logo_animated_renders(clip, tmp_path):
+    from clippyme.domain.hooks import add_hook_to_video
+
+    logo_png = str(tmp_path / "logo.png")
+    _make_logo_png(logo_png)
+    out = str(tmp_path / "hook_logo_anim.mp4")
+    ok = add_hook_to_video(
+        clip, "ANIMATED", out, position="top", style={"animate": True},
+        logo={"path": logo_png, "position": "bottom-right", "scale": 0.15},
+    )
+    assert ok is True
+    assert os.path.getsize(out) > 0
+
+
+def test_burn_subtitles_with_grade_prevf_renders(clip, tmp_path):
+    """Wave-5 fusion: grade chain rides as pre_vf on the subtitle burn."""
+    from clippyme.domain.grade import build_grade_filter
+    from clippyme.domain.subtitles import burn_subtitles
+
+    srt = tmp_path / "s.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,500\nHello grade\n",
+                   encoding="utf-8")
+    out = str(tmp_path / "graded_subs.mp4")
+    ok = burn_subtitles(clip, str(srt), out,
+                        pre_vf=build_grade_filter("warm_cinematic"))
+    assert ok is True
+    assert os.path.getsize(out) > 0
+    assert "video" in _streams(out)

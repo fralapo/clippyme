@@ -306,8 +306,28 @@ def build_hook_overlay_filter(x, y0, animate=False, dur=0.4, slide_px=40):
     )
 
 
+def build_hook_logo_filter(hook_x, hook_y, logo_chain, logo_x, logo_y,
+                           animate=False, dur=0.4, slide_px=40):
+    """Single -filter_complex overlaying the hook PNG ([1:v]) and THEN the
+    brand logo PNG ([2:v]) onto the video ([0:v]) — one encode instead of two.
+
+    Z-order is preserved exactly: the hook composites first, the logo last
+    (topmost), matching the sequential Hook → Logo compose order. Pure string
+    math → host-unit-testable.
+    """
+    if not animate:
+        hook_part = f"[0:v][1:v]overlay={int(hook_x)}:{int(hook_y)}[vh]"
+    else:
+        y_expr = f"{int(hook_y)}+{int(slide_px)}*pow(1-min(t/{dur}\\,1)\\,3)"
+        hook_part = (
+            f"[1:v]format=yuva420p,fade=t=in:st=0:d={dur}:alpha=1[hk];"
+            f"[0:v][hk]overlay={int(hook_x)}:{y_expr}[vh]"
+        )
+    return f"{hook_part};[2:v]{logo_chain}[lg];[vh][lg]overlay={logo_x}:{logo_y}"
+
+
 def add_hook_to_video(video_path, text, output_path, position="top", font_scale=1.0,
-                      offset_y=0, style=None):
+                      offset_y=0, style=None, logo=None):
     """
     Overlays a text hook box onto a video.
     position: 'top', 'center', 'bottom'
@@ -315,6 +335,10 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
     offset_y: vertical offset as percentage of video height (-50 to +50)
     style: optional Instagram-Stories-style dict (see HOOK_STYLE_DEFAULTS) —
       banner toggle/colour/opacity, text colour, outline, font.
+    logo: optional dict {path, position, scale, opacity, margin} — when given,
+      the brand logo is composited in the SAME encode pass (logo on top of the
+      hook, identical z-order to the old sequential Hook → Logo passes) so a
+      fully-composed clip pays one generation fewer.
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video {video_path} not found")
@@ -348,12 +372,28 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
         overlay_y = max(0, min(overlay_y, video_height - box_h))
 
         animate = bool((style or {}).get("animate", False))
-        filter_complex = build_hook_overlay_filter(overlay_x, overlay_y, animate=animate)
+        extra_inputs = []
+        if logo and logo.get("path") and os.path.exists(logo["path"]):
+            from clippyme.domain.logo import DEFAULT_POSITION, logo_filter_chain
+
+            logo_chain, lx, ly = logo_filter_chain(
+                video_width,
+                scale=logo.get("scale", 0.18),
+                opacity=logo.get("opacity", 1.0),
+                margin=logo.get("margin", 0.04),
+                position=logo.get("position", DEFAULT_POSITION),
+            )
+            filter_complex = build_hook_logo_filter(
+                overlay_x, overlay_y, logo_chain, lx, ly, animate=animate)
+            extra_inputs = ["-i", logo["path"]]
+        else:
+            filter_complex = build_hook_overlay_filter(overlay_x, overlay_y, animate=animate)
 
         ffmpeg_cmd = [
             "ffmpeg", "-y",
             "-i", video_path,
             "-i", img_path,
+            *extra_inputs,
             "-filter_complex", filter_complex,
             "-c:a", "copy",
             # Shared near-visually-lossless encode (CRF 18 / medium). pix_fmt
