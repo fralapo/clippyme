@@ -103,6 +103,7 @@ function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, presen
       </div>
       <div className="kr">
         <input className="key-input" type={reveal ? 'text' : 'password'} value={value}
+          aria-label={name}
           placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
           onFocus={() => { focusVal.current = value; }}
           onBlur={() => { if (value !== focusVal.current) onSave(); }} />
@@ -286,10 +287,12 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
             {zernio?.configured && <span className="conn"><Icon n="circle-check" />Connected</span>}
           </div>
           <input className="key-input" style={{ width: '100%' }} type="password" value={zKey}
+            aria-label="Zernio API key"
             placeholder={zernio?.configured ? 'Replace API key (optional)' : 'Zernio API key (sk_…)'} onChange={(e) => setZKey(e.target.value)} />
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
             {['tiktok', 'instagram', 'youtube'].map((p) => (
               <input key={p} className="key-input" style={{ width: '100%', fontFamily: 'var(--font-sans)' }}
+                aria-label={`${p} account id`}
                 value={accts[p] || ''} placeholder={`${p} account id`} onChange={(e) => setAccts((a) => ({ ...a, [p]: e.target.value }))} />
             ))}
           </div>

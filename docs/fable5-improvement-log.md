@@ -256,4 +256,26 @@ Integration test `test_zoom_fold_renders_valid_vertical` asserts a valid 9:16
 output with an unchanged frame count.
 
 **Verification (Wave 9):** host pytest → 607 passed; Docker integration →
-34 passed, 50.8s; CI ruff rule set → clean.
+34 passed, 50.8s; CI ruff rule set → clean. Commit `2d3fd48`.
+
+## Wave 10 — accessibility fixes (2026-07-02)
+
+**21. Keyboard + screen-reader access for the mouse-only controls.**
+- Both upload dropzones in `create.jsx` gained `role="button"`, `tabIndex=0`,
+  an `aria-label`, and Enter/Space activation — before, keyboard-only users
+  could not open the file picker at all (the `<input type=file>` is `hidden`,
+  unreachable by Tab).
+- The "clear files" chip became a real `<button>`.
+- Every credential input in Settings (`views.jsx`: Gemini/Deepgram/ElevenLabs/
+  HF via `KeyRow`, the Zernio API key, the 3 per-platform account IDs) gained
+  an `aria-label` — they were identified by placeholder only, which disappears
+  once a value is typed and is not a reliable accessible name.
+
+NOT done: adding `eslint-plugin-jsx-a11y` as a lint-time guardrail — the
+repo's config-protection hook blocks edits to `eslint.config.js`, so the
+plugin was uninstalled again and the config left untouched. Enabling it needs
+an explicit owner decision (it is a strengthening change, not a weakening
+one).
+
+**Verification (Wave 10):** `npm run lint` → 0 warnings; `npm test` →
+54 passed; `npm run build` → clean.

@@ -85,10 +85,15 @@ function SourcePanel({ opts, set }) {
             </div>
           ) : (
             <div className={'dropzone' + (opts.file ? ' has' : drag ? ' drag' : '')}
+              role="button" tabIndex={0}
+              aria-label={opts.file ? 'Remove selected video' : 'Choose a video file'}
               onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
               onDragLeave={() => setDrag(false)}
               onDrop={(e) => { e.preventDefault(); setDrag(false); pickFile(e.dataTransfer.files?.[0]); }}
-              onClick={() => { if (opts.file) { set({ file: null, fileName: '' }); } else { fileInput.current?.click(); } }}>
+              onClick={() => { if (opts.file) { set({ file: null, fileName: '' }); } else { fileInput.current?.click(); } }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); }
+              }}>
               <input ref={fileInput} type="file" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi" hidden
                 onChange={(e) => pickFile(e.target.files?.[0])} />
               <div className="dz-ico"><Icon n={opts.file ? 'file-video' : 'upload'} /></div>
@@ -110,7 +115,12 @@ function SourcePanel({ opts, set }) {
               onChange={(e) => set({ batch: e.target.value })}></textarea>
           </div>
           <div className="field" style={{ marginBottom: 0 }}>
-            <div className="dropzone" style={{ padding: 18 }} onClick={() => batchInput.current?.click()}>
+            <div className="dropzone" style={{ padding: 18 }}
+              role="button" tabIndex={0} aria-label="Add video files to the batch"
+              onClick={() => batchInput.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); batchInput.current?.click(); }
+              }}>
               <input ref={batchInput} type="file" accept="video/*,.mp4,.mov,.webm,.mkv,.m4v,.avi" hidden multiple
                 onChange={(e) => set({ batchFiles: [...(opts.batchFiles || []), ...Array.from(e.target.files || [])] })} />
               <Icon n="plus" style={{ width: 16, height: 16 }} /> &nbsp;Add files to the batch
@@ -121,7 +131,7 @@ function SourcePanel({ opts, set }) {
               {(opts.batchFiles || []).map((f, i) => (
                 <span key={i} className="chip">{f.name.slice(0, 22)}</span>
               ))}
-              <span className="chip" style={{ cursor: 'pointer', color: 'var(--danger)' }} onClick={() => set({ batchFiles: [] })}>clear files</span>
+              <button type="button" className="chip" style={{ cursor: 'pointer', color: 'var(--danger)', background: 'none', border: 'none', font: 'inherit' }} onClick={() => set({ batchFiles: [] })}>clear files</button>
             </div>
           )}
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--line-1)' }}>
