@@ -296,3 +296,61 @@ from app.py.
 
 **Verification (Wave 11):** host pytest → 607 passed; CI ruff rule set →
 clean. (No pipeline/render change — Docker suite unaffected by this wave.)
+
+## Wave 12 — jsx-a11y lint guardrail: blocked by owner hook (2026-07-02)
+
+**23. eslint-plugin-jsx-a11y as a permanent lint guardrail — NOT SHIPPED.**
+The user's config-protection hook blocks every edit to
+`dashboard/eslint.config.js`, including this purely additive/strengthening
+one ("BLOCKED: Modifying eslint.config.js is not allowed… disable the
+config-protection hook temporarily" — reproduced 2026-07-02). The concrete
+DOM a11y fixes from Wave 10 are all in; only the *guardrail* is missing. To
+ship it: temporarily disable the hook, `npm i -D eslint-plugin-jsx-a11y`,
+add the plugin + `jsxA11y.flatConfigs.recommended` rules to eslint.config.js,
+fix any new findings, re-enable the hook. No file churn was left behind.
+
+## Wave 13 — additive production frontend stack (2026-07-02)
+
+**24. The dashboard could only be served by the Vite dev server** (HMR
+tooling, eval-friendly CSP, source bind mount) — fine on loopback, wrong for
+a deliberate deployment. New opt-in prod path, fully additive:
+`dashboard/Dockerfile.prod` (multi-stage `npm ci` + `vite build` → nginx),
+`dashboard/nginx.conf` (SPA fallback, immutable `/assets/` caching, proxy for
+`/api|/videos|/thumbnails|/fonts` → backend:8000 with 600s timeouts matched
+to `CLIPPYME_FFMPEG_TIMEOUT` and unbuffered upload/video streaming), and
+`docker-compose.prod.yml` (swaps the frontend build, drops the dev mounts via
+`!reset`; needs Compose ≥ 2.24). nginx listens on 5175 so the `CLIPPYME_BIND`
+loopback default and port mapping carry over unchanged; the build gets the
+CSP meta tag (vite cspPlugin is build-only). Default `docker compose up`
+dev workflow untouched.
+
+**Verification (Wave 13):** merged `compose config` shows Dockerfile.prod +
+no volumes + loopback port; image built clean; live smoke test on the built
+image → SPA `GET /` 200 and `GET /api/history` 200 through the nginx proxy.
+Commit 59b0240.
+
+## Wave 14 — optional API token for deliberate LAN deploys (2026-07-02)
+
+**25. `CLIPPYME_BIND=0.0.0.0` re-extended RFC1918 trust to the whole LAN**
+with no per-client auth. New `CLIPPYME_API_TOKEN` (default unset = no-op,
+byte-identical): `security.configured_api_token`/`enforce_api_token`
+(constant-time `hmac.compare_digest`; `X-API-Token` or `Authorization:
+Bearer`) enforced by an app middleware on every `/api` route (OPTIONS
+exempt for CORS preflight; static media mounts stay IP-open since
+`<video>`/FontFace can't send custom headers). Frontend:
+`lib/apiToken.js` (localStorage-backed `getApiToken`/`setApiToken` +
+`apiFetch` wrapper) now carries every API call in `realApi.js`,
+`lib/api.js`, `useBackendStatus`, `useJobSubmission`; Settings gains an
+"API token" row; CORS `allow_headers` gains `X-API-Token`; compose passes
+the env through.
+
+**Verification (Wave 14):** 10 new host tests (`tests/api/test_api_token.py`
+— unit no-op/401/Bearer/precedence + TestClient middleware 401/pass/no-op)
+→ host suite 617 passed; 4 new node tests (`apiToken.test.js`) → 58 passed;
+`npm run lint` + `npm run build` green; CI ruff rule set clean. Commit
+4403ba0.
+
+**Final sweep (2026-07-02):** host pytest 617 passed / 3 skipped; Docker
+integration 34 passed; frontend 58/58 + lint + build green; zero
+TODO/FIXME markers in `src/clippyme` + `dashboard/src`. Open owner item:
+#23 (jsx-a11y guardrail, blocked by the config-protection hook).
