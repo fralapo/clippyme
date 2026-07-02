@@ -95,6 +95,71 @@ def test_stop_queued_job_before_launch(client):
     assert app_module.jobs[JOB_ID]["status"] == "stopped"
 
 
+def test_cancel_kills_running_process(client):
+    proc = FakeProc()
+    _seed("processing", proc)
+    r = client.post(f"/api/cancel/{JOB_ID}")
+    assert r.status_code == 200 and r.json()["status"] == "cancelled"
+    assert app_module.jobs[JOB_ID]["status"] == "cancelled"
+    assert proc.killed is True
+
+
+def test_cancel_refused_when_process_already_exited(client):
+    # Race guard: the subprocess exited but run_job's 2s poll loop hasn't
+    # observed it yet (status still 'processing'). A cancel here must NOT be
+    # honoured — it would rmtree a fully-rendered job.
+    proc = FakeProc(running=False)
+    _seed("processing", proc)
+    r = client.post(f"/api/cancel/{JOB_ID}")
+    assert r.status_code == 409
+    assert app_module.jobs[JOB_ID]["status"] == "processing"  # untouched
+    assert proc.killed is False
+
+
+def test_cancel_queued_job_still_allowed(client):
+    # Queued jobs have no process handle; the pre-dispatch guard in run_job
+    # ensures they never launch. The race guard must not block this path.
+    _seed("queued", None)
+    r = client.post(f"/api/cancel/{JOB_ID}")
+    assert r.status_code == 200
+    assert app_module.jobs[JOB_ID]["status"] == "cancelled"
+
+
+def test_run_job_kills_orphan_on_unexpected_error(monkeypatch):
+    """A crash inside run_job's loop must not leave the subprocess running.
+
+    load_partial_result raising a non-(OSError/JSONDecodeError/ValueError)
+    exception escapes to run_job's outer except; before the fix the process
+    kept running with status 'failed' — unkillable via the API.
+    """
+    import asyncio
+    import io
+
+    proc = FakeProc()
+    proc.stdout = io.BytesIO(b"")
+
+    def boom(*a, **k):
+        raise TypeError("malformed shorts data")
+
+    async def instant_sleep(_t):
+        return None
+
+    monkeypatch.setattr(app_module.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(app_module, "load_partial_result", boom)
+    monkeypatch.setattr(app_module.asyncio, "sleep", instant_sleep)
+
+    app_module.jobs[JOB_ID] = {
+        "status": "queued", "logs": [],
+        "cmd": ["python", "-m", "x"], "env": {}, "output_dir": "",
+    }
+    try:
+        asyncio.run(app_module.run_job(JOB_ID, app_module.jobs[JOB_ID]))
+        assert app_module.jobs[JOB_ID]["status"] == "failed"
+        assert proc.killed is True
+    finally:
+        app_module.jobs.pop(JOB_ID, None)
+
+
 def test_controls_404_for_unknown_job(client):
     for ep in ("pause", "resume", "stop"):
         assert client.post(f"/api/{ep}/{JOB_ID}").status_code == 404

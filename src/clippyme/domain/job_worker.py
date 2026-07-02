@@ -23,7 +23,11 @@ def enqueue_output(out, job_id: str, jobs: Dict[str, Dict]) -> None:
     """
     try:
         for line in iter(out.readline, b""):
-            decoded_line = line.decode("utf-8").strip()
+            # errors="replace": a single non-UTF-8 byte from ffmpeg/yt-dlp must
+            # not raise and kill this whole reader thread — that would freeze
+            # the job's visible log for the rest of the run while the
+            # subprocess keeps working, with no user-facing explanation.
+            decoded_line = line.decode("utf-8", errors="replace").strip()
             if decoded_line:
                 print(f"📝 [Job Output] {decoded_line}")
                 if job_id in jobs:
@@ -70,12 +74,15 @@ def make_workers(
                 # a bulk delete behind the user's back.
                 if job_retention_seconds > 0:
                     from clippyme.domain.history_service import is_valid_job_id
+                    from clippyme.domain.job_control import can_purge
                     # OUTPUT_DIR: purge stale job folders. Only ever delete
                     # directories whose name is a valid job id — never a
                     # symlink, the thumbnails dir, or a hand-placed folder.
                     for job_id in os.listdir(output_dir):
                         job_path = os.path.join(output_dir, job_id)
                         if not is_valid_job_id(job_id):
+                            continue
+                        if not can_purge(jobs.get(job_id, {}).get("status")):
                             continue
                         if os.path.isdir(job_path) and not os.path.islink(job_path):
                             if now - os.path.getmtime(job_path) > job_retention_seconds:
@@ -90,7 +97,10 @@ def make_workers(
                             if now - os.path.getmtime(file_path) > job_retention_seconds:
                                 os.remove(file_path)
                         except Exception as exc:
-                            logger.debug("Cleanup skipped upload %s: %s", filename, exc)
+                            # warning, not debug: the app's INFO basicConfig
+                            # would swallow debug, hiding a systematically
+                            # failing cleanup (slow disk leak, no signal).
+                            logger.warning("Cleanup skipped upload %s: %s", filename, exc)
 
                 # Transcript cache (older than 7 days)
                 cache_dir = os.path.join(data_dir, "cache")
@@ -101,7 +111,7 @@ def make_workers(
                             if now - os.path.getmtime(cache_path) > 7 * 86400:
                                 os.remove(cache_path)
                         except Exception as exc:
-                            logger.debug("Cleanup skipped cache %s: %s", filename, exc)
+                            logger.warning("Cleanup skipped cache %s: %s", filename, exc)
 
             except Exception as e:
                 logger.warning("Cleanup error: %s", e)

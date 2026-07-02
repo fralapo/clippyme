@@ -12,7 +12,7 @@ import logging
 import os
 import subprocess
 
-from clippyme.domain.encode import x264_video_args
+from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +68,13 @@ def add_logo_to_video(
     try:
         cmd = ["ffprobe", "-v", "error", "-show_entries", "stream=width,height",
                "-of", "csv=s=x:p=0", video_path]
-        dims = subprocess.check_output(cmd).decode().strip().split("\n")[0].split("x")
+        dims = subprocess.check_output(cmd, timeout=30).decode().strip().split("\n")[0].split("x")
         video_width, video_height = int(dims[0]), int(dims[1])
-    except Exception:
+    except Exception as exc:
+        # The 1080×1920 assumption is wrong for 1:1 / 16:9 jobs — a silently
+        # misplaced watermark with no trace is worse than a loud fallback.
+        logger.warning("Logo ffprobe failed on %s (%s) — assuming 1080x1920",
+                       os.path.basename(video_path), exc)
         video_width, video_height = 1080, 1920
 
     scale = min(0.5, max(0.05, float(scale)))
@@ -96,9 +100,13 @@ def add_logo_to_video(
         output_path,
     ]
     try:
-        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       timeout=ffmpeg_timeout())
         logger.info("✅ Logo overlaid → %s", os.path.basename(output_path))
         return True
+    except subprocess.TimeoutExpired:
+        logger.error("❌ Logo ffmpeg timed out after %ss", ffmpeg_timeout())
+        raise
     except subprocess.CalledProcessError as e:
         logger.error("❌ Logo ffmpeg error: %s", e.stderr.decode() if e.stderr else "unknown")
         raise

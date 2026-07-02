@@ -30,6 +30,27 @@ _VALID_PRESETS = {
     "medium", "slow", "slower", "veryslow",
 }
 
+# A single compose-layer ffmpeg pass on a ≤75s clip finishes in seconds; a pass
+# that runs this long is hung, not slow. Every compose-layer subprocess.run
+# passes this timeout because those calls execute on asyncio's shared default
+# thread pool — a handful of hung ffmpeg processes would otherwise pin its
+# workers forever and stall job polling for the whole API, not just the
+# offending request.
+_DEFAULT_FFMPEG_TIMEOUT = 600
+
+
+def ffmpeg_timeout() -> int:
+    """Per-pass ffmpeg timeout in seconds — ``CLIPPYME_FFMPEG_TIMEOUT`` (>0) or 600."""
+    raw = (os.getenv("CLIPPYME_FFMPEG_TIMEOUT") or "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return _DEFAULT_FFMPEG_TIMEOUT
+
 
 def x264_crf() -> int:
     """Resolved CRF — ``CLIPPYME_X264_CRF`` (clamped to 0–51) or the default 18."""

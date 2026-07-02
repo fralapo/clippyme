@@ -2,7 +2,7 @@ import os
 import re
 import subprocess
 
-from clippyme.domain.encode import x264_video_args
+from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
 
 
 def _strip_ass_braces(text: str) -> str:
@@ -819,7 +819,8 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
     # Don't print the full command: it embeds absolute filesystem paths that
     # would surface in the job log served by /api/status. Terse line only.
     print("🎬 Burning subtitles…")
-    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                            timeout=ffmpeg_timeout())
 
     if result.returncode != 0:
         print(f"❌ FFmpeg Subtitle Error: {result.stderr.decode()}")

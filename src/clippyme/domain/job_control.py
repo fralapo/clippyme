@@ -51,6 +51,18 @@ def can_cancel(status: str) -> bool:
     return status in ("processing", "paused", "queued")
 
 
+def can_purge(status) -> bool:
+    """True if a job's output dir may be swept by the retention cleanup.
+
+    ``None`` (job unknown to the in-memory dict, e.g. after a restart) is
+    purgeable. Anything still ACTIVE must never be rmtree'd out from under its
+    live subprocess: a directory's mtime only updates when entries are
+    added/removed, so a long-paused or slow job can look stale by mtime while
+    its process is still alive.
+    """
+    return status not in ACTIVE_STATES
+
+
 def should_skip_dispatch(status: str) -> bool:
     """True if a job pulled off the queue was already terminated while queued.
 

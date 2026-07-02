@@ -61,3 +61,18 @@ def test_video_args_is_a_fresh_list_each_call():
     a = x264_video_args()
     a.append("MUTATED")
     assert "MUTATED" not in x264_video_args()
+
+
+def test_ffmpeg_timeout_default_and_env(monkeypatch):
+    from clippyme.domain.encode import ffmpeg_timeout
+
+    monkeypatch.delenv("CLIPPYME_FFMPEG_TIMEOUT", raising=False)
+    assert ffmpeg_timeout() == 600
+
+    monkeypatch.setenv("CLIPPYME_FFMPEG_TIMEOUT", "120")
+    assert ffmpeg_timeout() == 120
+
+    # Invalid / non-positive values fall back to the default.
+    for bad in ("0", "-5", "abc", ""):
+        monkeypatch.setenv("CLIPPYME_FFMPEG_TIMEOUT", bad)
+        assert ffmpeg_timeout() == 600

@@ -40,6 +40,16 @@ def test_should_skip_dispatch_for_terminal_states():
         assert jc.should_skip_dispatch(s) is False
 
 
+def test_can_purge_blocks_active_jobs():
+    # The retention sweep must never rmtree a live job's output dir: mtime
+    # only updates on entry add/remove, so a long-paused job looks stale.
+    for s in jc.ACTIVE_STATES:
+        assert jc.can_purge(s) is False
+    for s in jc.TERMINAL_STATES:
+        assert jc.can_purge(s) is True
+    assert jc.can_purge(None) is True  # unknown to the in-memory dict
+
+
 def test_stopped_is_terminal_cancelled_discards():
     # Documents the contract relied on by run_job's post-loop handling.
     assert "stopped" in jc.TERMINAL_STATES

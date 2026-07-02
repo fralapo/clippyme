@@ -338,6 +338,19 @@ async def run_job(job_id, job_data):
         # str(e), so without this a crash in result-loading/relocation is
         # invisible to anyone reading the backend logs.
         logger.exception("run_job failed for job_id=%s", job_id)
+        # A crash between Popen and the loop's natural exit (e.g. an unexpected
+        # error from a result loader) must not leave the pipeline subprocess
+        # running: status is now 'failed', so can_cancel() refuses and the
+        # orphan would burn CPU/GPU unkillable via the API — while its
+        # concurrency slot is already released to the next job.
+        proc = jobs.get(job_id, {}).get('process')
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+                await asyncio.to_thread(lambda: proc.wait(timeout=5))
+                jobs[job_id]['logs'].append("Pipeline process killed after execution error.")
+            except Exception:
+                logger.warning("Could not kill orphaned process for job %s", job_id)
 
 @app.post("/api/process")
 async def process_endpoint(
@@ -580,9 +593,20 @@ async def cancel_job(job_id: str, request: Request):
     if not job_control.can_cancel(job['status']):
         raise HTTPException(status_code=400, detail="Job is not running")
 
+    # If the subprocess has ALREADY exited, the job is completing right now —
+    # run_job's 2s poll loop just hasn't observed the exit yet. Honouring the
+    # cancel in that window would rmtree a fully-rendered job (silent,
+    # unrecoverable data loss), so refuse and let the imminent
+    # completed/failed status land instead. Queued jobs (no process handle)
+    # remain cancellable via the pre-dispatch guard.
+    proc = job.get('process')
+    if proc is not None and proc.poll() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Job already finished processing; cancel refused to avoid discarding output")
+
     # A paused job's tree is suspended — resume it first so .kill() is delivered
     # and the OS can reap it (a stopped process can ignore signals on some OSes).
-    proc = job.get('process')
     if proc and proc.poll() is None:
         if job['status'] == 'paused':
             try:

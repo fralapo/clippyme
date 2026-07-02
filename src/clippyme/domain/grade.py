@@ -15,7 +15,7 @@ import logging
 import os
 import subprocess
 
-from clippyme.domain.encode import x264_video_args
+from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,13 @@ def apply_grade(input_path: str, output_path: str, preset: str) -> bool:
         "-c:a", "copy",
         output_path,
     ]
-    proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                              timeout=ffmpeg_timeout())
+    except subprocess.TimeoutExpired:
+        logger.warning("grade '%s' timed out after %ss — keeping ungraded input",
+                       preset, ffmpeg_timeout())
+        return False
     if proc.returncode != 0 or not os.path.exists(output_path):
         logger.warning(
             "grade '%s' failed (rc=%s): %s",

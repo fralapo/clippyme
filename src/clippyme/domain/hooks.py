@@ -4,7 +4,7 @@ import subprocess
 import urllib.request
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
-from clippyme.domain.encode import x264_video_args
+from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
 
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerif/NotoSerif-Bold.ttf"
 
@@ -363,10 +363,14 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
             *x264_video_args(),
             output_path,
         ]
-        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       timeout=ffmpeg_timeout())
         print(f"✅ Hook added to {output_path}")
         return True
 
+    except subprocess.TimeoutExpired:
+        print(f"❌ FFmpeg hook overlay timed out after {ffmpeg_timeout()}s")
+        raise
     except subprocess.CalledProcessError as e:
         print(f"❌ FFmpeg Error: {e.stderr.decode() if e.stderr else 'Unknown'}")
         raise

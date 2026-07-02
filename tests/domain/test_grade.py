@@ -16,3 +16,20 @@ def test_known_presets_return_filter_chains():
 
 def test_case_insensitive():
     assert build_grade_filter("Warm_Cinematic") == GRADE_PRESETS["warm_cinematic"]
+
+
+def test_apply_grade_timeout_returns_false(monkeypatch):
+    """A hung ffmpeg must degrade to 'keep the ungraded input', not raise.
+
+    The compose layer treats a False return as a soft no-op, so a timeout
+    behaves exactly like an unknown preset instead of failing the download.
+    """
+    import subprocess
+
+    from clippyme.domain import grade as grade_module
+
+    def hang(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=1)
+
+    monkeypatch.setattr(grade_module.subprocess, "run", hang)
+    assert grade_module.apply_grade("in.mp4", "out.mp4", "warm_cinematic") is False
