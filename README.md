@@ -27,7 +27,7 @@
 
 Fork of OpenShorts, hardened and extended: cloud-or-local transcription, Gemini viral-moment detection, active-speaker 9:16 reframing, compose-on-download editing, and one-click multi-platform scheduling.
 
-> Status: personal/self-hosted project. Safe to run on a trusted LAN. **Do not expose port 8000 to the public internet** without adding an authentication layer in front of it.
+> Status: personal/self-hosted project. Both published ports bind to **loopback by default** (`CLIPPYME_BIND=127.0.0.1`); opening them to a LAN (`CLIPPYME_BIND=0.0.0.0`) is a deliberate choice — pair it with `CLIPPYME_API_TOKEN` so every API request needs the shared secret. **Do not expose it to the public internet** without a reverse proxy terminating TLS in front.
 
 <details>
 <summary><b>Table of contents</b></summary>
@@ -104,6 +104,14 @@ Open the dashboard, drop in a YouTube URL or upload a file, and watch the pipeli
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 ```
 
+### Production frontend (optional)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+```
+
+Swaps the dashboard from the Vite dev server to a static `vite build` served by **nginx** (same port 5175, same loopback default; the nginx proxy mirrors the dev proxy with 600 s timeouts for long composes and unbuffered upload/video streaming). The default `docker compose up` dev workflow (HMR + bind mount) is untouched. Requires Docker Compose ≥ 2.24.
+
 ---
 
 ## Local development (no Docker)
@@ -142,6 +150,8 @@ Runtime env overrides (rarely needed):
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `CLIPPYME_BIND` | `127.0.0.1` | Host interface both published ports (8000/5175) bind to. `0.0.0.0` exposes the app to the LAN — deliberate choice only. |
+| `CLIPPYME_API_TOKEN` | _(unset)_ | Optional shared-secret auth: when set, every `/api` request must carry it (`X-API-Token` or `Authorization: Bearer`). The dashboard stores it in Settings → API token. Unset = no-op. |
 | `TRANSCRIPTION_PROVIDER` | `deepgram` | Or `elevenlabs` (Scribe), or `whisper` to force local. |
 | `ELEVENLABS_AUDIO_ISOLATION` | `false` | Run the ElevenLabs Voice Isolator before ASR to strip background noise/music on noisy sources. |
 | `CLIPPYME_TRANSCRIBE_AUDIO_ONLY` | `true` | Strip to audio-only FLAC before transcription; `false` sends the full video. |
@@ -274,7 +284,7 @@ Every finished clip has an **Edit & reprocess** panel, one button on the clip ca
 
 **Custom fonts**: upload a `.ttf`/`.otf` (e.g. a licensed Stratos) in Settings → Brand assets and it appears in the classic-subtitle and hook font pickers, resolved at burn time from the writable `data/fonts/` dir alongside the bundled faces.
 
-Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-renders the framing (only when the reframe mode changed) and then composes the active layers in one pass via `/api/compose/{job_id}/{clip_index}`: order is **Grade → Subtitles → Smart Cut → Hook → Logo** (grade first so the overlays keep their authored colour; subtitles burn next so their absolute timing never drifts when Smart Cut removes silences; the logo sits on top of everything). Reprocessing runs in the **background**: Apply closes the modal immediately and the clip card shows a *Reprocessing…* overlay, so you can edit other clips meanwhile. The preview updates to the composed result, and downloading runs the same compose, so what you see is what you get. Downloaded clips are named after the AI-suggested title (sanitized for Windows: forbidden characters and reserved device names are stripped, length-capped, falling back to `clip_N`).
+Editing is staged: nothing runs while you toggle. **Apply & reprocess** re-renders the framing (only when the reframe mode changed) and then composes the active layers in one pass via `/api/compose/{job_id}/{clip_index}`: order is **Grade → Subtitles → Smart Cut → Hook → Logo** (grade first so the overlays keep their authored colour; subtitles burn next so their absolute timing never drifts when Smart Cut removes silences; the logo sits on top of everything). Adjacent layers are fused into shared ffmpeg passes (grade+subtitles in one, hook+logo in one), so a fully-toggled compose is 3 encodes instead of 5 — noticeably faster downloads with zero quality change. Reprocessing runs in the **background**: Apply closes the modal immediately and the clip card shows a *Reprocessing…* overlay, so you can edit other clips meanwhile. The preview updates to the composed result, and downloading runs the same compose, so what you see is what you get. Downloaded clips are named after the AI-suggested title (sanitized for Windows: forbidden characters and reserved device names are stripped, length-capped, falling back to `clip_N`).
 
 **Apply runs in the background.** Hitting Apply closes the modal immediately and the reframe/compose work runs without blocking the page, the clip card shows a *Reprocessing…* overlay while it renders, and you can edit, reprocess, and publish other clips at the same time. Each clip is an independent job, so several can render at once.
 
@@ -336,8 +346,10 @@ This project has been audited; the current state is suitable for **trusted LAN d
 - **Per-client rate limiting** (`RATE_LIMIT_ENABLED`, default on): a dependency-free token bucket throttles the compute-heavy endpoints (`process` / `batch` / `publish`) per client IP; the bucket table is bounded against a unique-IP-flood memory DoS.
 - **Spoof-resistant client IP**: `X-Forwarded-For` / `X-Real-IP` are honoured only when `TRUST_PROXY=1` **and** the TCP peer is itself a private/loopback proxy, so a direct public client can't forge its address to dodge the rate limiter or the trusted-origin guard.
 - **SSRF hardening**: download + Zernio upload URLs are re-resolved and rejected when every resolved address is internal/loopback/link-local (DNS-rebinding-aware), with a bounded `getaddrinfo` timeout.
+- **Loopback by default**: both published ports bind to `127.0.0.1` (`CLIPPYME_BIND`). The trust model treats every private-network peer as an authorized client for config/state endpoints, so LAN exposure is opt-in, not the default.
+- **Optional API token** (`CLIPPYME_API_TOKEN`): when set, an app middleware requires the shared secret on every `/api` request (`X-API-Token` or `Authorization: Bearer`, constant-time compare) — the auth layer for deliberate LAN deployments. Static media mounts stay IP-open (`<video>`/FontFace can't send custom headers).
 
-**Not yet in place** (required before exposing publicly): an authentication layer and a reverse proxy terminating TLS + security headers.
+**Not yet in place** (required before exposing publicly): a reverse proxy terminating TLS + security headers.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
