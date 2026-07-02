@@ -7,6 +7,7 @@ import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from './primitives';
 import { clipVideoSrc } from './realApi';
 import { publishClip, getZernio } from './realApi';
 import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from '../lib/seedClipParams';
+import { localDatePlus } from '../lib/scheduleDates';
 import { useModalA11y } from './useModalA11y';
 
 // redesign plat id → backend platform + account key
@@ -15,17 +16,6 @@ const PLAT = {
   ig: { platform: 'instagram', acct: 'instagram', icon: 'instagram', label: 'Reels' },
   yt: { platform: 'youtube', acct: 'youtube', icon: 'youtube', label: 'Shorts' },
 };
-
-// Local YYYY-MM-DD for `start_date`, offset by `addDays`. Used to give each
-// clip in a batch its own day so a per-platform daily posting cap (e.g.
-// YouTube's 5/day) doesn't reject the tail of the batch.
-function localDatePlus(addDays) {
-  const d = new Date();
-  d.setDate(d.getDate() + addDays);
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
-}
 
 function PubRow({ clip, idx, st, plats }) {
   // `st` is either a status string or { state, error } so we can surface the

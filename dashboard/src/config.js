@@ -2,7 +2,10 @@
 // If VITE_API_URL is set (e.g. in production), use it.
 // Otherwise, default to empty string which means relative paths (proxied in dev).
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+// Guarded so the module also loads under plain Node (npm test / node --test),
+// where import.meta.env does not exist. Vite statically defines import.meta.env
+// in dev/build, so browser behaviour is unchanged.
+export const API_BASE_URL = (import.meta.env && import.meta.env.VITE_API_URL) || '';
 
 export const config = {
     API_BASE_URL

@@ -108,3 +108,38 @@ by AST/text, behaviour by the Docker suite).
 
 **Verification (Wave 3):** host `pytest -m "not integration"` → 590 passed;
 Docker `pytest -m integration` → 30 passed, 42.9s; CI ruff rule set → clean.
+Commit `10edaa4`.
+
+## Wave 6 — frontend test coverage (2026-07-02)
+
+**10. The frontend's highest-fan-in pure logic had zero tests (4 test files vs
+53 on the backend).** Added (all plain `node --test`, no new dependency):
+- `lib/seedClipParams.test.js` — pins the single seam that keeps Create panel /
+  EditClipModal / export / publish emitting the same `*_params` shape
+  compose.py reads: defaults, grade-toggle gating, style-key forwarding, and
+  the explicit-only omission contract for `uppercase`/`font_size`/
+  `outline_width`/`words_per_group` (each a documented past regression).
+- `redesign/realApi.test.js` — `optsToPreselections` (object→subject alias,
+  legacy boolean fallback, karaoke vs classic field sets, model/grade/logo
+  omission), the `javascript:`/`data:` scheme neutralisation in
+  `clipVideoSrc`/`clipPreviewSrc` (a security property previously uncovered),
+  cache-buster handling, `fmtDuration`.
+- `lib/taste.test.js` extended to the localStorage exports via a 10-line Map
+  shim: round-trip, invalid-action no-op, 120-event rolling window,
+  garbage-JSON resilience, `tasteInstructionSuffix`.
+- `lib/scheduleDates.js` — `localDatePlus` extracted from `publish.jsx` (JSX is
+  not `node --test`-parseable) with an injectable `now`;
+  `scheduleDates.test.js` covers zero-padding, per-batch-position day spacing
+  (the anti-429 contract), month/year rollover.
+- `tests/domain/test_frontend_backend_parity.py` — cross-file guard parsing
+  `data.js`: grade preset ids ↔ `grade.GRADE_PRESETS`, logo positions/sizes ↔
+  `logo._POSITIONS`/`compose._LOGO_SIZE_MAP`, `HOOK_STYLE_DEFAULT` ↔
+  `hooks.HOOK_STYLE_DEFAULTS` (the documented hook-default drift incident,
+  previously only asserted on the backend side).
+
+Enablers: `config.js` guards `import.meta.env` (Vite still defines it;
+plain Node no longer throws) and `realApi.js` uses explicit `.js` import
+extensions (strict Node ESM resolution; Vite accepts them unchanged).
+
+**Verification (Wave 6):** `npm test` → 54 passed (was 26); `npm run lint` →
+0 warnings; `npm run build` → clean; host pytest → 593 passed.

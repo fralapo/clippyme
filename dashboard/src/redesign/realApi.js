@@ -1,9 +1,11 @@
 // Real backend calls the redesign needs beyond api.js (submit/poll). Mirrors
 // the exact payloads the production components use, so the redesign talks to
 // the same endpoints with the same contracts.
-import { getApiUrl } from '../config';
-import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from '../lib/seedClipParams';
-import { clipDownloadName } from '../lib/clipFilename';
+// Explicit .js extensions: plain Node (npm test / node --test) resolves ESM
+// strictly, and Vite accepts the explicit form unchanged.
+import { getApiUrl } from '../config.js';
+import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from '../lib/seedClipParams.js';
+import { clipDownloadName } from '../lib/clipFilename.js';
 
 export { clipDownloadName };
 
