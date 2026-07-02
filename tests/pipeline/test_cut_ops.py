@@ -236,3 +236,36 @@ def test_silence_refine_never_inverts():
     )
     assert (s, e, path) == (10.05, 19.95, "none")
     assert e > s
+
+
+# --- stage-2 polish pre-screen helpers --------------------------------------
+
+def test_parse_margin_seconds_variants():
+    from clippyme.pipeline.cut_ops import parse_margin_seconds
+
+    assert parse_margin_seconds("0.2sec") == 0.2
+    assert parse_margin_seconds("0.2s") == 0.2
+    assert parse_margin_seconds("0.35") == 0.35
+    assert parse_margin_seconds(" 1 second ") == 1.0
+    assert parse_margin_seconds("garbage") == 0.2   # default
+    assert parse_margin_seconds("") == 0.2
+    assert parse_margin_seconds("-3sec") == 0.0     # negative clamps
+
+
+def test_predict_polish_saving_subtracts_double_margin():
+    from clippyme.pipeline.cut_ops import predict_polish_saving
+
+    # 1.0s silence with 0.2s margin → 0.6s removable; 0.3s silence → nothing.
+    silences = [(0.0, 1.0), (5.0, 5.3)]
+    assert abs(predict_polish_saving(silences, 0.2) - 0.6) < 1e-9
+
+
+def test_predict_polish_saving_edge_cases():
+    from clippyme.pipeline.cut_ops import predict_polish_saving
+
+    assert predict_polish_saving([], 0.2) == 0.0
+    assert predict_polish_saving(None, 0.2) == 0.0
+    # Silence exactly 2*margin long contributes zero, never negative.
+    assert predict_polish_saving([(0.0, 0.4)], 0.2) == 0.0
+    # Garbage tuples are skipped, valid ones still counted.
+    assert abs(predict_polish_saving([("x", "y"), (0.0, 1.0)], 0.2) - 0.6) < 1e-9

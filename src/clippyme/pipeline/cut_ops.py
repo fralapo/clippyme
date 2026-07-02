@@ -466,3 +466,47 @@ def refine_edges_to_silence(
     else:
         path = "none"
     return new_start, new_end, path
+
+
+# ---------------------------------------------------------------------------
+# Smart Cut stage-2 polish pre-screen (pure prediction math)
+# ---------------------------------------------------------------------------
+
+def parse_margin_seconds(margin: str, default: float = 0.2) -> float:
+    """Parse an auto-editor ``--margin`` value ('0.2sec', '0.2s', '0.2') → seconds.
+
+    Falls back to ``default`` on anything unparsable; negative values clamp
+    to 0 (a negative margin is meaningless here).
+    """
+    raw = str(margin or "").strip().lower()
+    for suffix in ("seconds", "second", "secs", "sec", "s"):
+        if raw.endswith(suffix):
+            raw = raw[: -len(suffix)]
+            break
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return default
+
+
+def predict_polish_saving(silences, margin_seconds: float) -> float:
+    """Upper-bound estimate of how many seconds an auto-editor audio polish
+    (``--edit audio:threshold`` + ``--margin M``) would remove, given the
+    silence intervals ffmpeg ``silencedetect`` found.
+
+    auto-editor keeps M seconds of padding around every loud section, so a
+    silence of length L can contribute at most ``max(0, L - 2*M)``. The caller
+    uses this as a PRE-SCREEN: when even this optimistic total is below the
+    keep-threshold, the full decode+encode polish render would be discarded
+    anyway and can be skipped outright. Pure → host-unit-tested.
+    """
+    m2 = 2.0 * max(0.0, float(margin_seconds))
+    total = 0.0
+    for start, end in silences or []:
+        try:
+            length = float(end) - float(start)
+        except (TypeError, ValueError):
+            continue
+        if length > m2:
+            total += length - m2
+    return total

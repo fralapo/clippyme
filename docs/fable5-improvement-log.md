@@ -223,4 +223,21 @@ bound too because the Vite proxy reaches the backend from inside the docker
 network as a trusted private peer, so a LAN-exposed dashboard would reopen
 the hole. Verified with `docker compose config` (host_ip: 127.0.0.1 on both).
 (The full API-token alternative for deliberate LAN deployments remains open —
-descoped: needs token distribution to the frontend.)
+descoped: needs token distribution to the frontend.) Commit `85ddb6a`.
+
+## Wave 8 — smart-cut polish pre-screen (2026-07-02)
+
+**19. Stage-2 polish no longer renders clips it would discard.**
+`_audio_polish_pass` always ran a full auto-editor decode+encode, then deleted
+the result when it saved <0.5s — a whole wasted encode generation on quiet-
+free clips. A seconds-cheap audio-only `media_probe.detect_silences` pass now
+predicts the saving first (`cut_ops.predict_polish_saving`: each silence can
+contribute at most `len - 2*margin`); the noise floor is biased +4 dB above
+auto-editor's threshold so the estimate over-counts, and the render is skipped
+only when even that optimistic upper bound can't reach the 0.5s keep-threshold.
+Advisory: any pre-screen failure falls through to the real pass. Kill-switch
+`AE_POLISH_PRESCREEN=0`. Pure helpers (`parse_margin_seconds`,
+`predict_polish_saving`) host-tested in `tests/pipeline/test_cut_ops.py`.
+
+**Verification (Wave 8):** host pytest → 607 passed; Docker integration →
+33 passed, 47.4s.

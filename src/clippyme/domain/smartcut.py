@@ -815,6 +815,36 @@ def _audio_polish_pass(input_path: str) -> tuple[str, float]:
     if not _has_auto_editor():
         return input_path, 0.0
 
+    # Pre-screen (advisory, seconds-cheap): the polish render is a full
+    # decode+encode that gets DISCARDED whenever it saves <0.5s. An audio-only
+    # silencedetect pass predicts the saving first; the noise floor is biased
+    # +4 dB ABOVE auto-editor's threshold so the prediction over-counts —
+    # we only skip when even the optimistic upper bound can't reach 0.5s.
+    # Any pre-screen failure falls through to the real pass unchanged.
+    if os.environ.get("AE_POLISH_PRESCREEN", "1").lower() not in ("0", "false", "no"):
+        try:
+            import math
+
+            from clippyme.pipeline.cut_ops import parse_margin_seconds, predict_polish_saving
+            from clippyme.pipeline.media_probe import detect_silences
+
+            margin_s = parse_margin_seconds(AUDIO_POLISH_MARGIN)
+            amp = max(1e-6, float(AUDIO_POLISH_THRESHOLD))
+            noise_db = 20.0 * math.log10(amp) + 4.0
+            silences = detect_silences(
+                input_path, noise_db=noise_db,
+                min_dur=max(0.1, 2.0 * margin_s), timeout=60,
+            )
+            predicted = predict_polish_saving(silences, margin_s)
+            if predicted < 0.5:
+                logger.info(
+                    "audio polish pre-screened out (predicted saving %.2fs < 0.5s)",
+                    predicted,
+                )
+                return input_path, 0.0
+        except Exception as exc:
+            logger.debug("polish pre-screen skipped (%s) — running the real pass", exc)
+
     polished_path = input_path.replace(".mp4", "_polished.mp4")
     cmd = [
         "auto-editor", input_path,
