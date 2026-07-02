@@ -79,4 +79,32 @@ Tests: `tests/domain/test_clip_locks.py` (mutual exclusion, cross-clip
 parallelism via event-handshake, registry cleanup, path normalisation).
 
 **Verification (Wave 2):** `pytest -m "not integration"` → 587 passed,
-3 skipped. CI ruff rule set → clean.
+3 skipped. CI ruff rule set → clean. Commit `a56377b`.
+
+## Wave 3 — reframe: no state bleed across scene cuts (2026-07-02)
+
+**8. Tracker state bled across hard cuts (High, product quality).**
+`SpeakerTracker` and `DetectionSmoother` were created once per clip and never
+reset at scene boundaries — only the *camera* snapped (`force_snap`). A face in
+the new scene landing near a previous scene's track inherited the old
+active-speaker 3× sticky bonus + 45-frame switch cooldown and was box-averaged
+with stale frames from an unrelated shot; under comfort mode (default) the
+polluted early targets skew the whole scene's collapsed-median static crop.
+Worst on fast-cut viral-edit content — exactly the product's target. Both
+classes gained `reset()`; both scene-advance sites (streaming loop +
+global-smooth pass 1) call them. `SpeakerTracker.reset` also rearms the switch
+cooldown so the new scene locks its speaker immediately; `next_id` keeps
+counting so IDs never collide across scenes.
+
+**9. Short-scene strategy sampling read the neighbour scene (Med).**
+`analyze_scenes_strategy` sampled `s_frame+2` / `e_frame-2` unclamped: on a
+<5-frame scene those indices land in the adjacent scene, misclassifying
+TRACK/WIDE/GENERAL from a neighbour's content. Samples are now clamped to
+`[s_frame, e_frame)`.
+
+Tests: `tests/pipeline/test_reframe_scene_reset.py` (host, source-level — the
+module imports cv2 so it can't be imported on the host; the wiring is pinned
+by AST/text, behaviour by the Docker suite).
+
+**Verification (Wave 3):** host `pytest -m "not integration"` → 590 passed;
+Docker `pytest -m integration` → 30 passed, 42.9s; CI ruff rule set → clean.

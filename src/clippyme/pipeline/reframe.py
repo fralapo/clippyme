@@ -187,6 +187,17 @@ class DetectionSmoother:
             self.last_seen_frame.pop(fid, None)
         return smoothed
 
+    def reset(self):
+        """Drop all track history — call at a hard scene cut.
+
+        A face in the new scene that happens to land near a previous scene's
+        track would otherwise be averaged with up to window_size-1 stale boxes
+        from an unrelated shot, blending two people's positions for several
+        frames right after the cut.
+        """
+        self.histories.clear()
+        self.last_seen_frame.clear()
+
 class SmoothedCameraman:
     """
     Handles smooth camera movement with adaptive exponential easing.
@@ -471,6 +482,26 @@ class SpeakerTracker:
         # ID tracking
         self.next_id = 0
         self.known_faces = []  # [{'id': 0, 'center': x, 'last_frame': 123}]
+
+    def reset(self, frame_number=None):
+        """Forget speaker identities and scores — call at a hard scene cut.
+
+        Faces on either side of a cut are different people even when they land
+        at similar x positions; carrying identities across lets the previous
+        scene's active speaker keep its 3x sticky bonus and the switch
+        cooldown, suppressing the lock onto the actual new speaker for up to
+        ~cooldown_frames. Also rearms the cooldown so the new scene can pick
+        its speaker immediately. ``next_id`` keeps counting so IDs never
+        collide across scenes.
+        """
+        self.active_speaker_id = None
+        self.speaker_scores = {}
+        self.mar_history = {}
+        self.last_seen = {}
+        self.locked_counter = 0
+        self.known_faces = []
+        if frame_number is not None:
+            self.last_switch_frame = frame_number - self.switch_cooldown
 
     def get_target(self, face_candidates, frame_number, width):
         """
@@ -1032,7 +1063,16 @@ def analyze_scenes_strategy(video_path, scenes):
                 strategies.append('GENERAL')
                 continue
             if e_frame - s_frame < 14:
-                frames_to_check = [s_frame + 2, (s_frame + e_frame) // 2, e_frame - 2]
+                # Clamp every sample inside [s_frame, e_frame): on a <5-frame
+                # scene the unclamped s_frame+2 / e_frame-2 land in the
+                # ADJACENT scene and can misclassify this one from a
+                # neighbour's content (e.g. a faceless flash-cut read as TRACK
+                # because it borrowed the next shot's face).
+                frames_to_check = sorted({
+                    min(s_frame + 2, e_frame - 1),
+                    (s_frame + e_frame) // 2,
+                    max(e_frame - 2, s_frame),
+                })
             else:
                 step = (e_frame - s_frame) // 8
                 frames_to_check = [s_frame + step * i for i in range(1, 8)]
@@ -1237,6 +1277,14 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
                     _, end_f = scene_boundaries[current_scene_index]
                     if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
                         current_scene_index += 1
+                        # Hard cut: drop identities/histories from the previous
+                        # shot. Carrying them across lets a near-positioned face
+                        # in the new scene inherit the old active-speaker bonus
+                        # + cooldown and be box-averaged with stale frames —
+                        # and under comfort mode the polluted early targets
+                        # skew the whole scene's collapsed median crop.
+                        speaker_tracker.reset(frame_number)
+                        detection_smoother.reset()
                 strat = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
                 strategies.append(strat)
                 scene_ids.append(current_scene_index)
@@ -1554,6 +1602,13 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                     start_f, end_f = scene_boundaries[current_scene_index]
                     if frame_number >= end_f and current_scene_index < len(scene_boundaries) - 1:
                         current_scene_index += 1
+                        # Hard cut: reset tracker identities so the previous
+                        # shot's active-speaker bonus/cooldown and box history
+                        # can't bleed onto an unrelated face in the new scene
+                        # (the force_snap below only snaps the CAMERA, not the
+                        # tracker state).
+                        speaker_tracker.reset(frame_number)
+                        detection_smoother.reset()
             
                 # Determine Strategy for current frame based on scene
                 current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
