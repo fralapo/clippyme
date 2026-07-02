@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { submitProcessJob, submitBatchJob } from '../lib/api';
 import { getApiUrl } from '../config';
+import { apiFetch } from '../lib/apiToken';
 import { tasteInstructionSuffix } from '../lib/taste';
 
 // Append the cross-job taste hint (#8) to a job's AI instructions so Gemini
@@ -150,7 +151,7 @@ export function useJobSubmission({
       const pollAll = setInterval(async () => {
         for (const jid of allJobIds) {
           try {
-            const r = await fetch(getApiUrl(`/api/status/${jid}`));
+            const r = await apiFetch(getApiUrl(`/api/status/${jid}`));
             if (!r.ok) continue;
             const s = await r.json();
             if (Array.isArray(s.logs)) lastLogs.set(jid, s.logs);

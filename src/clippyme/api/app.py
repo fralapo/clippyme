@@ -55,6 +55,7 @@ from clippyme.api.schemas import (
 )
 from clippyme.api.security import (
     ALLOWED_ORIGINS,
+    enforce_api_token,
     enforce_rate_limit,
     is_trusted_client_host,
     is_trusted_origin,
@@ -154,6 +155,24 @@ app = FastAPI(lifespan=lifespan)
 
 
 @app.middleware("http")
+async def _api_token_gate(request: Request, call_next):
+    """Optional shared-secret auth for deliberate LAN deployments.
+
+    Active only when CLIPPYME_API_TOKEN is set (default unset = no-op). Guards
+    every /api route; the static media mounts (/videos, /thumbnails, /fonts)
+    stay IP-open because <video>/<img>/FontFace requests can't attach custom
+    headers. HTTPException is converted here because raise inside middleware
+    bypasses FastAPI's exception handlers.
+    """
+    if request.url.path.startswith("/api/") and request.method != "OPTIONS":
+        try:
+            enforce_api_token(request)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def _security_headers(request: Request, call_next):
     """Add OWASP-recommended hardening headers to every response.
 
@@ -193,7 +212,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-Gemini-Key"],
+    allow_headers=["Content-Type", "X-Gemini-Key", "X-API-Token"],
 )
 
 # Mount static files for serving videos.

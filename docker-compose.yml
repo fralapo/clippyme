@@ -122,6 +122,11 @@ services:
       # Transcription: strip to audio-only (FLAC) before sending to the provider.
       # DEFAULT ON; set to false to upload/decode the full video.
       - CLIPPYME_TRANSCRIBE_AUDIO_ONLY=${CLIPPYME_TRANSCRIBE_AUDIO_ONLY:-true}
+      # Optional shared-secret auth for /api. Unset (default) = no auth beyond
+      # the private-network trust model. Set together with CLIPPYME_BIND=0.0.0.0
+      # for a deliberate LAN deployment: every API request must then carry
+      # X-API-Token (the dashboard has a Settings field for it).
+      - CLIPPYME_API_TOKEN=${CLIPPYME_API_TOKEN:-}
     volumes:
       - .:/app
       - /app/__pycache__

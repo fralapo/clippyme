@@ -4,6 +4,7 @@
 // Explicit .js extensions: plain Node (npm test / node --test) resolves ESM
 // strictly, and Vite accepts the explicit form unchanged.
 import { getApiUrl } from '../config.js';
+import { apiFetch } from '../lib/apiToken.js';
 import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from '../lib/seedClipParams.js';
 import { clipDownloadName } from '../lib/clipFilename.js';
 
@@ -55,19 +56,19 @@ export function downloadClip(clip, index) {
 }
 
 export async function cancelJob(jobId) {
-  try { await fetch(getApiUrl(`/api/cancel/${jobId}`), { method: 'POST' }); } catch { /* best-effort */ }
+  try { await apiFetch(getApiUrl(`/api/cancel/${jobId}`), { method: 'POST' }); } catch { /* best-effort */ }
 }
 
 // Suspend the job's process tree (status → paused). Resumable.
 export async function pauseJob(jobId) {
-  const res = await fetch(getApiUrl(`/api/pause/${jobId}`), { method: 'POST' });
+  const res = await apiFetch(getApiUrl(`/api/pause/${jobId}`), { method: 'POST' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json().catch(() => ({}));
 }
 
 // Resume a paused job (status → processing).
 export async function resumeJob(jobId) {
-  const res = await fetch(getApiUrl(`/api/resume/${jobId}`), { method: 'POST' });
+  const res = await apiFetch(getApiUrl(`/api/resume/${jobId}`), { method: 'POST' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json().catch(() => ({}));
 }
@@ -75,13 +76,13 @@ export async function resumeJob(jobId) {
 // Graceful stop: kill the subprocess but KEEP the clips finished so far
 // (status → stopped). Unlike cancelJob, which hard-discards all output.
 export async function stopJob(jobId) {
-  const res = await fetch(getApiUrl(`/api/stop/${jobId}`), { method: 'POST' });
+  const res = await apiFetch(getApiUrl(`/api/stop/${jobId}`), { method: 'POST' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json().catch(() => ({}));
 }
 
 export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params, logo_params, grade_params, drop_ranges }) {
-  const res = await fetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
+  const res = await apiFetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ toggles, hook_params, subtitle_params, logo_params, grade_params: grade_params || {}, drop_ranges: drop_ranges || [] }),
@@ -96,7 +97,7 @@ export async function composeClip(jobId, index, { toggles, hook_params, subtitle
 // Conversational trim: a plain-English instruction → Gemini → spans to cut
 // (clip-relative seconds). Returns { drop_ranges: [[s,e],...], explanation }.
 export async function editClipAI(jobId, index, instruction, model) {
-  const res = await fetch(getApiUrl(`/api/edit-ai/${jobId}/${index}`), {
+  const res = await apiFetch(getApiUrl(`/api/edit-ai/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ instruction, ...(model ? { model } : {}) }),
@@ -111,7 +112,7 @@ export async function editClipAI(jobId, index, instruction, model) {
 // Per-clip transcript segments (clip-relative seconds) for the manual-trim UI.
 // Returns { segments: [{index, text, start, end}], duration, language }.
 export async function getClipTranscript(jobId, index) {
-  const res = await fetch(getApiUrl(`/api/transcript/${jobId}/${index}`));
+  const res = await apiFetch(getApiUrl(`/api/transcript/${jobId}/${index}`));
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -143,7 +144,7 @@ export async function exportClip(jobId, index, clip, state, preselections) {
 }
 
 export async function reframeClip(jobId, index, mode) {
-  const res = await fetch(getApiUrl(`/api/reframe/${jobId}/${index}`), {
+  const res = await apiFetch(getApiUrl(`/api/reframe/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ reframe_mode: mode }),
@@ -158,7 +159,7 @@ export async function reframeClip(jobId, index, mode) {
 }
 
 export async function publishClip(jobId, index, body) {
-  const res = await fetch(getApiUrl(`/api/publish/${jobId}/${index}`), {
+  const res = await apiFetch(getApiUrl(`/api/publish/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -173,7 +174,7 @@ export async function publishClip(jobId, index, body) {
 }
 
 export async function restoreJob(jobId) {
-  const res = await fetch(getApiUrl(`/api/history/${jobId}/restore`), { method: 'POST' });
+  const res = await apiFetch(getApiUrl(`/api/history/${jobId}/restore`), { method: 'POST' });
   if (!res.ok) { const e = new Error('Restore failed'); e.status = res.status; throw e; }
   return res.json(); // { result: { clips, cost_analysis } }
 }
@@ -186,7 +187,7 @@ export async function restoreJob(jobId) {
 // empty Set on any error (treated as "unknown" → don't disable anything).
 export async function listBackendJobIds() {
   try {
-    const res = await fetch(getApiUrl('/api/history'));
+    const res = await apiFetch(getApiUrl('/api/history'));
     if (!res.ok) return null;
     const data = await res.json();
     return new Set((data.jobs || []).map((j) => j.jobId).filter(Boolean));
@@ -196,13 +197,13 @@ export async function listBackendJobIds() {
 // --- config / settings ----------------------------------------------------
 
 export async function getConfig() {
-  const res = await fetch(getApiUrl('/api/config'));
+  const res = await apiFetch(getApiUrl('/api/config'));
   if (!res.ok) return {};
   return res.json();
 }
 
 export async function saveConfig(keys) {
-  const res = await fetch(getApiUrl('/api/config'), {
+  const res = await apiFetch(getApiUrl('/api/config'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keys }),
@@ -212,13 +213,13 @@ export async function saveConfig(keys) {
 }
 
 export async function getModels(apiKey) {
-  const res = await fetch(getApiUrl('/api/config/models'), { headers: { 'X-Gemini-Key': apiKey } });
+  const res = await apiFetch(getApiUrl('/api/config/models'), { headers: { 'X-Gemini-Key': apiKey } });
   if (!res.ok) return { models: [] };
   return res.json();
 }
 
 export async function cookiesStatus() {
-  const res = await fetch(getApiUrl('/api/config/cookies/status'));
+  const res = await apiFetch(getApiUrl('/api/config/cookies/status'));
   if (!res.ok) return { configured: false };
   return res.json();
 }
@@ -226,20 +227,20 @@ export async function cookiesStatus() {
 export async function uploadCookies(file) {
   const fd = new FormData();
   fd.append('cookies_file', file);
-  const res = await fetch(getApiUrl('/api/config/cookies'), { method: 'POST', body: fd });
+  const res = await apiFetch(getApiUrl('/api/config/cookies'), { method: 'POST', body: fd });
   if (!res.ok) throw new Error('Cookie upload failed');
   return res.json().catch(() => ({}));
 }
 
 export async function deleteCookies() {
-  const res = await fetch(getApiUrl('/api/config/cookies'), { method: 'DELETE' });
+  const res = await apiFetch(getApiUrl('/api/config/cookies'), { method: 'DELETE' });
   if (!res.ok) throw new Error('Cookie remove failed');
   return res.json().catch(() => ({}));
 }
 
 // --- Custom fonts (e.g. licensed Stratos) ---------------------------------
 export async function listFonts() {
-  const res = await fetch(getApiUrl('/api/config/fonts'));
+  const res = await apiFetch(getApiUrl('/api/config/fonts'));
   if (!res.ok) return { fonts: [] };
   return res.json();
 }
@@ -247,20 +248,20 @@ export async function listFonts() {
 export async function uploadFont(file) {
   const fd = new FormData();
   fd.append('font_file', file);
-  const res = await fetch(getApiUrl('/api/config/fonts'), { method: 'POST', body: fd });
+  const res = await apiFetch(getApiUrl('/api/config/fonts'), { method: 'POST', body: fd });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Font upload failed'); }
   return res.json().catch(() => ({}));
 }
 
 export async function deleteFont(name) {
-  const res = await fetch(getApiUrl(`/api/config/fonts/${encodeURIComponent(name)}`), { method: 'DELETE' });
+  const res = await apiFetch(getApiUrl(`/api/config/fonts/${encodeURIComponent(name)}`), { method: 'DELETE' });
   if (!res.ok) throw new Error('Font remove failed');
   return res.json().catch(() => ({}));
 }
 
 // --- Brand logo / watermark ------------------------------------------------
 export async function logoStatus() {
-  const res = await fetch(getApiUrl('/api/config/logo/status'));
+  const res = await apiFetch(getApiUrl('/api/config/logo/status'));
   if (!res.ok) return { configured: false };
   return res.json();
 }
@@ -268,25 +269,25 @@ export async function logoStatus() {
 export async function uploadLogo(file) {
   const fd = new FormData();
   fd.append('logo_file', file);
-  const res = await fetch(getApiUrl('/api/config/logo'), { method: 'POST', body: fd });
+  const res = await apiFetch(getApiUrl('/api/config/logo'), { method: 'POST', body: fd });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Logo upload failed'); }
   return res.json().catch(() => ({}));
 }
 
 export async function deleteLogo() {
-  const res = await fetch(getApiUrl('/api/config/logo'), { method: 'DELETE' });
+  const res = await apiFetch(getApiUrl('/api/config/logo'), { method: 'DELETE' });
   if (!res.ok) throw new Error('Logo remove failed');
   return res.json().catch(() => ({}));
 }
 
 export async function getZernio() {
-  const res = await fetch(getApiUrl('/api/config/zernio'));
+  const res = await apiFetch(getApiUrl('/api/config/zernio'));
   if (!res.ok) return { configured: false };
   return res.json();
 }
 
 export async function saveZernio(payload) {
-  const res = await fetch(getApiUrl('/api/config/zernio'), {
+  const res = await apiFetch(getApiUrl('/api/config/zernio'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -296,7 +297,7 @@ export async function saveZernio(payload) {
 }
 
 export async function discoverZernioAccounts() {
-  const res = await fetch(getApiUrl('/api/zernio/accounts'));
+  const res = await apiFetch(getApiUrl('/api/zernio/accounts'));
   if (!res.ok) throw new Error('Discover failed');
   return res.json();
 }

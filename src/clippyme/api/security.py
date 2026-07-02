@@ -1,4 +1,5 @@
 """Trust/origin helpers for ClippyMe config endpoints."""
+import hmac
 import ipaddress
 import os
 import time
@@ -116,6 +117,45 @@ def require_trusted_config_request(request: Request) -> None:
         return
 
     raise HTTPException(status_code=403, detail="Config access requires a trusted local origin.")
+
+
+# --- optional API token (deliberate LAN deployments) ------------------------
+# The trust model above treats every private-network peer as an authorized
+# client, so CLIPPYME_BIND=0.0.0.0 extends config/state access to the whole
+# LAN. CLIPPYME_API_TOKEN restores per-client auth for that case: when set,
+# every /api request must also carry the shared secret. Unset (the default,
+# loopback self-host) the check is a no-op and behavior is unchanged.
+
+
+def configured_api_token() -> Optional[str]:
+    """The shared secret from CLIPPYME_API_TOKEN, or None when auth is off.
+
+    Read per-request (not cached at import) so tests and container restarts
+    with a changed env behave predictably.
+    """
+    token = os.environ.get("CLIPPYME_API_TOKEN", "").strip()
+    return token or None
+
+
+def enforce_api_token(request: Request) -> None:
+    """Raise HTTP 401 unless the request carries the configured token.
+
+    Accepts either ``X-API-Token: <token>`` or ``Authorization: Bearer
+    <token>``. Comparison is constant-time (hmac.compare_digest) so the token
+    can't be recovered byte-by-byte via timing. No-op when no token is set.
+    """
+    expected = configured_api_token()
+    if expected is None:
+        return
+
+    supplied = request.headers.get("x-api-token", "").strip()
+    if not supplied:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:].strip()
+
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail="Valid API token required.")
 
 
 # --- in-process rate limiting ----------------------------------------------

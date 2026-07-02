@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { getApiUrl } from '../config';
+import { apiFetch } from '../lib/apiToken';
 
 /**
  * Fetches one-off backend config flags on mount:
@@ -13,14 +14,14 @@ export function useBackendStatus() {
   const [cookiesConfigured, setCookiesConfigured] = useState(false);
 
   useEffect(() => {
-    fetch(getApiUrl('/api/config'))
+    apiFetch(getApiUrl('/api/config'))
       .then((r) => (r.ok ? r.json() : {}))
       .then((data) => setHfTokenSet(!!data.HF_TOKEN))
       .catch(() => {});
   }, []);
 
   useEffect(() => {
-    fetch(getApiUrl('/api/config/cookies/status'))
+    apiFetch(getApiUrl('/api/config/cookies/status'))
       .then((r) => (r.ok ? r.json() : {}))
       .then((data) => setCookiesConfigured(!!data.configured))
       .catch(() => {});

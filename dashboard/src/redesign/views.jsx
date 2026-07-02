@@ -10,6 +10,7 @@ import {
   listFonts, uploadFont, deleteFont, logoStatus, uploadLogo, deleteLogo,
 } from './realApi';
 import { SUB_FONTS } from './data';
+import { getApiToken, setApiToken } from '../lib/apiToken';
 
 // Curated fallback when live discovery is unavailable (no key yet / offline).
 // Mirrors the allow-list prefixes (gemini-2.5- / gemini-3) the backend accepts.
@@ -119,6 +120,7 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
   const [deepgram, setDeepgram] = useState('');
   const [elevenlabs, setElevenlabs] = useState('');
   const [hf, setHf] = useState('');
+  const [apiToken, setApiTokenState] = useState(() => getApiToken());
   const [present, setPresent] = useState({});
   const [zernio, setZernioState] = useState(null);
   const [zKey, setZKey] = useState('');
@@ -245,6 +247,8 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
           onChange={setElevenlabs} onSave={() => elevenlabs && saveKeys({ ELEVENLABS_API_KEY: elevenlabs })} placeholder="sk_…" />
         <KeyRow icon="scan-face" name="Hugging Face token" desc="Speaker diarization models" value={hf} present={present.hf}
           onChange={setHf} onSave={() => hf && saveKeys({ HF_TOKEN: hf })} placeholder="hf_…" />
+        <KeyRow icon="key-round" name="API token" desc="Only for LAN deploys with CLIPPYME_API_TOKEN set — stored in this browser, sent as X-API-Token" value={apiToken} present={!!getApiToken()}
+          onChange={setApiTokenState} onSave={() => { setApiToken(apiToken); pushToast?.('success', apiToken.trim() ? 'API token saved' : 'API token cleared'); }} placeholder="Shared secret (leave empty + Save to clear)" />
         <div className="opt" style={{ borderBottom: 0 }}>
           <div className="oico"><Icon n="audio-lines" /></div>
           <div className="otxt"><div className="ot">Transcription engine</div><div className="od">Cloud STT falls back to local Whisper if its key is missing</div></div>

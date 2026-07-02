@@ -1,4 +1,5 @@
 import { getApiUrl } from '../config';
+import { apiFetch } from './apiToken';
 
 async function throwFromResponse(res) {
   const text = await res.text();
@@ -13,7 +14,7 @@ async function throwFromResponse(res) {
 }
 
 export async function pollJob(jobId) {
-  const res = await fetch(getApiUrl(`/api/status/${jobId}`));
+  const res = await apiFetch(getApiUrl(`/api/status/${jobId}`));
   if (!res.ok) throw new Error('Status check failed');
   return res.json();
 }
@@ -80,7 +81,7 @@ export async function submitProcessJob(data, apiKey) {
     body = formData;
   }
 
-  const res = await fetch(getApiUrl('/api/process'), { method: 'POST', headers, body });
+  const res = await apiFetch(getApiUrl('/api/process'), { method: 'POST', headers, body });
   if (!res.ok) await throwFromResponse(res);
   return res.json();
 }
@@ -105,7 +106,7 @@ export async function submitBatchJob(data, apiKey) {
   if (data.preselections?.no_zoom === true) batchBody.no_zoom = true;
   if (data.preselections?.skip_analysis === true) batchBody.skip_analysis = true;
   if ((data.preselections?.model || '').trim()) batchBody.model = data.preselections.model.trim();
-  const res = await fetch(getApiUrl('/api/batch'), {
+  const res = await apiFetch(getApiUrl('/api/batch'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
     body: JSON.stringify(batchBody),
