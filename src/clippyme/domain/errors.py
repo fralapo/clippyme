@@ -31,6 +31,12 @@ class NotFoundError(ClippyMeError):
     status_code = 404
 
 
+class ConflictError(ClippyMeError):
+    """The request conflicts with the resource's current state (maps to 409)."""
+
+    status_code = 409
+
+
 class ComposeError(ClippyMeError):
     """A compose/render step failed (maps to 400 by default)."""
 

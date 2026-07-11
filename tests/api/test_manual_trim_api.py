@@ -40,6 +40,9 @@ def client(monkeypatch, tmp_path):
     }
     with open(job_dir / "vid_metadata.json", "w") as f:
         json.dump(meta, f)
+    # resolve_clip (require_file=True on the smartcut route) checks the clip
+    # mp4 exists before run_smart_cut is invoked — seed the fallback-named file.
+    (job_dir / "vid_clip_1.mp4").write_bytes(b"\x00")
     app_module.jobs[JOB_ID] = {"status": "completed", "result": {"clips": []}}
     yield TestClient(app_module.app, headers=ORIGIN)
     app_module.jobs.pop(JOB_ID, None)
@@ -62,7 +65,7 @@ def test_transcript_endpoint_bad_clip_index(client):
 def test_smartcut_accepts_drop_ranges_body(client, monkeypatch):
     captured = {}
 
-    async def fake_run(*, job_id, clip_index, output_dir, metadata_path, data, drop_ranges=None):
+    async def fake_run(*, job_id, clip_index, resolved, drop_ranges=None):
         captured["drop_ranges"] = drop_ranges
         return {"success": True, "stats": {}}
 
@@ -75,7 +78,7 @@ def test_smartcut_accepts_drop_ranges_body(client, monkeypatch):
 def test_smartcut_no_body_still_works(client, monkeypatch):
     captured = {"called": False}
 
-    async def fake_run(*, job_id, clip_index, output_dir, metadata_path, data, drop_ranges=None):
+    async def fake_run(*, job_id, clip_index, resolved, drop_ranges=None):
         captured["called"] = True
         captured["drop_ranges"] = drop_ranges
         return {"success": True, "stats": {}}

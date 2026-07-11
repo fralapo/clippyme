@@ -14,6 +14,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clippyme.api import app as app_module
+from clippyme.domain import job_actions as job_actions_module
+from clippyme.domain import job_runner as job_runner_module
 
 JOB_ID = "11111111-1111-4111-8111-111111111111"
 ORIGIN = {"Origin": "http://localhost:5175"}
@@ -77,7 +79,7 @@ def test_resume_rejected_when_not_paused(client):
 
 
 def test_stop_keeps_finished_clips(client, monkeypatch):
-    monkeypatch.setattr(app_module, "load_partial_result", lambda *a, **k: {"clips": [{}, {}]})
+    monkeypatch.setattr(job_actions_module, "load_partial_result", lambda *a, **k: {"clips": [{}, {}]})
     proc = FakeProc()
     _seed("processing", proc)
     r = client.post(f"/api/stop/{JOB_ID}")
@@ -144,9 +146,9 @@ def test_run_job_kills_orphan_on_unexpected_error(monkeypatch):
     async def instant_sleep(_t):
         return None
 
-    monkeypatch.setattr(app_module.subprocess, "Popen", lambda *a, **k: proc)
-    monkeypatch.setattr(app_module, "load_partial_result", boom)
-    monkeypatch.setattr(app_module.asyncio, "sleep", instant_sleep)
+    monkeypatch.setattr(job_runner_module.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(job_runner_module, "load_partial_result", boom)
+    monkeypatch.setattr(job_runner_module.asyncio, "sleep", instant_sleep)
 
     app_module.jobs[JOB_ID] = {
         "status": "queued", "logs": [],

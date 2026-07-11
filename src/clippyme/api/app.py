@@ -1,15 +1,11 @@
 import os
 import sys
 import uuid
-import subprocess
-import threading
-import json
 import shutil
-import glob
 import asyncio
 import logging
 from dotenv import load_dotenv
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,20 +24,24 @@ if sys.version_info < (3, 11):
     )
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
-from clippyme.domain.job_results import load_partial_result, load_final_result, build_main_cmd, _pick_latest_metadata, canonical_reframe_mode
+from clippyme.domain.job_results import build_main_cmd, canonical_reframe_mode
 from clippyme.domain.compose import compose_layers
 from clippyme.domain.reframe_service import run_reframe
 from clippyme.domain.errors import ClippyMeError
 from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
 from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
-from clippyme.domain.url_utils import filename_from_video_url
+from clippyme.domain.clip_resolve import resolve_clip
 from clippyme.domain import job_control
+from clippyme.domain.job_actions import cancel_job_action, stop_job_action
+from clippyme.domain.job_runner import make_run_job
+from clippyme.domain.job_submission import QueueFullError, submit_job
+from clippyme.domain.publish_service import publish_clip_flow
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
@@ -57,25 +57,16 @@ from clippyme.api.security import (
     ALLOWED_ORIGINS,
     enforce_api_token,
     enforce_rate_limit,
-    is_trusted_client_host,
-    is_trusted_origin,
-    parse_allowed_origins,
     require_trusted_config_request,
 )
 from clippyme.storage.config_store import (
-    CONFIG_FILE,
-    VALID_CONFIG_KEYS,
     load_persistent_config,
     save_persistent_config,
     load_zernio_config,
     save_zernio_config,
     zernio_config_status,
 )
-from clippyme.domain.job_artifacts import (
-    relocate_root_job_artifacts,
-    load_job_metadata,
-)
-from clippyme.domain.job_worker import make_workers, enqueue_output
+from clippyme.domain.job_worker import make_workers
 from clippyme.pipeline.gemini_service import list_available_models
 from clippyme.domain.history_service import scan_history, is_valid_job_id
 
@@ -110,15 +101,13 @@ jobs: Dict[str, Dict] = {}
 # Semaphore to limit concurrency to MAX_CONCURRENT_JOBS
 concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 
-
-def _load_metadata_json(path):
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+# The per-job subprocess runner, bound to the shared jobs dict (thin-handler
+# rule: the body lives in clippyme.domain.job_runner).
+run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # run_job is defined later in this module, so we bind workers here.
     cleanup_jobs, process_queue, _run_job_wrapper = make_workers(
         jobs=jobs,
         job_queue=job_queue,
@@ -259,117 +248,6 @@ async def list_gemini_models(
     require_trusted_config_request(request)
     return await asyncio.to_thread(list_available_models, api_key or os.environ.get("GEMINI_API_KEY"))
 
-async def run_job(job_id, job_data):
-    """Executes the subprocess for a specific job."""
-    
-    cmd = job_data['cmd']
-    env = job_data['env']
-    output_dir = job_data['output_dir']
-
-    # Merge the LATEST persisted config into the job env at run time (not
-    # at enqueue time). Fixes a race where the user updates a key
-    # (Deepgram / HF / Gemini model / transcription provider) in Settings
-    # between submit and dispatch: without this, the worker would use the
-    # stale values captured at enqueue. Keys already present in `env`
-    # (e.g. GEMINI_API_KEY set from the X-Gemini-Key header) win over the
-    # persistent config, matching the reframe-endpoint behaviour.
-    try:
-        for k, v in (load_persistent_config() or {}).items():
-            if v is not None and k not in env:
-                env[str(k)] = str(v)
-    except Exception as exc:
-        logger.warning("Could not merge persistent config into job env for %s: %s", job_id, exc)
-
-    # Pre-dispatch guard: a job cancelled/stopped while still ``queued`` must
-    # never launch its subprocess (closes the race noted in job_control).
-    if job_control.should_skip_dispatch(jobs[job_id].get('status', '')):
-        logger.info("Skipping dispatch for already-terminated job %s (%s)",
-                    job_id, jobs[job_id].get('status'))
-        return
-
-    jobs[job_id]['status'] = 'processing'
-    jobs[job_id]['logs'].append("Job started by worker.")
-    jobs[job_id]['process'] = None  # Will hold Popen reference for cancel
-    logger.info("Executing job %s: %s", job_id, ' '.join(cmd))
-
-    try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=env,
-            cwd=os.getcwd()
-        )
-        jobs[job_id]['process'] = process
-        # The env (with the Gemini API key) is now captured by the child
-        # process; drop it from the in-memory job dict so the secret doesn't
-        # linger in application state for the lifetime of the job.
-        jobs[job_id].pop('env', None)
-
-        # We need to capture logs in a thread because Popen isn't async
-        t_log = threading.Thread(target=enqueue_output, args=(process.stdout, job_id, jobs))
-        t_log.daemon = True
-        t_log.start()
-        
-        # Async wait for process with incremental partial-result updates.
-        # The partial-result load touches disk, so run it off the event loop
-        # to avoid stalling other handlers while a batch of jobs polls.
-        while process.poll() is None:
-            await asyncio.sleep(2)
-            partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
-            if partial:
-                jobs[job_id]['result'] = partial
-
-        returncode = process.returncode
-
-        if jobs[job_id]['status'] == 'cancelled':
-            jobs[job_id]['logs'].append("Process terminated (cancelled).")
-        elif jobs[job_id]['status'] == 'stopped':
-            # Graceful early stop: the subprocess was killed but we KEEP whatever
-            # clips finished rendering. Promote the partial result to final so
-            # the UI shows them as a normal (editable/publishable) result set.
-            partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
-            if partial:
-                jobs[job_id]['result'] = partial
-            n = len((jobs[job_id].get('result') or {}).get('clips', []) or [])
-            jobs[job_id]['logs'].append(f"Process stopped by user; kept {n} finished clip(s).")
-        elif returncode == 0:
-            jobs[job_id]['status'] = 'completed'
-            jobs[job_id]['logs'].append("Process finished successfully.")
-            # Backward-compat rescue if outputs were written to OUTPUT_DIR root
-            if not glob.glob(os.path.join(output_dir, "*_metadata.json")):
-                await asyncio.to_thread(relocate_root_job_artifacts, job_id, output_dir, OUTPUT_DIR)
-            final = await asyncio.to_thread(load_final_result, job_id, output_dir)
-            if final:
-                jobs[job_id]['result'] = final
-            else:
-                jobs[job_id]['status'] = 'failed'
-                jobs[job_id]['logs'].append("No metadata file generated.")
-        else:
-            jobs[job_id]['status'] = 'failed'
-            jobs[job_id]['logs'].append(f"Process failed with exit code {returncode}")
-            
-    except Exception as e:
-        jobs[job_id]['status'] = 'failed'
-        jobs[job_id]['logs'].append(f"Execution error: {str(e)}")
-        # Surface the full traceback server-side — the user-facing log only gets
-        # str(e), so without this a crash in result-loading/relocation is
-        # invisible to anyone reading the backend logs.
-        logger.exception("run_job failed for job_id=%s", job_id)
-        # A crash between Popen and the loop's natural exit (e.g. an unexpected
-        # error from a result loader) must not leave the pipeline subprocess
-        # running: status is now 'failed', so can_cancel() refuses and the
-        # orphan would burn CPU/GPU unkillable via the API — while its
-        # concurrency slot is already released to the next job.
-        proc = jobs.get(job_id, {}).get('process')
-        if proc is not None and proc.poll() is None:
-            try:
-                proc.kill()
-                await asyncio.to_thread(lambda: proc.wait(timeout=5))
-                jobs[job_id]['logs'].append("Pipeline process killed after execution error.")
-            except Exception:
-                logger.warning("Could not kill orphaned process for job %s", job_id)
-
 @app.post("/api/process")
 async def process_endpoint(
     request: Request,
@@ -497,21 +375,11 @@ async def process_endpoint(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    # Enqueue Job
-    jobs[job_id] = {
-        'status': 'queued',
-        'logs': [f"Job {job_id} queued."],
-        'cmd': cmd,
-        'env': env,
-        'output_dir': job_output_dir
-    }
-
-    try:
-        job_queue.put_nowait(job_id)
-    except asyncio.QueueFull:
-        del jobs[job_id]
-        shutil.rmtree(job_output_dir, ignore_errors=True)
-        raise HTTPException(status_code=429, detail="Server busy. Please try again later.")
+    # Enqueue Job (QueueFullError propagates → 429 via the ClippyMeError handler)
+    await submit_job(
+        jobs=jobs, job_queue=job_queue, job_id=job_id,
+        cmd=cmd, env=env, job_output_dir=job_output_dir,
+    )
 
     return {"job_id": job_id, "status": "queued"}
 
@@ -559,23 +427,16 @@ async def batch_process(req: BatchRequest, request: Request):
         env = os.environ.copy()
         env["GEMINI_API_KEY"] = api_key
 
-        jobs[job_id] = {
-            'status': 'queued',
-            'logs': [f"Job {job_id} queued (batch)."],
-            'cmd': cmd,
-            'env': env,
-            'output_dir': job_output_dir
-        }
-
         try:
-            job_queue.put_nowait(job_id)
+            await submit_job(
+                jobs=jobs, job_queue=job_queue, job_id=job_id,
+                cmd=cmd, env=env, job_output_dir=job_output_dir, batch=True,
+            )
             batch_jobs.append({"url": url, "job_id": job_id})
-        except asyncio.QueueFull:
-            # Only the item that failed to enqueue is cleaned up — already
-            # enqueued jobs stay running. Mirrors the single /api/process path.
-            jobs.pop(job_id, None)
-            await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
-            # Stop adding more — queue is full
+        except QueueFullError:
+            # Only the item that failed to enqueue was cleaned up (by
+            # submit_job) — already enqueued jobs stay running. Stop adding
+            # more; the queue is full. Mirrors the single /api/process path.
             break
 
     if not batch_jobs:
@@ -607,48 +468,7 @@ async def cancel_job(job_id: str, request: Request):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    job = jobs[job_id]
-    if not job_control.can_cancel(job['status']):
-        raise HTTPException(status_code=400, detail="Job is not running")
-
-    # If the subprocess has ALREADY exited, the job is completing right now —
-    # run_job's 2s poll loop just hasn't observed the exit yet. Honouring the
-    # cancel in that window would rmtree a fully-rendered job (silent,
-    # unrecoverable data loss), so refuse and let the imminent
-    # completed/failed status land instead. Queued jobs (no process handle)
-    # remain cancellable via the pre-dispatch guard.
-    proc = job.get('process')
-    if proc is not None and proc.poll() is not None:
-        raise HTTPException(
-            status_code=409,
-            detail="Job already finished processing; cancel refused to avoid discarding output")
-
-    # A paused job's tree is suspended — resume it first so .kill() is delivered
-    # and the OS can reap it (a stopped process can ignore signals on some OSes).
-    if proc and proc.poll() is None:
-        if job['status'] == 'paused':
-            try:
-                await asyncio.to_thread(job_control.resume_tree, proc.pid)
-            except Exception:
-                pass
-        try:
-            proc.kill()
-            await asyncio.to_thread(lambda: proc.wait(timeout=5))
-        except Exception:
-            pass
-
-    # Set status BEFORE rmtree so the run_job post-loop sees 'cancelled' and
-    # skips the failed/completed branches.
-    job['status'] = 'cancelled'
-    job['logs'].append("Job cancelled by user.")
-    logger.info("Job %s cancelled by user", job_id)
-
-    # Cleanup output dir (discard all partial output).
-    output_dir = job.get('output_dir', '')
-    if output_dir and os.path.isdir(output_dir):
-        await asyncio.to_thread(shutil.rmtree, output_dir, True)
-
-    return {"success": True, "status": "cancelled"}
+    return await cancel_job_action(job_id, jobs[job_id])
 
 
 @app.post("/api/pause/{job_id}")
@@ -712,39 +532,7 @@ async def stop_job(job_id: str, request: Request):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    job = jobs[job_id]
-    if not job_control.can_stop(job['status']):
-        raise HTTPException(status_code=400, detail="Job is not running")
-
-    # Set 'stopped' BEFORE killing so run_job's post-loop keeps the output
-    # instead of marking the killed process as 'failed'.
-    was_queued = job['status'] == 'queued'
-    job['status'] = 'stopped'
-
-    proc = job.get('process')
-    if proc and proc.poll() is None:
-        try:
-            await asyncio.to_thread(job_control.resume_tree, proc.pid)  # ensure kill is delivered if paused
-        except Exception:
-            pass
-        try:
-            proc.kill()
-            await asyncio.to_thread(lambda: proc.wait(timeout=5))
-        except Exception:
-            pass
-        # Promote whatever finished to the final result immediately (the
-        # post-loop will also do this, but do it here so the response is fresh).
-        output_dir = job.get('output_dir', '')
-        partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
-        if partial:
-            job['result'] = partial
-
-    n = len((job.get('result') or {}).get('clips', []) or [])
-    msg = "Job stopped before processing started." if was_queued else \
-          f"Job stopped by user; kept {n} finished clip(s)."
-    job['logs'].append(msg)
-    logger.info("Job %s stopped by user (kept %d clips)", job_id, n)
-    return {"success": True, "status": "stopped", "kept_clips": n}
+    return await stop_job_action(job_id, jobs[job_id])
 
 @app.get("/api/config")
 async def get_config(request: Request):
@@ -823,7 +611,6 @@ async def delete_cookies(request: Request):
 
 
 # --- Custom fonts (e.g. a licensed Stratos TTF the client needs) -----------
-import re as _re_fonts
 from clippyme.domain.subtitles import (
     list_available_fonts as _list_fonts,
     USER_FONTS_DIR as _USER_FONTS_DIR,
@@ -937,7 +724,6 @@ async def delete_logo(request: Request):
         os.remove(_LOGO_PATH)
     return {"status": "ok", "message": "Logo removed"}
 
-from clippyme.domain.smartcut import smart_cut
 
 @app.post("/api/smartcut/{job_id}/{clip_index}")
 async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
@@ -948,11 +734,7 @@ async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
         raise HTTPException(status_code=400, detail="Invalid job ID")
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    output_dir = os.path.join(OUTPUT_DIR, job_id)
-    try:
-        metadata_path, data = load_job_metadata(job_id, OUTPUT_DIR)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Metadata not found")
+    resolved = await asyncio.to_thread(resolve_clip, job_id, clip_index, OUTPUT_DIR)
     # Optional manual-trim spans (flycut-style interactive cut). Legacy callers
     # POST no body — tolerate that and fall back to pure auto Smart Cut.
     drop_ranges = None
@@ -972,9 +754,7 @@ async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
     return await run_smart_cut(
         job_id=job_id,
         clip_index=clip_index,
-        output_dir=output_dir,
-        metadata_path=metadata_path,
-        data=data,
+        resolved=resolved,
         drop_ranges=drop_ranges,
     )
 
@@ -987,15 +767,10 @@ async def clip_transcript(job_id: str, clip_index: int, request: Request):
     require_trusted_config_request(request)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
-    try:
-        _meta_path, data = load_job_metadata(job_id, OUTPUT_DIR)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Metadata not found")
-    transcript = data.get("transcript") or {}
-    clips = data.get("shorts", [])
-    if clip_index < 0 or clip_index >= len(clips):
-        raise HTTPException(status_code=404, detail="Clip not found")
-    clip = clips[clip_index]
+    resolved = await asyncio.to_thread(
+        resolve_clip, job_id, clip_index, OUTPUT_DIR, require_file=False)
+    transcript = resolved.metadata.get("transcript") or {}
+    clip = resolved.clip_info
     start, end = clip.get("start", 0), clip.get("end", 0)
     from clippyme.domain.smartcut import clip_transcript_segments
     segments = clip_transcript_segments(transcript, start, end)
@@ -1020,18 +795,13 @@ async def edit_clip_ai(
     require_trusted_config_request(request)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
-    try:
-        _meta_path, data = load_job_metadata(job_id, OUTPUT_DIR)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Metadata not found")
-    clips = data.get("shorts", [])
-    if clip_index < 0 or clip_index >= len(clips):
-        raise HTTPException(status_code=404, detail="Clip not found")
-    clip = clips[clip_index]
+    resolved = await asyncio.to_thread(
+        resolve_clip, job_id, clip_index, OUTPUT_DIR, require_file=False)
+    clip = resolved.clip_info
     start, end = clip.get("start", 0), clip.get("end", 0)
     duration = round(max(0.0, end - start), 3)
 
-    transcript = data.get("transcript") or {}
+    transcript = resolved.metadata.get("transcript") or {}
     from clippyme.domain.smartcut import clip_transcript_segments
     segments = clip_transcript_segments(transcript, start, end)
 
@@ -1112,40 +882,15 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, reques
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
 
-    job_dir = os.path.join(OUTPUT_DIR, job_id)
-    if not os.path.isdir(job_dir):
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    # Find metadata (latest by mtime, not filesystem glob order)
-    metadata_path = _pick_latest_metadata(job_dir)
-    if not metadata_path:
-        raise HTTPException(status_code=404, detail="No metadata found")
-
-    metadata = await asyncio.to_thread(_load_metadata_json, metadata_path)
-
-    clips = metadata.get("shorts", [])
-    if clip_index < 0 or clip_index >= len(clips):
-        raise HTTPException(status_code=400, detail="Invalid clip index")
-
-    clip_info = clips[clip_index]
-
-    # Resolve the base clip filename (same logic as other endpoints)
-    clip_filename = filename_from_video_url(clip_info.get("video_url"))
-    if not clip_filename:
-        base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
-        clip_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
-    base_clip = os.path.join(job_dir, clip_filename)
-
-    if not os.path.exists(base_clip):
-        raise HTTPException(status_code=404, detail="Clip file not found")
+    resolved = await asyncio.to_thread(resolve_clip, job_id, clip_index, OUTPUT_DIR)
 
     try:
         composed_filename = await compose_layers(
-            base_clip=base_clip,
-            job_dir=job_dir,
+            base_clip=resolved.clip_path,
+            job_dir=resolved.job_dir,
             clip_index=clip_index,
-            metadata=metadata,
-            clip_info=clip_info,
+            metadata=resolved.metadata,
+            clip_info=resolved.clip_info,
             toggles=req.toggles,
             hook_params=req.hook_params,
             subtitle_params=req.subtitle_params,
@@ -1217,108 +962,16 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     enforce_rate_limit(request, "publish", capacity=30, refill_per_sec=30 / 60)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
-    job_dir = os.path.join(OUTPUT_DIR, job_id)
-    if not os.path.isdir(job_dir):
-        raise HTTPException(status_code=404, detail="Job not found")
 
-    cfg = load_zernio_config()
-    api_key = cfg.get("api_key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Zernio API key not configured")
+    # require_file=False: the base clip may be absent when a composed file
+    # exists on disk — publish_clip_flow resolves the actual upload path.
+    resolved = await asyncio.to_thread(
+        resolve_clip, job_id, clip_index, OUTPUT_DIR, require_file=False)
 
-    metadata_path = _pick_latest_metadata(job_dir)
-    if not metadata_path:
-        raise HTTPException(status_code=404, detail="No metadata found")
-    metadata = await asyncio.to_thread(_load_metadata_json, metadata_path)
-    clips = metadata.get("shorts", [])
-    if clip_index < 0 or clip_index >= len(clips):
-        raise HTTPException(status_code=400, detail="Invalid clip index")
-    clip_info = clips[clip_index]
-
-    # Resolve the source clip via the shared helper — safe against
-    # cache-busting query strings left behind by old reframe responses.
-    base_filename = filename_from_video_url(clip_info.get("video_url"))
-    if not base_filename:
-        base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
-        base_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
-    base_clip = os.path.join(job_dir, base_filename)
-
-    upload_path = base_clip
-    composed_path = os.path.join(job_dir, f"composed_clip_{clip_index}.mp4")
-
-    logger.info(
-        "publish_clip_endpoint: job=%s clip=%d compose_first=%s toggles=%s has_hook_params=%s has_sub_params=%s",
-        job_id, clip_index, req.compose_first,
-        list((req.toggles or {}).keys()),
-        bool(req.hook_params),
-        bool(req.subtitle_params),
+    return await publish_clip_flow(
+        job_id=job_id, clip_index=clip_index, resolved=resolved,
+        req=req.model_dump(), zernio_cfg=load_zernio_config(),
     )
-
-    if req.compose_first and req.toggles:
-        try:
-            composed_filename = await compose_layers(
-                base_clip=base_clip,
-                job_dir=job_dir,
-                clip_index=clip_index,
-                metadata=metadata,
-                clip_info=clip_info,
-                toggles=req.toggles,
-                hook_params=req.hook_params or {},
-                subtitle_params=req.subtitle_params or {},
-                logo_params=req.logo_params or {},
-                grade_params=req.grade_params or {},
-                drop_ranges=req.drop_ranges,
-            )
-            upload_path = os.path.join(job_dir, composed_filename)
-        except ClippyMeError:
-            raise
-        except Exception as e:
-            logger.error("publish: compose_layers failed for %s/%d: %s", job_id, clip_index, e)
-            raise HTTPException(status_code=500, detail=f"Compose before publish failed: {e}")
-    elif os.path.exists(composed_path):
-        upload_path = composed_path
-
-    if not os.path.exists(upload_path):
-        raise HTTPException(status_code=404, detail=f"Clip file not found: {upload_path}")
-
-    # Run the publish in a worker thread (presign + PUT + create are blocking)
-    from clippyme.integrations.social_publisher import publish_clip, ZernioError
-    try:
-        result = await asyncio.to_thread(
-            publish_clip,
-            api_key=api_key,
-            clip_path=upload_path,
-            title=req.title or clip_info.get("title", "")[:100] or f"Clip {clip_index + 1}",
-            caption=req.caption or "",
-            platform_targets=req.platforms,
-            schedule_mode=req.schedule_mode,
-            scheduled_for=req.scheduled_for,
-            timezone=req.timezone or cfg.get("timezone") or "Europe/Rome",
-            tiktok_settings=req.tiktok_settings,
-            start_date=req.start_date,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except ZernioError as e:
-        logger.error("publish: Zernio error: %s (status=%s body=%s)",
-                     e, e.status_code, (e.body or "")[:200])
-        # Include the full response body (truncated) in the HTTPException
-        # detail so the frontend can parse per-platform failures like the
-        # Zernio "Daily limit reached" 429 and skip the exhausted platform
-        # for the rest of a batch publish run.
-        body_snippet = (e.body or "")[:500]
-        detail_msg = f"Zernio API error: {e}"
-        if body_snippet:
-            detail_msg = f"{detail_msg} | body={body_snippet}"
-        raise HTTPException(
-            status_code=502 if e.status_code is None else e.status_code,
-            detail=detail_msg,
-        )
-    except Exception:
-        logger.exception("publish: unexpected error")
-        raise HTTPException(status_code=500, detail="Publish failed")
-
-    return {"success": True, **result}
 
 
 @app.post("/api/history/{job_id}/restore")
