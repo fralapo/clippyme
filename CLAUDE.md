@@ -1,377 +1,205 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code when working in this repository. Current-state only —
+design history and rationale live in `docs/` (see the pointers at the bottom).
 
 ## Project
 
-ClippyMe is a self-hosted AI video platform that transforms long-form videos (YouTube or local uploads) into viral 9:16 vertical shorts. Fork of OpenShorts.
+ClippyMe is a self-hosted AI video platform that turns long-form videos
+(YouTube or local uploads) into viral 9:16 vertical shorts. Fork of OpenShorts.
+Backend: FastAPI + a subprocess video pipeline. Frontend: React 18 + Vite 5 +
+Tailwind v4.
 
-## Repo layout (post-refactor)
+## Repo layout
 
-All Python backend code lives under `src/clippyme/` (src-layout, installed via `pip install -e .`):
+Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
 
-- `src/clippyme/api/` — FastAPI app (`app.py`), `schemas.py`, `security.py`
-- `src/clippyme/pipeline/` — `main.py` orchestrator (~800 LOC, was 2216), `deepgram_transcribe.py`, `elevenlabs_transcribe.py` (3rd STT provider — ElevenLabs Scribe REST; audio-event tags → Gemini viral signal + opt-in Voice Isolator pre-ASR; host-tested), `gemini_parser.py`, `gemini_service.py`, plus extracted stages: `transcribe_cache.py`, `download.py`, `scene_detection.py`, `postprocess.py`, `diarization.py`, `hardware.py` (DEVICE/Whisper-model selection), `reframe.py` (cv2/YOLO/MediaPipe core: `process_video_to_vertical` + `SmoothedCameraman`/`SpeakerTracker`/`DetectionSmoother` + face/person detection; `ASPECT_RATIO` is a module global `main` sets per-job via `reframe.ASPECT_RATIO = ...`), pure-math `reframe_ops.py`, and `media_probe.py` (cv2-free ffprobe wrappers + pure A/V-sync helpers: VFR detection, stream `start_time` compensation, frame-rate parsing — host-unit-tested; wired into `reframe.py`/`main.py` to fix VFR drift + YouTube audio desync. Ported from `kamilstanuch/Autocrop-vertical`, see `docs/autocrop-vertical-analysis.md`; also hosts `detect_silences`/`parse_silencedetect` — the ffmpeg `silencedetect` wrapper + pure parser feeding the waveform clip-edge refinement #2c), and `texttiling_ops.py` (cv2-free, dependency-light **lexical TextTiling** topic segmentation — gap/smooth/depth/boundary math ported from `ClipsAI/clipsai` but with a classic Hearst bag-of-words front-end instead of neural sentence embeddings, so **zero new deps**; host-unit-tested. Powers `main.build_texttiling_fallback`, the smarter **no-AI whole-video fallback**: when Gemini viral detection is unavailable/fails, the transcript is topic-segmented into several clips — shaped exactly like `get_viral_clips` output (`viral_score=0` + heuristic `viral_reason`) so they flow through the identical clip loop — instead of dumping the whole source as one vertical clip. Whole-video render remains the final safety net. Ported from `ClipsAI/clipsai`, see `docs/clipsai-analysis.md`). `main` re-exports the reframe classes for back-compat. Verify pipeline changes with `docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration"`.
-- `src/clippyme/domain/` — `compose.py`, `clip_endpoints.py`, `job_results.py`, `job_artifacts.py`, `job_worker.py`, `history_service.py`, `subtitles.py`, `smartcut.py`, `hooks.py`, `grade.py` (cv2-free colour-grade filter builder + ffmpeg wrapper, host-tested), `clip_qa.py` (pure post-render QA evaluator, host-tested), `clip_edit_ai.py` (conversational clip-trim: pure prompt/parse + thin Gemini call, host-tested)
+- `api/` — `app.py` (thin FastAPI layer: routes, middleware, static mounts),
+  `schemas.py` (Pydantic request models), `security.py` (trusted-origin/rate
+  limit/API-token gates).
+- `domain/` — endpoint logic. `clip_resolve.py` (shared `resolve_clip()`: job
+  dir → latest metadata → clip entry → path, used by every per-clip endpoint),
+  `job_submission.py` (`submit_job()` + queue-full rollback),
+  `job_runner.py` (`make_run_job()` — the per-job subprocess loop),
+  `job_actions.py` (cancel/stop bodies), `job_journal.py` (crash-safe queue
+  journal + startup recovery), `job_worker.py` (queue dispatch + retention
+  cleanup), `job_results.py` (`build_main_cmd`, partial/final result loaders),
+  `job_artifacts.py` (atomic metadata IO), `job_control.py` (status machine +
+  psutil process-tree suspend/resume), `publish_service.py` (Zernio publish
+  flow), `compose.py` (layer pipeline), `clip_endpoints.py` (smart-cut runner,
+  history restore), `smartcut.py`, `subtitles.py`, `hooks.py`, `logo.py`,
+  `grade.py`, `clip_qa.py`, `clip_edit_ai.py`, `history_service.py`,
+  `encode.py` (single source of x264 settings for every render pass),
+  `errors.py` (domain exceptions mapped to HTTP by one app-level handler).
+- `pipeline/` — `main.py` (CLI orchestrator), `reframe.py` (orchestrator:
+  scene analysis, frame strategies, render loops, `process_video_to_vertical`),
+  `reframe_track.py` (pure tracking classes — host-tested, no cv2),
+  `reframe_detect.py` (YOLO/MediaPipe detectors), `reframe_ops.py` (pure
+  camera math), `cut_ops.py` (clip-edge snapping), `media_probe.py` (ffprobe +
+  silencedetect wrappers), `texttiling_ops.py` (no-AI topic-segmentation
+  fallback), `deepgram_transcribe.py`, `elevenlabs_transcribe.py`,
+  `gemini_service.py`, `gemini_parser.py`, `scene_detection.py`,
+  `download.py`, `postprocess.py`, `diarization.py`, `hardware.py`,
+  `transcribe_cache.py`.
+- `integrations/` — `social_publisher.py` (Zernio client + SmartScheduler),
+  `auto_editor_updater.py` (auto-editor binary self-update).
+- `storage/` — `config_store.py` (persisted config in `data/config.json`).
 
-  **video-use-inspired improvements** (8 changes ported from the `/video-use` skill's Hard Rules + superpowers verification; pure cores host-tested, ffmpeg paths integration-tested in `tests/domain/test_ffmpeg_render_integration.py`):
-  - **#1 Audio-pop fix** — `pipeline/cut_ops.audio_fade_filter` adds a 30ms `afade` in/out at every segment boundary in `smartcut._render_with_ffmpeg` (the ffmpeg-concat fallback). The auto-editor v3 primary path cuts at silence keep-segments so it doesn't pop.
-  - **#2 Word-boundary snap** — `pipeline/cut_ops.snap_clip_to_words`/`flatten_words` snap each Gemini clip `[start,end]` to the nearest transcript word boundary + 50/80ms pad, applied in `main.py` BEFORE the metadata write so subtitles/Smart Cut stay aligned. No-op when the transcript lacks word timing.
-  - **#2b Sentence-boundary snap (anti-truncation)** — `pipeline/cut_ops.snap_clip_to_sentences` runs AFTER #2 in the same `main.py` loop and fixes clips cut **mid-sentence** (word-snap only fixes mid-word). Uses punctuation already on the word tokens (`sentence_boundaries` + `_is_sentence_final`, guarded against abbreviations / decimals / dotted acronyms / `(laughter)` audio-event tokens). **Asymmetric + clamped, per the design council:** START moves backward generously (`DEFAULT_SENTENCE_BACK=2.5s`) to the sentence onset; END moves forward tightly (`DEFAULT_SENTENCE_FWD=1.5s`) to the sentence-final word, but hard invariants WIN — duration ≤ `DEFAULT_MAX_CLIP_DURATION` (60s) and no overlap with a **time-adjacent** clip (neighbour bounds computed from the raw intervals because shorts are score-sorted, not time-sorted). On any conflict it degrades start-only → end-only → the word-snap edges, so it is **never worse than #2**. Returns a `path` (`sentence`/`sentence_start`/`sentence_end`/`word`) logged per clip. Fully suppressed (graceful no-op) when the transcript has zero sentence terminators (unpunctuated Whisper / some multilingual paths). Pure + host-tested (`tests/pipeline/test_cut_ops.py`). The Gemini prompt was also tightened to **anchor `start`/`end` to the exact `s`/`e` of the first/last sentence word** in `WORDS_JSON` (cuts drift at the source) and the old "pad 0.2–0.4s" instruction was removed (the snap layer owns padding now — no double-pad).
-  - **#2c Waveform silence-trough refinement (audio-aware stage 3)** — `pipeline/cut_ops.refine_edges_to_silence` runs AFTER #2b in the same loop and is the only edge stage that reads the actual **audio waveform** (the word/sentence stages are transcript-timestamp-only). `media_probe.detect_silences` runs ffmpeg `silencedetect` ONCE on the source audio per job (`parse_silencedetect` is the pure host-tested parser); the resulting low-energy troughs are passed to `refine_edges_to_silence`, which nudges each already-snapped edge (within a gentle `DEFAULT_SILENCE_WINDOW=0.35s`) into the nearest trough — START to the trough END (clip opens as sound begins), END to the trough START (clip closes as sound stops) — so a cut never clips a word's attack/release and no half-breath bleeds across it (video-use "silence gaps are the cleanest cut targets"). It only ever moves toward quiet → strict improvement; same `≤60s` / source / neighbour clamps as #2b, never inverts. **Default-on, fully graceful:** missing ffmpeg / no silences near an edge / `CLIPPYME_SILENCE_SNAP=0` all leave the edges untouched. The combined per-clip log path reads e.g. `snap[sentence+silence]`. Note: this is distinct from **Smart Cut stage 2** (`_audio_polish_pass`, auto-editor `--edit audio:threshold`), which is the *other* existing waveform consumer — it removes interior silences from a clip, whereas #2c only refines the clip's outer edges.
-  - **#3 Self-eval QA** — `domain/clip_qa.evaluate_clip_qa` + `compose._self_eval` ffprobe the final composed clip and log duration/audio/empty-file issues (soft check, never raises). This also subsumes the #6 overlay/subtitle z-order sanity concern.
-  - **#4 Colour grade** — `domain/grade.py` compose layer (`GRADE_PRESETS`: warm_cinematic/cool_crisp/neutral_punch/vivid_pop), runs FIRST in compose so overlays keep authored colour. Toggle in both Create (`opts.gradePreset`) and EditClipModal (Grade tab).
-  - **#5 Animated hooks** — `hooks.build_hook_overlay_filter` animates the hook PNG with a fade + ease-out-cubic (`pow(1-p,3)`) slide-up entrance; `style.animate` toggle (synced in `data.js` + `hooks.py` defaults). animate=False is byte-identical to the legacy static overlay.
-  - **#7 Conversational trim** — `domain/clip_edit_ai` + `POST /api/edit-ai/{job}/{clip}`: a plain-English instruction → Gemini → spans to cut, fed through the existing `drop_ranges` machinery. Frontend "AI trim" input in the EditClipModal Trim tab.
-  - **#8 Cross-job taste memory** — `dashboard/src/lib/taste.js` records kept(publish)/discarded(remove) clip signals and distils a one-line hint appended to the Gemini `instructions` on the next job (rides the existing channel, no backend change). 120-event rolling window.
-- `src/clippyme/integrations/` — `social_publisher.py`, `auto_editor_updater.py`
-- `src/clippyme/storage/` — `config_store.py`
-
-Run with `uvicorn clippyme.api.app:app` and the pipeline CLI as `python -m clippyme.pipeline.main`. The descriptions below reference the **logical module names** (e.g. `compose.py`); their on-disk path is `src/clippyme/<subpkg>/<file>`.
-
-## Architecture
-
-- **Backend** (`clippyme.api.app`): Thin FastAPI layer — endpoint handlers + job queue + worker loop. Heavy logic lives in dedicated modules listed below. Config persistence, async job queue, batch processing.
-- **Backend modules** (extracted from `app.py` during 8-round refactor):
-  - `compose.py` — `compose_layers()` runs the **Subtitles → Smart Cut → Hook** pipeline for `/api/compose`. Owns intermediate-file cleanup. (Order matters: subtitles are burned onto the full-length base clip first so their absolute-timestamp timing is exact, *then* Smart Cut removes silences — the subs travel with the frames and never drift; Hook overlays last so it shows on every kept frame. Do **not** reorder to Smart-Cut-first or the subtitle drift bug returns — see the comment in `compose_layers`.)
-  - `clip_endpoints.py` — `run_smart_cut()` (for `/api/smartcut`) and `restore_job_from_disk()` (for `/api/history/restore`).
-  - `job_results.py` — `load_partial_result()` / `load_final_result()` (used by the worker loop) and `build_main_cmd()` (shared between `/api/process` and `/api/batch`).
-  - `security.py` — `is_valid_job_id()`, trusted-origin checks.
-  - `schemas.py` — Pydantic request models.
-  - `job_artifacts.py` — `load_job_metadata()` / `save_job_metadata()` atomic helpers (tmp+replace) for `*_metadata.json`.
-- **Processing pipeline** (`main.py`): Orchestrates download (yt-dlp) → transcription (**Deepgram Nova-3 cloud by default, faster-whisper as automatic fallback**, URL-hash cached) → scene detection (PySceneDetect) → viral moment detection (Google Gemini, returns `viral_score`/`viral_reason`) → smart 9:16 reframing (YOLOv8 + MediaPipe face tracking) → audio normalization → auto-zoom → cover frame selection.
-- **Transcription** (`deepgram_transcribe.py` / `elevenlabs_transcribe.py` + `main.transcribe_video`): Provider is selected via the `TRANSCRIPTION_PROVIDER` env var — **three choices: `deepgram` (default cloud), `elevenlabs` (cloud Scribe), or `whisper` (local)**. Both cloud providers silently fall back to Faster-Whisper on any failure.
-  - **Deepgram path** (`deepgram_transcribe.transcribe_with_deepgram`): Direct REST call to `POST https://api.deepgram.com/v1/listen` via `requests` — **no `deepgram-sdk` dependency**. Uses Nova-3 with `language=multi` (native EN+IT code-switching), `smart_format`, `punctuate`, `paragraphs`, `utterances`, `numerals`, `measurements`. Module is Nova-3-aware: drops `filler_words` (Nova-2 only, Nova-3 rejects it) and only sends `keyterm` entries on Nova-3. Retry/backoff with honoured `Retry-After` headers on 408/409/425/429/5xx. Module-level `requests.Session` for TLS keep-alive across batch jobs. File size guard, request_id logging, speedup-vs-realtime metric in the output. Returns the exact same dict shape as `transcribe_video` (prefers Deepgram `utterances` → falls back to sentence/12s word chunking).
-  - **Whisper path**: Unchanged — faster-whisper with auto CUDA/CPU detection, `large-v3` / `medium` / `small` / `base` selected by VRAM or RAM.
-  - **Fallback semantics**: If `TRANSCRIPTION_PROVIDER=deepgram` and the Deepgram call raises *any* exception (missing key, network, 4xx/5xx after retries, malformed response), `transcribe_video` silently falls back to Faster-Whisper with a warning log. The pipeline never breaks because of a misconfigured Deepgram key.
-  - **Env vars**: `DEEPGRAM_API_KEY` (required for cloud path), `DEEPGRAM_MODEL` (default `nova-3`), `DEEPGRAM_LANGUAGE` (default `multi`), `DEEPGRAM_KEYTERMS` (comma-separated, Nova-3 only — boosts brand/jargon recognition), `DEEPGRAM_HTTP_TIMEOUT` (600s), `DEEPGRAM_MAX_RETRIES` (3), `DEEPGRAM_MAX_FILE_MB` (1900, below Deepgram's 2 GB hard limit).
-  - **Why not the SDK**: `requests` is already a dep; `deepgram-sdk` would add ~5 MB and extra maintenance surface for ~300 LOC of wrapper. Direct REST gives us full control over the segment remapping (utterances → Whisper-shape) needed by the rest of the pipeline.
-  - **ElevenLabs Scribe path** (`elevenlabs_transcribe.transcribe_with_elevenlabs`): Direct REST call to `POST https://api.elevenlabs.io/v1/speech-to-text` (multipart, `xi-api-key` header) via `requests` — **no `elevenlabs` SDK dep** (same rationale as Deepgram). Same retry/backoff/session-pooling/file-guard infra. Returns the identical `transcribe_video` dict shape (word-level timestamps + `diarize` speaker labels), so subtitles/Smart Cut work unchanged. **Two genuine wins over Deepgram, both wired:** (1) **audio-event tags** — Scribe emits `(laughter)`/`(applause)`/`(music)` tokens (`type:"audio_event"`) that Deepgram lacks; `_parse_words` keeps them **out** of the spoken-word stream (subtitles/smart-cut stay clean) but `_weave_text` interleaves them by timestamp into the top-level `text` the **Gemini viral prompt** reads, and surfaces them as a `transcript['audio_events']` list — a free viral-moment signal. (2) `scribe_v2` + `ELEVENLABS_NO_VERBATIM` strips fillers at the source. Per-word `logprob` → probability via `math.exp` (clamped); `speaker_id` `"speaker_0"` → int. Host-tested in `tests/pipeline/test_elevenlabs_transcribe.py` (parsing, weaving, form-shaping, mocked retries + full remap).
-  - **Voice Isolator** (`elevenlabs_transcribe.isolate_audio`, `POST /v1/audio-isolation`): opt-in pre-ASR pass (`ELEVENLABS_AUDIO_ISOLATION=1`, needs `ELEVENLABS_API_KEY`) that strips background noise/music before transcription on noisy YouTube sources → fewer mumble-drops. **Provider-agnostic** (helps Whisper/Deepgram too — runs in `transcribe_video` right after audio extraction, before dispatch). Non-fatal: any failure or missing key falls back to the raw audio; the isolated temp file is cleaned in the same `finally` as the FLAC.
-  - **ElevenLabs env vars**: `ELEVENLABS_API_KEY` (required for cloud path), `ELEVENLABS_MODEL` (default `scribe_v1`; `scribe_v2` newer), `ELEVENLABS_LANGUAGE` (blank/`multi` → auto-detect), `ELEVENLABS_DIARIZE` (`true`), `ELEVENLABS_NUM_SPEAKERS` (optional int hint), `ELEVENLABS_TAG_AUDIO_EVENTS` (`true`), `ELEVENLABS_NO_VERBATIM` (`false`, v2 only), `ELEVENLABS_AUDIO_ISOLATION` (`false`), `ELEVENLABS_HTTP_TIMEOUT` (600s), `ELEVENLABS_MAX_RETRIES` (3), `ELEVENLABS_MAX_FILE_MB` (2900). Persisted config key `ELEVENLABS_API_KEY`; provider picker in Settings (`views.jsx`) is now a 3-way `deepgram`/`elevenlabs`/`whisper` `Segmented` with a missing-key warning.
-  - **Audio-only extraction (all paths)**: `transcribe_video` first strips the source to a compact mono-16 kHz FLAC via `diarization.extract_audio_for_asr` and hands *that* to the provider (Deepgram/ElevenLabs upload / Whisper decode) instead of the full mp4. Turns a 50-200 MB+ video into a few-MB file → far faster Deepgram upload, fewer mid-upload network errors on batch jobs, no risk of hitting the file-size cap on long videos, and skips Whisper's redundant video demux. FLAC is lossless at 16 kHz mono (exactly what ASR models consume) → zero accuracy cost. Temp file is cleaned in a `finally`. Opt out with `CLIPPYME_TRANSCRIBE_AUDIO_ONLY=false`; on extraction failure it transparently falls back to the source file.
-  - **Model default**: `GEMINI_MODEL` defaults to **`gemini-3.5-flash`** (GA, 1M context, native thinking — stronger viral-judgment reasoning + cleaner strict-JSON than 2.5-flash at modest extra cost). `gemini-2.5-flash` remains the documented budget option; `gemini-3.1-pro-preview` / `gemini-2.5-pro` are the per-job "max quality" overrides. Allow-list prefixes (`gemini-2.5-`/`gemini-3` in `gemini_service.py`) already accept it.
-- **Subtitles** (`subtitles.py`): ASS karaoke generation (`generate_ass_karaoke()`) with 6 viral presets + legacy SRT support. Burns via `ass` filter with bundled fonts. Supports `offset_y` for vertical positioning. **Semantic line-splitting** (VideoLingo-ported idea, see `docs/videolingo-analysis.md`): caption grouping breaks at natural language boundaries instead of blind every-N-words / char-cap. `_group_words` (full_line) closes a line on the hard char/duration cap, **always** on a sentence-final mark (never merges two sentences), and preferentially at a comma/clause mark or *before* a connector (`_SUB_CONNECTORS`, EN/IT/ES/FR/DE) once past a soft-length ratio; `_group_words_by_count` (word_group karaoke) snaps the ~N-word break to sentence ends / lets a comma close one word early; `generate_srt` shares the sentence-final early-close. No spaCy — Deepgram `smart_format`/Whisper already attach punctuation to word tokens. Pure + host-tested (`tests/domain/test_subtitle_split.py`); byte-identical on input with no internal punctuation/connectors so it only ever improves a mid-clause cut.
-- **Smart Cut** (`smartcut.py`): Two-stage post-processing that removes silences and filler words.
-  - **Stage 1** — `analyze_silences()` finds keep-segments from Whisper word timestamps (filler words in EN/IT/ES/FR/DE + gaps >0.8s). Renders via `_render_with_auto_editor()` which builds a hand-crafted **auto-editor v3 JSON timeline** and runs `auto-editor plan.json -o out.mp4` for a frame-accurate single-pass render. Falls back to legacy FFmpeg concat demuxer (`_render_with_ffmpeg()`) if the auto-editor binary isn't on PATH.
-  - **Stage 2** — `_audio_polish_pass()` runs `auto-editor --edit audio:threshold=0.04 --margin 0.2sec` on the stage-1 output to catch silences the transcript missed (mumbles below ASR confidence, music gaps, ambient quiet). Skipped silently if auto-editor missing or if it doesn't reduce duration by ≥0.5s.
-  - The legacy FFmpeg concat path is preserved as a safety net — never deleted, automatically used if auto-editor is unavailable. Public API `smart_cut(clip_path, transcript, clip_start, clip_end, language, drop_ranges=None)`. Stats now include `renderer` (`auto-editor-v3` or `ffmpeg-concat`) and optional `audio_polish_saved`.
-  - **Manual trim** (`drop_ranges`, flycut-caption-ported — see `docs/flycut-caption-analysis.md`): caller-picked spans `[[start, end], …]` (clip-relative seconds) removed **on top of** the automatic filler/silence pass — the interactive transcript-editing path our auto-only Smart Cut lacked. Pure interval arithmetic in `smartcut.py` (`normalize_drop_ranges` tolerant HTTP coercion + `subtract_ranges` interval split), host-unit-tested (`tests/domain/test_smartcut_manual_trim.py`). A manual trim renders even for a small/single-segment cut (explicit intent); the auto path keeps its ≥1s guard. Drops are honoured even on transcripts with no word-level timing (manual spans are absolute). `POST /api/smartcut/{job}/{clip}` accepts an optional `{"drop_ranges": […]}` body; no body → pure auto Smart Cut (back-compat). `drop_ranges` also rides on `/api/compose` + the `compose_first` path of `/api/publish` (schema-bounded by `_validate_drop_ranges`), so a manual trim survives the final download/publish. **Frontend (shipped):** the Smart Cut section of `EditClipModal` (`redesign/captions.jsx`) lazy-loads `GET /api/transcript/{job}/{clip}` (per-clip segments via pure `clip_transcript_segments`), renders a tap-to-cut transcript checklist, and threads the dropped spans through `reprocessClip`/`exportClip`/`PublishModal`, persisted per-clip in `useClipStates.dropRanges`.
-- **auto-editor binary lifecycle** (`auto_editor_updater.py`):
-  - **NOT a pip dep**. The Dockerfile downloads the latest Nim binary (v30.x track) from `https://github.com/WyattBlue/auto-editor/releases/latest/download/auto-editor-linux-{x86_64,aarch64}` at build time and writes it to `/usr/local/bin/auto-editor`.
-  - **Runtime auto-update**: `background_updater_loop()` is launched from the FastAPI lifespan as an asyncio task. On startup (and every 24h thereafter) it hits the GitHub Releases API, compares the local `--version` output with the latest tag, and atomically downloads the appropriate arch asset to `/app/data/bin/auto-editor` (writable by the non-root `appuser`).
-  - **PATH ordering**: `/app/data/bin` is prepended to `PATH` in the Dockerfile, so the runtime-downloaded binary shadows the build-time install whenever a newer version exists.
-  - **Failure modes**: GitHub unreachable / sanity check fails / arch unsupported → updater logs a warning and the existing binary keeps working. Smart Cut's FFmpeg fallback covers the worst case where no binary exists at all.
-- **Hooks** (`hooks.py`): Text overlay generation with Pillow. Supports emoji via NotoColorEmoji font (lazy-downloaded). Configurable position, size, and `offset_y`. **Instagram-Stories-style text customization** (`create_hook_image(..., style=)`, defaults in `HOOK_STYLE_DEFAULTS`): a toggleable coloured **banner** behind the text (`bg_enabled` / `bg_color` / `bg_opacity` / `corner_radius`), independent **text colour** (`text_color`), a text **outline/stroke** (`outline_color` / `outline_width`, Pillow `stroke_width`), and a **font** choice (`font` — resolved from the bundled + uploaded `data/fonts/` dirs, shared with subtitles). With no `style` it reproduces the legacy white-banner / black-serif look (back-compat). Bannerless render auto-adds a soft drop shadow for legibility. Style keys ride on `hook_params` through `compose._apply_hook`; the frontend controls live in `redesign/hookStyle.jsx` (`HookStyleControls` + WYSIWYG `HookPreview`), shared by the Create hook drawer and the Edit modal.
-- **Frontend** (`dashboard/`): React 18 + Vite 5 + Tailwind CSS v4 + shadcn/ui. Polls backend at 2s intervals for job status. Served on port 5175 (Docker) or 5173 (dev).
-  - **The whole UI lives in `dashboard/src/redesign/`.** `main.jsx` renders `redesign/RedesignApp`. (The earlier `App.jsx` + `dashboard/src/components/*` tree was deleted once it became fully unreachable — git history has it if ever needed.) Edit the `redesign/` files for anything user-facing. The live UI has **no per-job model picker** — Gemini model is driven purely by the backend `GEMINI_MODEL` default.
-  - **Custom hooks** (`dashboard/src/hooks/`): `useJobSubmission` (process+batch handlers), `useJobPolling` (status polling loop), `useHistory` (history list state), `useSessionPersistence` (localStorage round-trip), `useBackendStatus` (health check), `useClipStates` (per-clip disable/delete/published flags persisted in localStorage per jobId).
-  - **Logo**: Custom SVG with multi-color gradient design (`public/logo.svg`)
-  - **Color palette**: Dark foundation (#050507, #0f0f13, #16161d, #1e1e28) + brand colors (blue #0a81d9 primary, pink-purple-indigo gradient accent, teal #02c5bf, cyan #00d9ff)
-  - **Design tokens**: the live system (`redesign/tokens.css` + `redesign/app.css`) is **dark · flat · editorial** — the viral gradient is a *signal only* (logo, primary CTA, score, hero word), no glow shadows, no decorative gradient borders, full-border (not left-stripe) selection states, Geist + Anton fonts. `src/index.css` is a separate legacy base layer (Tailwind preflight + global a11y/keyframes + a dormant amber/Fraunces `@theme` the redesign doesn't use); tokens.css/app.css load after it and win the cascade. Don't trust index.css's amber/Fraunces values — they don't reach the screen.
-  - **Redesign components** (`dashboard/src/redesign/`): `RedesignApp.jsx` (top-level state + tab orchestration), `chrome.jsx` (TopNav + Hero), `create.jsx` (Single/Batch input + Clip Options), `processing.jsx` (`ProcessingView` — live logs, pipeline, partial clips, **pause/resume/stop & keep / discard** controls), `results.jsx` (`ResultsView` + `ClipCard` — video player, viral score, reframe badge, **Edit & reprocess** button, compose-download, publish, **remove**, select-mode batch actions), `publish.jsx` (single + batch publish), `captions.jsx` (`EditClipModal` — the unified per-clip editor: reframe mode + Smart Cut + Subtitles + Hook, all staged behind one **Apply & reprocess** button), `views.jsx` (Settings + History + ApiKey modal), `primitives.jsx` (Btn/Badge/Panel/etc.), `icon.jsx` (lucide map), `realApi.js` (backend client), `data.js` (presets/options/pipeline). Custom hooks shared from `dashboard/src/hooks/`.
-- **Fonts** (`fonts/`): Bundled TTF fonts for subtitle and hook rendering (Anton, Bangers, Montserrat-Black/ExtraBold, Poppins-Black/Medium, NotoSerif-Bold). Served via `/fonts` static mount.
-
-Config is persisted in `data/config.json` (git-ignored). Cookies in `data/cookies.txt`. API keys, Gemini model, and cookies are managed via the dashboard UI Settings tab, not env files.
-
-## Post-hoc reframe switching
-
-After a job completes, every clip can be flipped between the **three reframe modes** — **`auto`** (face tracking), **`subject`** (FrameShift face-first crop; **`object`** is the accepted legacy alias, normalized to `subject` via `job_results.canonical_reframe_mode`), and **`disabled`** (4:3 + black bars) — without re-running the entire pipeline. To enable this the clip generator (`main.py`) now **preserves the 16:9 source slice per clip** on disk as `source_<clip_filename>.mp4` (never deleted at the end of the pipeline). The new endpoint `POST /api/reframe/{job_id}/{clip_index}` spawns `python -m clippyme.pipeline.main --reframe-only -i <source> -o <target> --reframe-mode <mode> --aspect <job_aspect>` which:
-1. Calls `process_video_to_vertical` with the new mode
-2. Re-runs `apply_subtle_zoom` (unless `--no-zoom`), `normalize_audio`, `select_cover_frame`
-3. Overwrites the same clip filename so all downstream references (subtitle/hook/compose) keep working
-
-The endpoint updates metadata.json (`clip.video_url` + `clip.reframe_mode`) and the in-memory `jobs[job_id]['result']['clips'][i]`, and returns a cache-busted `new_video_url` (with a `?v=<timestamp>` query string appended) so the browser `<video>` element re-fetches instead of serving the stale reframed clip from the HTTP cache. **Aspect round-trip:** `main.py` persists the job's output aspect (`9:16`/`1:1`/`16:9`) at the top level of metadata.json; the reframe endpoint reads it back and passes `--aspect` so a non-9:16 job isn't squashed to vertical when the mode is flipped post-run (allow-list-validated against argv injection; legacy jobs without a stored aspect fall through to the 9:16 default). Guarded by `tests/api/test_reframe_aspect_api.py`.
-
-**Frontend**: the results `ClipCard` (`redesign/results.jsx`) shows the current reframe mode as a **read-only badge** (Crop=auto, ScanFace=subject, Square=off) in the top-left corner. Switching modes happens in the per-clip **Edit & reprocess** modal (`captions.jsx` → `EditClipModal`), not via an instant click on the card — the old auto-on-every-click cycle button was removed because it kicked off a reframe subprocess on each tap. In the modal the three modes are a `Segmented` control; pressing **Apply & reprocess** calls `POST /api/reframe` (only when the mode actually changed), then composes any active layers. State is persisted per-clip via `useClipStates.reframeMode` + `previewUrl`/`reframeBust` cache-busters (`realApi.clipPreviewSrc` prefers a composed `previewUrl`, else the reframed/raw clip). The Create tab's **Clip Options** exposes the same three modes as a `Segmented` control (Auto / Subject / Off → `opts.reframeMode`, persisted in preselections; the old boolean `opts.reframe` is read only as a back-compat fallback in `optsToPreselections`). Legacy jobs (created before the source-slice feature landed and therefore missing the `source_*.mp4` slice) return HTTP 409 and the frontend shows a toast explaining the clip must be reprocessed.
-
-**Why subprocess, not in-process import**: importing `main.py` into the FastAPI worker would eagerly load YOLO + MediaPipe models. We want the reframe endpoint to be latency-tolerant but not pay that startup cost on every API boot. Spawning `main.py --reframe-only` reuses the exact same code path the initial run used (same reframe algorithm, same zoom/normalize/cover) with zero code duplication.
-
-## Toggle System (Compose-on-Download)
-
-The post-processing workflow uses independent toggles per clip:
-
-- **Smart Cut** — on/off, no additional params needed
-- **Hook** — on/off + text (auto-filled from Gemini suggestion), position, size, offset_y
-- **Subtitles** — on/off + preset, mode (karaoke/classic), font, colors, offset_y
-
-**Behavior**: Toggles are UI-only state. No processing happens on toggle click. At download time, `POST /api/compose/{job_id}/{clip_index}` receives active toggles + params and composes the final video in a single pipeline: **Subtitles → Smart Cut → Hook** (this order avoids subtitle drift — see `compose_layers`).
-
-**Pre-selections**: Users can pre-configure toggle states and params before processing (in MediaInput's "Clip Options" panel). These defaults are applied to all generated clips. Each clip can be overridden individually.
-
-**Subtitle pre-selection mode coupling**: The pre-selection panel shows different controls depending on `mode`:
-- **Karaoke**: visual 2×3 grid of the 6 `SUBTITLE_PRESETS` (Classic, Hormozi, Neon, MrBeast, Minimal, Fire) — each rendered with its actual font/color/shadow style.
-- **Classic**: font dropdown (Verdana, Montserrat-Black, Anton, Bangers, Poppins-Black/Medium) + font color swatches + position (top/middle/bottom). These params are propagated via `preselections.subtitles.{font, font_color, position}` and seeded into each `ResultCard`'s `subtitleParams` so the compose endpoint receives them per-clip without manual reconfiguration.
-
-**Persistence**: pre-selections (reframe mode, smart-cut toggle, subtitle mode+preset+font+colors+position, hook text/size/position, ASR language) are persisted in `localStorage` under `clippyme_preselections_v3`. Per-clip toggle overrides (smartcut/hook/subtitles + their params) are persisted per jobId via `useClipStates` under `clippyme_clip_states_{jobId}` — so user choices survive page reloads without a backend round-trip.
-
-## Frontend Design & Components
-
-**Design Philosophy**: Premium, minimal aesthetic with modern glass morphism effects, responsive mobile-first layout, smooth gradient animations.
-
-**Key UI features** (implemented in `dashboard/src/redesign/` — the bullets below describe behaviour; the old `components/` filenames they reference were deleted, but the features live on in the redesign files mapped above):
-- **TopNav** (`chrome.jsx`): Slim header with ClippyMe logo/text, step-based tabs (Create/History/Settings), status indicator.
-- **MediaInput**: **Two tabs** — `Single` (with internal URL/Upload toggle, paste button, drag-drop zone) and `Batch` (textarea for URLs + multi-file upload zone with removable list, total counter URLs+files / 20). AI instructions collapsible. **Clip Options** collapsible panel: reframe mode (auto/disabled), Smart Cut toggle, Subtitles toggle+config (mode-aware: karaoke shows visual preset grid, classic shows font/color/position), Hook toggle+config (position, size — defaults to **S**). Cookie warning banner when cookies not configured.
-- **ResultCard**: 9:16 aspect ratio video player, viral score badge (color-coded: green 80+, yellow 50-79, orange <50 with tooltip), duration. **Toggle buttons** (Smart Cut, Hook, Subtitles) with pink active state + gear icon for config. Compose-on-download: clicking Download calls `/api/compose` with active toggles, or downloads original clip if no toggles active. YouTube title/TikTok caption fields.
-- **SubtitleModal / HookModal**: Two-column layout (settings left, live preview right; stacks vertically on mobile). Modal backdrop blur, gradient apply buttons, color pickers, preset dropdowns. **Vertical offset slider** (-50% to +50%). Font preview loads actual TTFs via FontFace API.
-- **KeyInput** (Settings): Gemini API key, HuggingFace token, **Deepgram API key**, **ElevenLabs API key**, Gemini model selector, **Transcription provider selector** (3-way: Deepgram Nova-3 / ElevenLabs Scribe / Faster-Whisper). Shows an amber warning if a cloud provider is selected without a saved key (pipeline falls back to Whisper). **Cookie upload** section: file input (.txt), save/remove buttons, configured status indicator.
-- **ProcessingAnimation**: Source video container with pulsing gradient border, status badge with animated dots, model/hardware info badges, synced playback indicator.
-- **Landing**: Hero with gradient logo, "ClippyMe" text (pink→purple→blue), feature grid (6 items), "How it works" (3 steps), premium CTAs.
-
-**Tailwind v4 Setup**:
-- Uses `@tailwindcss/vite` Vite plugin (NOT PostCSS — `postcss.config.js` only has autoprefixer)
-- All brand tokens defined in `@theme {}` block in `index.css` (no separate config needed for most things)
-- `tailwind.config.js` retained only for shadcn CSS variable color mappings (`foreground`, `card`, `popover`, etc.)
-- Custom colors: dark surfaces, brand gradients, full shadcn token set (`primary-foreground`, `secondary`, `input`, etc.)
-- Custom animations: `gradient-shift` (8s cycle), `float`, `shimmer`, `pulseRing`, `scanLine`
-- Custom shadows: `glow-primary`, `glow-accent`, `glow-pink`, `elevated`, `glass`
-- `@` path alias configured in `vite.config.js` and `jsconfig.json` → resolves to `dashboard/src/`
-- **Vite dev proxy** (`vite.config.js`): `/api`, `/videos`, `/thumbnails`, **`/fonts`** → all proxied to `http://backend:8000`. (`server.watch.usePolling` is on — Windows/macOS Docker bind mounts don't deliver inotify, so without polling Vite never sees host edits and HMR silently dies.) The `/fonts` proxy is **mandatory** for the subtitle/hook font preview to work — without it, `FontFace` requests 404 and the preview falls back silently to the system font (this was a real bug).
-
-**CSS Features** (`dashboard/src/index.css`):
-- Tailwind v4 syntax: `@import "tailwindcss"` + `@import "tw-animate-css"`
-- `.glass-panel`: backdrop-blur with subtle gradient, used on modals and cards
-- `.gradient-border`: pink-to-blue gradient pseudo-element border
-- `.btn-primary`, `.btn-ghost`, `.btn-secondary`, `.btn-modern`: button variant classes
-- `.input-field`: base input styling with focus ring
-- Refined scrollbar (6px, transparent track, rounded thumb) — applied globally, no class needed
-- Body texture: subtle noise/grain via `::after` pseudo-element
-- `.bg-ambient`: layered radial gradients in brand colors
-- `prefers-reduced-motion` media query disables all animations for accessibility
-- `:focus-visible` ring for keyboard navigation accessibility
-
-**App State & Flow** (`dashboard/src/redesign/RedesignApp.jsx` + `dashboard/src/hooks/`):
-- `main.jsx` renders `RedesignApp` (the old `App.jsx` / `AppWithProviders` wrapper was deleted with the `components/` tree). Toasts use an in-app `pushToast` callback threaded to the views, not sonner.
-- Tab-based workflow: Create (input) → live processing with partial clips → results / history.
-- Session persistence: `useSessionPersistence` round-trips opts + pre-selections to localStorage — pre-selections under `clippyme_preselections_v3`, per-clip state under `clippyme_clip_states_{jobId}` (`useClipStates`).
-- Job polling: `useJobPolling` (2s interval, cleared on unmount); `useJobSubmission` aggregates polling across batch job ids.
-- `preselections` state: user's pre-selected toggle options, seeded into each clip's params via `lib/seedClipParams.js`.
-- Backend/asset status (`useBackendStatus`, cookies / logo / fonts / zernio probes) fetched on mount; the Create tab warns when cookies are missing.
+Frontend lives entirely in `dashboard/src/redesign/` (`main.jsx` renders
+`RedesignApp`). Shared hooks in `dashboard/src/hooks/`, pure logic in
+`dashboard/src/lib/` (incl. `applyEdit.js` — the reprocess orchestration,
+`seedClipParams.js`, `bulkApply.js`, `taste.js`).
 
 ## Commands
 
-### Run with Docker (primary method)
-```
-docker compose up --build
-```
-Backend: http://localhost:8000 | Frontend: http://localhost:5175
+```bash
+docker compose up --build            # primary run (backend :8000, frontend :5175)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build  # prod frontend (nginx)
 
-> **First run or after package changes**: use `docker compose down -v && docker compose up --build` to clear the stale `/app/node_modules` anonymous volume.
+# Backend host tests (fast, no CV stack) + lint
+pip install -e ".[host-tests]" && pip install pytest ruff
+pytest -m "not integration" -q
+ruff check src/clippyme tests --select E9,F63,F7,F82
 
-### Production frontend (optional, additive)
-```
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
-```
-Swaps the dashboard from the Vite dev server to a static `vite build` served by nginx (`dashboard/Dockerfile.prod` + `dashboard/nginx.conf` — same 5175 port, same `CLIPPYME_BIND` loopback default, proxy paths mirror the dev proxy, 600s proxy timeouts matched to `CLIPPYME_FFMPEG_TIMEOUT`). Requires Compose ≥ 2.24 (`!reset`). The default `docker compose up` dev workflow (HMR + bind mount) is untouched.
+# Heavy CV/ML integration tests (Docker only)
+docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration"
 
-### Local development
-```
-# Backend
-pip install -r requirements.txt
-pip install -e .
-python -m uvicorn clippyme.api.app:app --reload --host 0.0.0.0 --port 8000
-
-# Frontend
-cd dashboard && npm install && npm run dev
+# Frontend (Vitest + jsdom + testing-library)
+cd dashboard && npm ci && npm test && npm run lint && npm run build
 ```
 
-### Frontend build
-```
-cd dashboard && npm run build
-```
+CI (`.github/workflows/ci.yml`): backend host suite + ruff bug-class rules +
+blocking `pip-audit`; frontend lint + **test** + build; the Docker integration
+job runs on main pushes or `workflow_dispatch`.
 
-> **Lint entrypoint**: `npm run lint` uses `dashboard/eslint.a11y.config.js` — a composed flat config that imports the frozen `eslint.config.js` base and layers `jsx-a11y/recommended` on top. Add/change base rules in `eslint.config.js` as usual (they flow through); the a11y layer lives in the composed file.
+## Architecture
 
-### UI primitives
-The redesign uses hand-rolled primitives in `dashboard/src/redesign/primitives.jsx` (Btn/Badge/Panel/etc.) + the lucide icon map in `icon.jsx` — **not** the shadcn CLI. Add new primitives there, matching the existing Tailwind v4 token classes.
+**Job lifecycle**: `POST /api/process|/api/batch` → `build_main_cmd` →
+`submit_job` (in-memory `jobs` dict + `asyncio.Queue`) → `process_queue`
+dispatch (semaphore, `MAX_CONCURRENT_JOBS`) → `run_job` spawns
+`python -m clippyme.pipeline.main` as a subprocess and polls partial results
+every 2s. Statuses: `queued → processing ⇄ paused → {completed, failed,
+cancelled, stopped}` (`job_control.py` owns the guards). `stopped` keeps
+finished clips; `cancelled` rmtree's everything.
 
-## Key Patterns
+**Job journal**: every status transition writes `data/jobs_journal.json`
+(atomic, ACTIVE jobs only — never env secrets/Popen/logs). On startup,
+`lifespan` recovery re-enqueues `queued` jobs, restores interrupted jobs whose
+final result reached disk, and marks the rest `failed` (killing orphaned
+pipeline trees via psutil with an argv-match guard). **`failed` is reused
+deliberately**: the frontend poller terminates only on
+`completed|stopped|cancelled|failed` — an unknown status polls forever.
 
-- **Job queue**: In-memory async queue in `app.py`. Jobs submitted via `POST /api/process`, polled via `GET /api/status/{job_id}`.
-- **Job control (pause / resume / stop / cancel)** — `clippyme.domain.job_control` owns the state machine. Statuses: `queued → processing ⇄ paused → {completed, failed, cancelled, stopped}`. Pure transition guards (`can_pause/can_resume/can_stop/can_cancel/should_skip_dispatch`) are host-unit-tested; `suspend_tree`/`resume_tree` use **psutil** (already a dep) to signal the whole subprocess tree (children-first suspend, parent-first resume) — cross-platform (SIGSTOP/SIGCONT on Linux, SuspendThread on Windows), unlike `os.kill(SIGSTOP)`. `/api/pause`+`/api/resume` suspend/resume; `/api/stop` is a **graceful** stop that kills the subprocess but promotes the partial result to final (`run_job`'s post-loop sees status `stopped` and keeps the clips); `/api/cancel` is the **hard discard** (kill + `rmtree`). The pipeline subprocess has no IPC, so a kill is the only mid-run stop — there is no clean inter-clip boundary. `run_job` has a pre-dispatch guard (`should_skip_dispatch`) so a job cancelled/stopped while still `queued` never launches. Frontend controls live in `redesign/processing.jsx` (`ProcessingView`: Pause/Resume + **Stop & keep** + **Discard**), wired through `RedesignApp.jsx`; `useJobPolling` treats backend `stopped` as terminal-with-clips and routes to the editable viewer.
-- **Live editable clips during processing**: the backend already streams partial clips (`load_partial_result` with `only_ready=True`). The Create tab now renders the **full `ResultsGrid`** (with `clipStates`/`onUpdateClipState`) as soon as `results.clips.length > 0` while `status` is `processing`/`paused`, so finished clips are viewable + editable + publishable while later ones still render. `ProcessingView` is shown only in the no-clips-yet phase.
-- **Per-job LLM model override**: the Gemini model for viral detection is global (Settings → `GEMINI_MODEL`) but can be overridden **per job** via `ProcessRequest.model`/`BatchRequest.model` → `build_main_cmd(model=...)` → `--model` CLI arg → `main.py` sets `os.environ["GEMINI_MODEL"]` before `get_viral_clips` (mirrors the `--language` override). Validated at the boundary by `job_results.GEMINI_MODEL_RE` (`^gemini-[A-Za-z0-9.\-]{1,64}$` — blocks argv injection; allows future `gemini-3*`). Frontend: a quick-picker in MediaInput's Clip Options (`preselections.model`) + the live-discovery dropdown in Settings (`/api/config/models`, allow-list prefixes `gemini-2.5-`/`gemini-3` in `gemini_service.py`). Unknown models fall through to a `$0.00` "Pricing not available" cost note (`main.py:MODEL_PRICING`).
-- **Batch processing**: `POST /api/batch` accepts up to 20 URLs, creates one job per URL, and returns the list of `job_id`s. The frontend polls each job individually via `GET /api/status/{job_id}` and aggregates progress client-side. Supports `reframe_mode` parameter.
-- **Mixed batch (URLs + files)**: The frontend `useJobSubmission.handleBatchProcess` supports both. URLs are submitted in one shot to `/api/batch`; each file is submitted individually to `/api/process`. The hook then unifies polling across all returned `job_id`s using `/api/status/{job_id}`, aggregating progress until every job reaches a terminal state. No backend change is needed for mixed batches.
-- **Compose endpoint**: `POST /api/compose/{job_id}/{clip_index}` accepts `toggles` (**grade**/smartcut/hook/subtitles/**logo** booleans), `hook_params`, `subtitle_params`, **`logo_params`**, **`grade_params`** (`{preset}`). Composes layers in order: **Grade → Subtitles → Smart Cut → Hook → Logo** (grade first so overlays keep authored colour; subtitle-drift-safe; logo absolutely last so the brand mark sits on top of every other layer). After the final copy, `compose._self_eval` ffprobes the output and logs any QA issue (soft). Returns `composed_url`. Cleans up intermediate files. **Pass fusion (same order, fewer encodes):** grade+subtitles render in ONE pass (`burn_subtitles(pre_vf=grade_chain)` — the colour transform still hits source pixels before the glyphs) and hook+logo render in ONE pass (`hooks.build_hook_logo_filter`, hook below / logo topmost), so a fully-toggled compose is 3 encodes, not 5. Degraded cases (unknown grade preset, empty hook text, missing logo) fall back to the standalone passes. Serialised per clip via `domain/clip_locks.clip_lock`. Guarded by `tests/domain/test_compose_merge.py` + render tests in `test_ffmpeg_render_integration.py`.
-- **Brand assets** (client deliverables — e.g. ASCENSORE): a persistent **logo overlay** + **custom subtitle fonts**, both managed in Settings → *Brand assets*.
-  - **Logo** (`domain/logo.py:add_logo_to_video`): ffmpeg `overlay` of an uploaded transparent PNG (`data/logo.png`, set via `POST /api/config/logo`). Placement is a position preset (7 anchors: corners + edge-centers + center) × size preset (`S/M/L` → 0.12/0.18/0.26 of frame width) × opacity. Geometry helper `logo_overlay_xy` is pure (host-tested, no ffmpeg). The compose **logo** layer reads `LOGO_PATH` and skips silently if no logo is uploaded.
-  - **Custom fonts** (`subtitles.py:list_available_fonts` / `effective_fonts_dir`): user TTF/OTF uploads (`POST /api/config/fonts`) land in the writable `data/fonts/` volume; `effective_fonts_dir()` seeds it with copies of the bundled `fonts/` faces so a single `fontsdir` serves both (libass's `ass`/`subtitles` filter takes only one dir). Both burn branches pass `fontsdir`, so an uploaded face (e.g. a licensed **Stratos**) resolves at burn time. Upload validates the sfnt magic + the strict `_FONT_NAME_RE` (the stem becomes the libass font name injected into the ASS style). Frontend font dropdowns live-merge bundled + uploaded via `hooks/useFontList.js`.
-  - **Subtitle colours**: `SUB_COLORS` (classic-mode `font_color` swatches) leads with the ASCENSORE brand set — white `#FFFFFF` (judges), yellow `#FDE700` / purple `#581BBA` (contestants).
-- **Transcription cache**: `data/cache/` stores transcripts keyed by SHA256(url)[:16]. TTL 7 days, pruned by the background cleanup task.
-- **Hardware auto-detection**: CUDA/CPU fallback at runtime for faster-whisper and YOLOv8. No manual config needed.
-- **yt-dlp uses Deno** as JS runtime for YouTube bot-detection bypass.
-- **Cookie management**: Uploaded once in Settings, persisted at `data/cookies.txt`. Used automatically for all downloads. Fallback chain: `data/cookies.txt` → `YOUTUBE_COOKIES` env var → none.
-- **Security**: `job_id` validated with strict regex to prevent path traversal. Config endpoints require trusted origin or private network client. Containers run as non-root users. A secret-scan **pre-commit hook** lives at `.githooks/pre-commit` (blocks API keys, HF/OpenAI tokens, Deepgram tokens, Netscape cookie files, and the secret files `data/cookies.txt` / `data/config.json` / `.env`). Enable it once per clone with `git config core.hooksPath .githooks`; bypass a confirmed false positive with `git commit --no-verify`.
-- **Temp files**: Uploads go to `uploads/`, outputs to `output/`. Both are transient and git-ignored.
-- **Font serving**: `/fonts` static mount serves bundled TTFs to frontend for the subtitle/hook font preview (loaded via FontFace API).
+**Pipeline (per job)**: yt-dlp download → transcription → PySceneDetect →
+Gemini viral detection (5-level JSON-repair fallback chain in
+`gemini_parser.py`; TextTiling topic-split as the no-AI fallback; whole-video
+render as the last resort) → per-clip edge snapping (word → sentence →
+waveform-silence, `cut_ops.py`) → 9:16 reframe → Ken Burns zoom (folded into
+the master encode) → EBU R128 loudnorm → cover frame. The 16:9 source slice
+per clip is preserved on disk (`source_*.mp4`) to enable post-hoc reframe
+switching.
 
-## main.py CLI Args
+**Transcription**: `TRANSCRIPTION_PROVIDER` = `deepgram` (default, Nova-3
+REST) | `elevenlabs` (Scribe; audio-event tags feed the Gemini prompt) |
+`whisper` (local). Both cloud providers silently fall back to Faster-Whisper
+on any failure. All paths transcribe an extracted mono-16kHz FLAC, not the
+video. Transcripts are cached 7 days under `data/cache/` keyed by URL hash.
 
-```
-python -m clippyme.pipeline.main <url_or_path> [options]
-  --instructions "focus on hooks"        # Directive injected into Gemini prompt
-  --no-zoom                              # Disable Ken Burns auto-zoom (1.0→1.05x)
-  --reframe-mode auto|subject|disabled   # auto=face tracking · subject=FrameShift face-first crop (legacy alias: object) · disabled=4:3 crop w/ black bars
-  --model gemini-2.5-pro                 # Override the Gemini model for THIS job (else GEMINI_MODEL)
-```
+**Compose** (`POST /api/compose/{job}/{clip}`): layers render in the order
+**Grade → Subtitles → Smart Cut → Hook → Logo**. Do NOT reorder — subtitles
+are burned before Smart Cut so their absolute timing can't drift; grade runs
+first so overlays keep authored colour; logo sits on top. Grade+subtitles and
+hook+logo are pass-fused (one encode each) when possible. Toggles are UI-only
+state; composition happens at download/publish time. Serialised per clip via
+`clip_locks.clip_lock`.
 
-## API Endpoints
+**Reframe**: three user modes — `auto` (face tracking + per-scene strategy),
+`subject` (FrameShift weighted-interest crop; legacy alias `object`),
+`disabled` (letterbox). Comfort mode is default-on: within a scene the camera
+never moves (`collapse_scene_targets`), zoom locks per scene. The output
+aspect is an explicit `process_video_to_vertical(..., aspect_ratio=)`
+parameter passed by `main.py` per job — there is no module-global. Post-hoc
+mode switching (`POST /api/reframe/{job}/{clip}`) spawns
+`main.py --reframe-only` on the preserved source slice. Camera/decision math
+lives in `reframe_ops.py`/`reframe_track.py` (pure, host-tested) — add new
+reframe logic there, not in the cv2-bound modules.
+⚠️ `REFRAME_GLOBAL_METHOD=kalman|l2` only runs with `REFRAME_STATIC_AUTO=0`;
+the default static-auto policy never reaches the trajectory smoother.
+
+**Smart Cut**: transcript-driven silence/filler removal rendered via a
+hand-built auto-editor v3 JSON timeline (ffmpeg concat fallback if the binary
+is missing), plus an audio-threshold polish pass. Manual trims arrive as
+`drop_ranges` ([[start,end], …] clip-relative) and ride compose + publish.
+The auto-editor binary is NOT a pip dep — Dockerfile downloads it; an opt-in
+24h self-update loop refreshes it (`AUTO_EDITOR_AUTO_UPDATE=1`).
+
+**Publish**: Zernio (TikTok/Instagram/YouTube). `publish_service.publish_clip_flow`
+optionally re-composes first so uploads match the preview; `SmartScheduler`
+picks Italian-prime-time slots with anti-collision. Zernio error bodies pass
+through verbatim (the frontend parses per-platform 429 daily limits).
+
+## Code rules
+
+- **Thin handlers**: validate → call a `clippyme.domain.*` helper → return
+  JSON. A handler growing past ~25 lines of logic gets extracted. Domain
+  modules never import FastAPI — they raise `errors.ClippyMeError` subclasses
+  (`ValidationError` 400, `NotFoundError` 404, `ConflictError` 409) mapped by
+  one app-level handler.
+- **Per-clip endpoints resolve through `clip_resolve.resolve_clip()`** — do
+  not re-implement the metadata/filename fallback chain.
+- **Pure logic is extracted to host-testable modules** (no cv2/torch imports)
+  so it runs in `pytest -m "not integration"`. cv2/ML code is verified only by
+  the Docker integration suite.
+- **Back-compat re-exports**: `reframe.py` re-exports the moved
+  track/detect names; `main.py` re-exports the reframe API. Keep them when
+  moving code.
+- **Atomic writes** for anything on disk that a crash could corrupt
+  (`job_artifacts.save_job_metadata` pattern: tmp + `os.replace`, 0o600).
+- **Frontend**: `RedesignApp.jsx` owns only top-level state wiring; side
+  effects go in `hooks/`, pure logic in `lib/`, visuals in `redesign/`
+  components. UI primitives are hand-rolled in `primitives.jsx` (no shadcn
+  CLI). Component tests colocate as `*.test.jsx` (Vitest + jsdom).
+- **Security**: `job_id` regex-validated everywhere; config/state endpoints
+  require a trusted origin or private-network client; `SafeStaticFiles`
+  blocks `*_metadata.json` and `source_*` from the `/videos` mount; secrets
+  never enter the job journal; `tmp/` is gitignored and must never be
+  committed. Pre-commit secret scan: `git config core.hooksPath .githooks`.
+
+## API endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/process` | Process single video (accepts `reframe_mode`) |
-| POST | `/api/batch` | Submit multiple URLs (accepts `reframe_mode`) |
+| POST | `/api/process` · `/api/batch` | Submit single video / up to 20 URLs |
 | GET | `/api/status/{job_id}` | Poll job progress |
-| POST | `/api/compose/{job_id}/{clip_index}` | Compose final video from active toggles |
-| POST | `/api/smartcut/{job_id}/{clip_index}` | Generate smart-cut version of a clip (optional `drop_ranges` body for manual trim) |
-| GET | `/api/transcript/{job_id}/{clip_index}` | Per-clip transcript segments (clip-relative) for the manual-trim UI |
-| POST | `/api/edit-ai/{job_id}/{clip_index}` | Conversational trim: NL instruction → Gemini → `drop_ranges` to cut |
-| POST | `/api/reframe/{job_id}/{clip_index}` | Switch a clip between `auto` / `subject` / `disabled` reframe mode (`object` accepted as legacy alias; requires preserved source slice) |
-| POST | `/api/config/cookies` | Upload persistent cookies file |
-| GET | `/api/config/cookies/status` | Check if cookies are configured |
-| DELETE | `/api/config/cookies` | Remove cookies file |
-| POST | `/api/config/logo` | Upload brand logo PNG (compose logo overlay) |
-| GET | `/api/config/logo/status` | Check if a logo is configured |
-| DELETE | `/api/config/logo` | Remove the brand logo |
-| GET | `/api/config/fonts` | List available subtitle fonts (bundled + uploaded) |
-| POST | `/api/config/fonts` | Upload a custom .ttf/.otf font (e.g. Stratos) |
-| DELETE | `/api/config/fonts/{name}` | Remove an uploaded font |
-| POST | `/api/cancel/{job_id}` | Cancel a running job (hard kill **+ delete all output**) |
-| POST | `/api/pause/{job_id}` | Suspend the job's process tree → status `paused` |
-| POST | `/api/resume/{job_id}` | Resume a paused job → status `processing` |
-| POST | `/api/stop/{job_id}` | Graceful stop: kill subprocess but **keep finished clips** → status `stopped` |
-| GET | `/api/history` | List past jobs |
-| POST | `/api/history/{job_id}/restore` | Restore job to memory |
-| DELETE | `/api/history/{job_id}` | Delete job from disk |
+| POST | `/api/pause|resume|stop|cancel/{job_id}` | Job control (stop keeps clips, cancel discards) |
+| POST | `/api/compose/{job_id}/{clip_index}` | Compose toggled layers |
+| POST | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut (optional `drop_ranges` body) |
+| GET | `/api/transcript/{job_id}/{clip_index}` | Clip-relative transcript for manual trim |
+| POST | `/api/edit-ai/{job_id}/{clip_index}` | NL instruction → Gemini → `drop_ranges` |
+| POST | `/api/reframe/{job_id}/{clip_index}` | Switch reframe mode post-hoc |
+| POST | `/api/publish/{job_id}/{clip_index}` | Upload + schedule via Zernio |
+| GET/POST/DELETE | `/api/config*` | Keys, cookies, logo, fonts, Zernio (trusted clients) |
+| GET | `/api/history` · POST `/api/history/{id}/restore` · DELETE `/api/history/{id}` | Past jobs |
 
-## Subtitle Presets
+## Configuration
 
-Defined in `subtitles.py:SUBTITLE_PRESETS`. Six built-in presets:
-`classic_white`, `hormozi_bold`, `neon_glow`, `mrbeast_box`, `minimal_clean`, `fire_impact`.
+API keys, Gemini model, transcription provider and cookies are managed from
+the dashboard Settings tab (persisted in `data/config.json`, git-ignored).
+The full operational env-var reference (REFRAME_*, AE_*, CLIPPYME_*,
+DEEPGRAM_*, ELEVENLABS_*, ZERNIO_*, server knobs) lives in `.env.example`
+(commented, with defaults) and the README table — keep those two in sync when
+adding a knob. `GEMINI_MODEL` defaults to `gemini-3.5-flash`; per-job override
+via `--model` / `ProcessRequest.model` (regex-validated against argv
+injection).
 
-When using ASS karaoke, the `ass` FFmpeg filter is used with `fontsdir` pointing to the `fonts/` directory. For SRT the `subtitles` filter is used with adjustable `MarginV` (default 350, modified by `offset_y`).
+## Docs pointers
 
-**Safe zone defaults**: MarginL/R = **110 px** (≈10% of the 1080px vertical frame → TikTok/Reels safe zone so long captions don't get cropped). Preset fontsize defaults have been reduced twice: first pass (`80→62`, `85→66`, `75→58`, `70→54`) and then a **−35% second pass** for cleaner reading on mobile vertical frames → current values: `classic_white=40`, `hormozi_bold=43`, `neon_glow=40`, `mrbeast_box=38`, `minimal_clean=35`, `fire_impact=43`.
-
-## Subtitle customization flow (redesign)
-
-The live subtitle controls live in **two** places, kept symmetric: the Create-tab pre-selection panel `create.jsx:SubConfig` (writes flat `opts.sub*` keys → `realApi.js:optsToPreselections` → `preselections.subtitles.*`) and the per-clip `captions.jsx:EditClipModal` (seeds from `preselections.subtitles` + the clip's saved `subtitleParams`). Both emit the **same `subtitle_params` shape** via `lib/seedClipParams.js:seedSubtitleParams`, consumed by `compose.py:_apply_subtitles` → `subtitles.py`.
-
-**Controls (both panels):** mode (karaoke/classic), position (top/center/bottom segmented), an **Alignment** segmented (`align` — **left** = ragged "a bandiera" / **center**; **no right** because the social UI like/comment/share buttons sit on the right edge), and a **Vertical nudge** slider (`offset_y`, −50…+50). Karaoke adds a **Style preset** grid, a **Font size** slider (`font_size`, 0 = Auto → preset size), and **Text color** + **Stroke color** pickers (`font_color` / `outline_color` — stroke defaults black, both recolourable per preset; highlight accent stays the preset's). Classic adds font, colour swatch, **Outline width** (`border_width`, 0–6) and a **Background box** toggle (`bg_opacity` 0/0.6 + black `bg_color`).
-
-- **Horizontal alignment (`align`)** is left/center only, honoured in both modes. Karaoke: `subtitles.py:ass_alignment_and_margins(vpos, align)` (pure, host-tested) maps the vertical anchor's centred ASS \an code (top 8 / center 5 / bottom 2) to its left variant (7/4/1) and widens the right margin (`_SUB_MARGIN_LEFT_RIGHT=220` vs left `_SUB_MARGIN_EDGE=110`) so ragged-left text keeps a small edge margin but clears the right-edge social buttons. Classic SRT (`burn_subtitles(..., h_align=)`) does the same on the legacy SSA codes (centre 6/10/2 → left 5/9/1) + `MarginL`/`MarginR`. `normalize_h_align` collapses anything that isn't an explicit left request (incl. `right`) to `center`. Karaoke text/stroke colour overrides ride `font_color`/`outline_color` through `compose._apply_subtitles` → `generate_ass_karaoke`. Host-tested in `tests/domain/test_subtitle_align.py`.
-
-**Param-flow invariants (don't regress):**
-- **`offset_y` sign is unified** — positive moves the caption DOWN in *both* the karaoke ASS and classic SRT paths via the pure `subtitles.py:_offset_margin(position_norm, base, offset_y)` helper (top-anchor adds, bottom/center subtract; clamped ≥0). Host-tested in `tests/domain/test_subtitle_style.py`.
-- **`uppercase` defaults to the preset.** `seedSubtitleParams` only forwards `uppercase` when the user explicitly sets it; `_apply_subtitles` passes `uppercase=None` otherwise so `generate_ass_karaoke` honours each preset's own casing (`mrbeast_box`/`minimal_clean` stay lower-case — a hard-coded `true` used to force them upper).
-- **`position='center'` is honoured in both modes.** Karaoke aliases `middle`→`center`; the SRT path now maps `center`/`middle`→SSA alignment 10 (it used to silently fall through to bottom).
-- **Karaoke forwards `font_color`/`outline_width`/`words_per_group`** (previously dropped by `_apply_subtitles`). All preset `text_color`s are `#FFFFFF`, so the always-sent `font_color:#FFFFFF` is a no-op until a non-white base is chosen.
-- **Defaults agree across panels:** position default is `bottom` everywhere (Create, Edit, seed, backend). `generate_ass_karaoke` validates `font_color`/`highlight_color` against `_HEX_RE` (raises instead of silently going white) and clamps `font_size` to `[_SUB_FONTSIZE_MIN, _SUB_FONTSIZE_MAX]` = `[10, 120]`.
-
-The Create preview grid (`data.js:SUBTITLE_PRESETS`) is a **cosmetic** CSS mirror (system fonts, no fontsize) — its `hi` highlight colours match the backend `highlight_color` for honesty, but it is NOT a pixel-faithful preview. (The old pixel-faithful `lib/subtitlePresets.js` + `SubtitleModal.jsx`/`HookModal.jsx` were deleted with the legacy component tree — no live code rendered them.)
-
-The apply button is the unified **"Apply & reprocess"** in `EditClipModal` (the toggle switch decides whether the subtitle layer renders at compose time).
-
-## Clip lifecycle & batch publish
-
-- **`useClipStates(jobId)`** (`dashboard/src/hooks/useClipStates.js`) — per-clip state keyed by index, persisted in localStorage under `clippyme_clip_states_{jobId}`. Shape: `{ disabled, deleted, publishedAt }`. Survives page reloads without a backend round-trip.
-- **`ClipCard`** (`redesign/results.jsx`) action toolbar: disable (Eye/Eye-off → dimmed, excluded from batch publish), remove (hides from grid, file stays on disk), reframe-mode badge, **Edit & reprocess**, compose-download, **Publish**. A green **"Published"** pill shows once `publishedAt` is set (via `onUpdateClipState(idx, { publishedAt: Date.now() })`).
-- **`PublishModal`** (`redesign/publish.jsx`) — the **unified single + batch publisher** (the old separate `BatchPublishModal.jsx`/`PublishModal.jsx` component pair was folded into this one file). Launched from a clip's **Publish** button or the grid's batch action; it publishes the selected clips **concurrently** via `Promise.allSettled` (`publish.jsx:run`), each row showing live queued→uploading→live/error status. On failure it surfaces the **real Zernio error message** per clip (so a daily-limit 429 reads as `failed: <reason>`, not a bare "failed"). `compose_first` + the clip's toggles/hook/subtitle/logo/`drop_ranges` ride along via `buildBody` so the uploaded clip matches the preview.
-  - **One-clip-per-day spacing** (when scheduling): `buildBody` sets `start_date = localDatePlus(batchPos)` so clip *n* is scheduled on today + *n* days — each clip gets its own day to stay under Zernio's per-platform daily cap (e.g. YouTube 5/day). `social_publisher.publish_clip` parses `start_date` and passes it to `SmartScheduler.find_slot` as the `target_day` override (clamped to `max(requested, now.date())` so past dates never slip through).
-  - **Daily-limit strategy = proactive per-day spacing + server-side enforcement.** The redesign avoids the cap up front with the spacing above and surfaces any residual Zernio 429 verbatim per clip; it does **not** do client-side per-platform disabling / `skipped`-state bookkeeping. `ZernioError` still carries the Zernio response body verbatim, so a richer client-side per-platform fallback can be layered on later if needed.
-
-## Reframing Modes
-
-There are **two layers** of "mode". The **user-facing `--reframe-mode`** (`auto` | `subject` | `disabled`; `object` is the legacy alias of `subject`) selects the whole-clip policy; within `auto`, **per-scene strategies** are then chosen automatically.
-
-**User-facing `--reframe-mode`** (CLI / `ProcessRequest.reframe_mode` / per-clip post-hoc `/api/reframe`):
-- **`auto`** (default) — face tracking; runs `analyze_scenes_strategy()` to pick a per-scene strategy (below). The comfort 2-pass / global-smooth path applies here only.
-- **`subject`** (legacy alias **`object`**) — **FrameShift face-first crop** everywhere (ported from [fralapo/FrameShift](https://github.com/fralapo/FrameShift)): every scene is forced to the internal `OBJECT` scene-strategy token → `create_frameshift_frame()`, which computes a **weighted-interest centroid over every detection in the frame** — faces (weight **1.0**), persons (**0.8**) and every other COCO object (default **0.5**, the FrameShift GUI sliders), each scaled by pixel area × confidence (`reframe_ops.weighted_interest_center`) — then crops a full-height 9:16 window centred on that point. A face pulls the camera hardest, so a talking head stays framed while relevant objects still bias the crop. Faces via MediaPipe FaceDetection; persons + objects reuse the single lazily-loaded YOLOv8 pass. Falls back to a **black-padded letterbox** (FrameShift "Enable Padding → black", `_black_pad_to_output`) when nothing is detected. Weights overridable via `REFRAME_FRAMESHIFT_WEIGHTS` (`face:1,person:0.8,default:0.5,dog:3,…` — the names `face`/`person`/`default` map to the three sliders, anything else is a per-COCO-class override). Skips scene analysis; streaming loop only (no global-smooth — that's a face-pan smoother). (The older object-only `create_general_frame(force_object_weights=True)` / `_DEFAULT_OBJECT_WEIGHTS` path is still present and powers the opt-in `REFRAME_OBJECT_WEIGHTS` GENERAL-scene crop in `auto`, but is no longer what `subject` mode runs.)
-- **`disabled`** — overrides all scenes → 4:3 center crop + black bars (`create_disabled_reframe`).
-
-**Per-scene strategies** (only used inside `auto`; `analyze_scenes_strategy()` samples 7 frames per scene):
-- `TRACK`: a **single, near-static** subject → locked crop on the face (static-framing policy below). Pass-1 still records `SpeakerTracker` + `SmoothedCameraman` targets; the static policy then collapses them to one fixed viewpoint.
-- `WIDE`: **2+ faces** in the scene **OR a single subject that moves too far to hold without panning** (primary-face centroid travel > `REFRAME_MOTION_WIDE_THRESH`, default `0.12` of the frame) → a **locked, zoomed-out** crop (zoom forced to 1.0) centred between the faces / on the subject's average position. Shows everyone with zero camera motion.
-- `GENERAL`: no faces → `create_general_frame()` (letterbox, or content-aware crop if the `REFRAME_OBJECT_WEIGHTS` / `REFRAME_SALIENT_GENERAL` env flags are set)
-
-**AUTO static-framing policy (`REFRAME_STATIC_AUTO`, DEFAULT ON)**: the headline rule — *within a scene the camera never moves*. Built on the comfort-mode global-smooth 2-pass: pass 1 records the raw per-frame target, then `reframe_ops.collapse_scene_targets` (pure-math, host-tested) collapses **each scene to a single `(cx, cy, zoom)`** so every frame of a shot renders from one fixed crop — zero pan, zero mid-shot zoom breathing. TRACK locks on the scene's median face centre with zoom capped at `1.35` (framed but never aggressively pushed in); WIDE locks zoomed-out (`wide_zoom=1.0`) on the median centre. A single *moving* subject is deliberately demoted TRACK→WIDE rather than chased, because chasing it would create the very motion the policy removes (`reframe_ops.centroid_span` measures the travel; threshold `REFRAME_MOTION_WIDE_THRESH`). The lock point snaps to exact frame centre within `REFRAME_SNAP_CENTER` (0.10). Set `REFRAME_STATIC_AUTO=0` to fall back to the per-frame Savitzky-Golay eased smoother (legacy moving-but-eased camera — `build_smoothed_trajectory`). Guarded by `tests/pipeline/test_reframe_ops.py` (`centroid_span` + `collapse_scene_targets`).
-
-**`SpeakerTracker`**: mouth-aspect-ratio (MAR) variance from MediaPipe FaceMesh (landmarks 13/14/78/308, defined as `_MOUTH_TOP/_BOTTOM/_LEFT/_RIGHT` module constants **in `reframe.py`**), 1s sliding window per speaker. Score = `0.3 * face_size_norm + 1.0 * MAR_variance`. 3× sticky bonus on the active speaker, switches require `cooldown_frames=45`. **Regression note:** these constants were once defined only in `main.py` while `compute_mouth_aspect_ratio` was extracted to `reframe.py`, so the MAR call raised `NameError` every frame — silently swallowed by the corrupt-frame guard, disabling active-speaker selection and duplicating ~37% of frames. Guarded by `tests/pipeline/test_reframe_mar.py` (asserts no undefined globals in the function) and surfaced by `REFRAME_DEBUG_EXC=1` (prints the first 5 swallowed per-frame tracebacks to stderr).
-
-**Dead-band (`REFRAME_DEADZONE_X` / `REFRAME_DEADZONE_Y`)**: jitter-killing safe zone as a fraction of the max crop dimension before the camera reacts. Defaults `X=0.05` / `Y=0.08` (were `0.20`/`0.15`). A measured fitness sweep (`tmp/reframe_eval/`: re-detect faces in the *output*, score centering + jerk + coverage) found the old `X=0.20` let a talking head drift 20% off-centre; tightening to `0.05`/`0.08` cut centering error ~30% with *lower* jerk (tighter tracking, not jitter). Raise to loosen on shaky sources.
-
-**`SmoothedCameraman`**: adaptive smoothing (`SLOW=0.08`, `FAST=0.30` for jumps >60% of crop_width), X+Y axis tracking, **continuous** 1.0–1.6× zoom (`reframe_ops.zoom_for_face_height` — face targets ~40% of crop height; replaced the old 4-bucket ladder that snapped at bucket edges), **asymmetric zoom easing** (`reframe_ops.asymmetric_zoom_step` — `ZOOM_RATE_OUT=0.12` fast pull-back so a growing face is never left chopped, `ZOOM_RATE_IN=0.05` slow cinematic push-in; ported from gauravzazz/smart-reframe), YOLO person bbox fallback aiming at upper 15% (head zone) when no face detected. `DetectionSmoother` rolling average (window=5) before MAR.
-
-**Lost-subject recovery (always on)**: when no fresh target arrives for `REFRAME_LOST_HOLD` frames (default 90 ≈ 3 s) in a TRACK/WIDE scene, the camera eases its target back toward the source center at `REFRAME_LOST_DRIFT`/frame (default 0.05) and gently zooms out, instead of freezing on empty space.
-
-**Pure decision math lives in `reframe_ops.py`** (no cv2 import → host-unit-tested): `OneEuroFilter` (1€ adaptive smoother), `drift_to_center`, `salient_crop_center`, `zoom_for_face_height` + `asymmetric_zoom_step` (continuous + asymmetric zoom control), `savgol_1d` + `smooth_and_clamp` + `build_smoothed_trajectory` (two-stage global-trajectory smoothing), `kalman_rts_smooth` + `solve_camera_path_l2` (alternative global pan-path smoothers — forward-backward Kalman RTS + L2 convex optimiser, ported from mfahsold/montage-ai). `SmoothedCameraman` is thin cv2 glue that calls in. Add new reframe logic here, not in `main.py`, so it stays testable on the host.
-
-**Optional smoothers** (`REFRAME_SMOOTHER`): blank = default two-speed EMA; `euro` = 1€ filter (`REFRAME_EURO_MINCUTOFF` default 0.014 = smoothness floor; `REFRAME_EURO_BETA` default 0.0008 = speed responsiveness); `spring` = momentum / damped-spring (`reframe_ops.advance_value_with_velocity`, `REFRAME_SPRING_RESPONSE` default 0.18, `REFRAME_SPRING_DAMPING` default 0.82 — carries velocity for operator-like accel/decel; ported from KazKozDev/auto-vertical-reframe). **Hard pan-rate cap** `REFRAME_MAX_STEP_PX` (px, 0 = off) clamps the per-frame center move for *every* smoother via `reframe_ops.limit_step` (also caps the spring's max velocity). **A/B procedure**: process the same clip with and without the flag (env vars are in `docker-compose.yml`), compare camera feel — lower `MINCUTOFF` = smoother/laggier at rest, higher `BETA` = snappier on fast speaker switches. `salient_crop_center` (saliency crop) is **wired as opt-in**: `REFRAME_SALIENT_GENERAL=1` content-aware-crops faceless (GENERAL) scenes around the highest image-gradient column band (Sobel saliency, base cv2 — no opencv-contrib) instead of letterboxing them; default-off keeps the letterbox path byte-identical, and the helper falls back to letterbox on any failure (`reframe._salient_general_crop`, integration-tested). **Weighted-object follow** (`REFRAME_OBJECT_WEIGHTS`) is a second opt-in GENERAL crop that takes precedence over `SALIENT_GENERAL`: in faceless scenes it **reuses the existing YOLO forward pass** (no 2nd network — the person-fallback already runs YOLO; only the class filter differs) to weight every COCO detection by `class_weight·area·conf` and crops a 9:16 window on the weighted centroid (`reframe_ops.weighted_interest_center`, pure-math host-tested), so a B-roll product/dog/car stays framed instead of parked behind letterbox bars. `1`/`true`/`default` → curated COCO defaults (`reframe._DEFAULT_OBJECT_WEIGHTS`: animals 2.5–3, vehicles 1.8–2, held objects 1.3–1.8); `dog:3,car:2,bottle:1.5` → custom weights. **Person is excluded** (people are framed by the face/person tracker upstream), so this never competes with talking-head framing — which is precisely why it's a net-only improvement: it only fires where the old path would letterbox. Falls through to salient/letterbox on no-object/failure (`reframe._weighted_object_general_crop`, integration-tested). This is the no-con realization of FrameShift's `calculate_weighted_interest_region` idea — the cons all dissolve once it's scoped to the faceless fallback and piggybacks the existing inference. (The formerly unwired building blocks `iou`/`associate_subject`, `rank_subject`, and `split_screen_slots` were removed in 2026-07 — they never gained a caller; git history has them if the gating infrastructure ever materialises. See `docs/auto-vertical-reframe-analysis.md` / `docs/smart-video-reframe-analysis.md`.)
-
-**Optional global trajectory smoothing (opt-in 2-pass)**: set `REFRAME_GLOBAL_SMOOTH=1` to switch the render to a two-stage track-then-render pass (`reframe._render_global_smooth`). Pass 1 records the raw per-frame `(cx, cy, zoom)` camera target; `build_smoothed_trajectory` Savitzky-Golay-smooths it **per scene segment** (never across a cut); pass 2 renders from the smoothed path via `SmoothedCameraman.crop_box_at`. This is a cheap, dependency-free analogue of gauravzazz/smart-reframe's offline Viterbi `PathSolver`. Default-off keeps the proven single-pass streaming path byte-identical; the opt-in path costs a second video decode. See `docs/smart-reframe-analysis.md` for the full comparison. A/B the same way as the 1€ smoother (output must be viewed). The pan-path smoother is selectable via `REFRAME_GLOBAL_METHOD` (`savgol` default | `kalman` = forward-backward Kalman RTS, extrapolates through detection gaps | `l2` = L2 convex optimiser minimising data+velocity+acceleration with optional keyframe constraints; both ported from mfahsold/montage-ai — see `docs/montage-ai-analysis.md`). Zoom always uses savgol. Default `savgol` is byte-identical to before.
-
-**AutoFlip-style stationary lock (opt-in, global-smooth only)**: `REFRAME_STATIONARY_THRESH` (default `0.0` = off) ports Google AutoFlip's `motion_stabilization_threshold_percent`. In `build_smoothed_trajectory`, after per-scene smoothing, if a scene's camera target spans less than this fraction of the frame on **both** axes (`reframe_ops.stationary_lock`, host-tested), the whole scene is pinned to the segment's median target — a locked tripod instead of micro-tracking detector jitter. `REFRAME_SNAP_CENTER` (default `0.10`) snaps that lock point to exact frame centre when it lands within this fraction of centre. At threshold `0.0` the path is byte-identical. Measured on a real clip (`tmp/reframe_eval`): global-smooth (savgol) already cut centering error to cx≈0.078 (vs the streaming default's ≈0.13) at higher output face-coverage; stationary `0.15` further trims jerk on near-static scenes. The default render stays single-pass streaming (one decode); enable `REFRAME_GLOBAL_SMOOTH=1` (+ optional stationary) for the highest-quality framing at the cost of a second decode. See `docs/reframe-improvements-research.md`.
-
-**Comfort mode (anti-nausea, DEFAULT ON — `REFRAME_COMFORT`)**: research (Google AutoFlip + cybersickness literature, see the reframe research agent findings in `docs/reframe-improvements-research.md`) shows the seasickness from auto-reframe is caused by the **policy**, not the smoothing math: continuously tracking the face keeps the camera in sustained, *variable-velocity* motion, and acceleration/jerk (plus breathing zoom = radial "looming" flow) is the proven nausea trigger — no low-pass filter removes it. `_reframe_comfort_enabled()` (default `1`) therefore makes the **global-smooth 2-pass the default render** and turns on two policies that bias toward a locked camera: (1) **stationary-first** — `REFRAME_STATIONARY_THRESH` defaults to `0.30` under comfort (vs `0.0`/off otherwise) so any scene whose target span stays within 30 % of the frame is pinned to a tripod; (2) **per-scene zoom lock** — `REFRAME_ZOOM_LOCK` (default on under comfort) collapses each scene to one zoom level (segment median) via `build_smoothed_trajectory(lock_zoom=True)`, so the frame never breathes mid-shot (zoom still varies *between* scenes, which reads as a new shot across a cut, not motion). Cost: the 2-pass decode. Set `REFRAME_COMFORT=0` to fall back to the original single-pass streaming tracker (measured tight-deadzone centering, `X=0.05`/`Y=0.08`). **The prior deadzone tuning optimized centering error, which the research identifies as the *wrong* objective — perfect centering requires constant motion. The streaming defaults are left untouched; comfort mode addresses nausea via policy instead.** Final arbiter is still the eye — A/B comfort on/off on a real talking-head clip.
-
-## Pipeline Post-processing (per clip)
-
-After `process_video_to_vertical()`:
-1. `apply_subtle_zoom(clip_path)` — Ken Burns 1.0→1.05x zoom via `zoompan`
-2. `normalize_audio(clip_path)` — two-pass EBU R128 loudnorm at -14 LUFS
-3. `select_cover_frame(clip_path)` — scores frames by face presence + sharpness (Laplacian) + exposure; saves `{clip}_cover.jpg`
-
-## Social Publishing (Zernio integration)
-
-Clips can be published/scheduled directly to TikTok, Instagram and YouTube from the ResultCard's **Publish** button. All posting goes through **Zernio** (https://zernio.com) as the unified multi-platform API.
-
-- **`social_publisher.py`**: the integration module.
-  - `ZernioClient` — minimal REST client (requests-based, no SDK dep). Methods: `list_accounts()`, `list_scheduled_posts()`, `presign_upload()`, `upload_to_presigned()`, `create_post()`. All raise `ZernioError` on HTTP failures.
-  - `SmartScheduler` — picks an optimal posting slot based on Italian-prime-time windows per weekday (tuned for TikTok / Reels / Shorts), with a configurable minimum gap between posts (default 90 min) and anti-collision against already-scheduled posts. Fully deterministic when the `rng` field is seeded — enables reproducible tests. **1:1 port of `tmp/programma_shorts.py:trova_orario_smart`**, including the exact `FASCE_ORARIE` weekday windows:
-    ```
-    Mon: 12-14, 18-21   Tue: 9-12, 14-22   Wed: 7-11, 14-22
-    Thu: 9-12, 15-21    Fri: 11-15, 16-22  Sat: 9-13, 15-20
-    Sun: 8-17, 18-20
-    ```
-    Algorithm (3 steps, same as original):
-    1. **Free prime-time window**: find windows with no pre-existing posts inside; pick one at random; try up to 30 random `(hour, minute)` candidates inside it; accept the first one that is `> now` and has `abs(dist) >= min_gap` from every occupied slot.
-    2. **15-min scan 07:00-23:00**: if every window has at least one post, scan every 15 minutes across the safe daytime range; collect all candidates passing `> now + 90min gap`; pick one at random.
-    3. **Fallback**: pick a random prime-time window + random `(hour, minute)` inside it (gap check skipped — only hit when the whole day is overcrowded).
-  - `publish_clip()` emits **verbose SmartScheduler traces** on every `schedule_mode='auto'` call: logs the target day + weekday, the prime-time windows for that weekday, the list of already-occupied times pulled from Zernio, and the picked slot with the reason (`free prime-time window HH-HH` or `fallback`). Lets you see in backend logs exactly why a given timestamp was chosen and confirm collisions are being avoided.
-  - `publish_clip()` — orchestrator. Three `schedule_mode` values: `"now"` (publishNow=true), `"auto"` (SmartScheduler picks the slot after fetching existing scheduled posts), `"manual"` (caller supplies `scheduled_for` ISO 8601). Does presign → PUT upload → create post. Returns `{post_id, status, scheduled_for, schedule_mode, platforms}`.
-
-- **Persistence**: Zernio credentials live in `data/config.json` under a dedicated `"zernio"` namespace (isolated from the core keys). `load_zernio_config()` / `save_zernio_config()` in `config_store.py`. The API key is never returned in full — only a `{prefix}...{suffix}` masked form via `zernio_config_status()`.
-
-- **Endpoints** (all require trusted-origin / private-network client):
-  - `GET /api/config/zernio` — masked status
-  - `POST /api/config/zernio` — merge-update (api_key, accounts, timezone)
-  - `GET /api/zernio/accounts` — discovery via Zernio's `/v1/accounts`
-  - `POST /api/publish/{job_id}/{clip_index}` — upload + schedule. Accepts `PublishRequest` with title, caption, platforms (list of `{platform, accountId, platformSpecificData?}`), `schedule_mode`, `scheduled_for?`, `timezone?`, `tiktok_settings?`. Optionally runs a fresh compose pass first (`compose_first=true` + toggles/hook_params/subtitle_params) so the uploaded clip reflects the user's Smart Cut / Hook / Subtitles toggles.
-
-- **Frontend** (`dashboard/src/redesign/`):
-  - Zernio settings live in `views.jsx` (Settings tab) — API key input (masked), per-platform account ID fields for TikTok/Instagram/YouTube, "Discover from Zernio" button that hits `/api/zernio/accounts` and lets the user click-pick from discovered accounts, timezone field.
-  - `PublishModal` (`publish.jsx`) — launched from a clip's **Publish** button (single) or the grid batch action (multi). Caption editor (prefilled from the clip's `tiktok_caption` / `video_title_for_youtube_short`), platform toggles (disabled when no account ID saved), schedule toggle (prime-time auto slot vs publish now). Forwards the clip's Smart Cut / Hook / Subtitles / Logo toggles via `compose_first` so published clips match the preview.
-  - `ClipCard` (`results.jsx`) — **Publish** button alongside compose-download; reuses the toggle/compose flow so an active toggle re-composes before upload.
-
-- **Env vars**: `ZERNIO_BASE_URL` (default `https://zernio.com/api/v1`), `ZERNIO_DEFAULT_TZ` (default `Europe/Rome`), `ZERNIO_HTTP_TIMEOUT` (60s), `ZERNIO_UPLOAD_TIMEOUT` (600s), `ZERNIO_MIN_GAP_SECONDS` (5400 = 90 min for SmartScheduler).
-
-- **Security note**: the reference script shared by the user lives in `tmp/` and contains a real API key in plaintext. **`tmp/` is gitignored** via `.gitignore` — never commit anything from that directory.
-
-## Gemini viral detection — parsing chain
-
-`clippyme.pipeline.gemini_parser` applies a **5-level fallback** when Gemini emits malformed JSON: `strict` → `clean` (smart-quote/comma/backslash fix) → `json_repair` lib → `retry` (one round-trip with error context) → `fallback` (None → whole-video mode). Prompt emits chain-of-thought BEFORE a `### JSON ###` delimiter and uses a 5-axis viral_score rubric (HOOK_STRENGTH, EMOTIONAL_PAYOFF, QUOTABILITY, SELF_CONTAINED, DENSITY) + 3 few-shot examples. The prompt also has a **SPEAKER SIGNAL** section (uses diarization `speaker` ints as cut-boundary hints) and an **AUDIO CUES** section that tells Gemini to treat bracketed `(laughter)`/`(applause)` markers — emitted only by the ElevenLabs Scribe provider's audio-event tagging — as strong EMOTIONAL_PAYOFF evidence (signal only, never copied into hook/title text). Both sections are no-ops when the markers are absent. Each attempt logs `📊 gemini_parse path=<...> duration_ms=<N>`. Pydantic validation (`ViralClip`) enforces `10≤duration≤75`, `viral_score∈[1,100]`, `viral_reason≥20 chars`. `validate_and_dedupe` drops clips with IoU>0.7 vs a higher-scoring neighbour.
-
-## Operational env vars (reference)
-
-Beyond the API keys / model / cookie settings (managed via the dashboard) and the `REFRAME_*` / `DEEPGRAM_*` / `ZERNIO_*` knobs documented in their sections above, these operational vars tune the server + pipeline. All have safe defaults; set only to override.
-
-- **Encode quality** (`domain/encode.py` — the single source of libx264 settings for **every** render/compose pass: reframe master, auto-zoom, grade, subtitles, smart-cut, hook, logo): `CLIPPYME_X264_CRF` (18 — x264's near-visually-lossless point; lower = higher quality + bigger files, 0–51), `CLIPPYME_X264_PRESET` (`medium`), `CLIPPYME_FFMPEG_TIMEOUT` (600s — per-pass ffmpeg timeout applied by every compose-layer subprocess call so one hung ffmpeg can't pin the shared thread pool). **Why it exists:** a fully-composed clip stacks up to ~7 sequential libx264 re-encodes; the old scattered defaults (CRF 23 / preset `fast` on the reframe + zoom + subtitle + smart-cut passes) compounded into visibly soft, blocky downloads. `encode.py:x264_video_args()` keeps every generation at CRF 18 so the chain stays clean, and is the only place to retune. The reframe-master streaming encode + auto-zoom + each compose layer call it; the VFR-normalize prepass and the persisted source slice were already at CRF 18. Host-tested (`tests/domain/test_encode.py`).
-- **API / server** (`api/app.py`, `api/security.py`): `MAX_CONCURRENT_JOBS` (5), `MAX_FILE_SIZE_MB` (2048), `JOB_RETENTION_SECONDS` (2592000 = 30d), `ALLOWED_ORIGINS` (comma-list, unset → same-origin/private-net only), `TRUST_PROXY` (`0`; `1` honours `X-Forwarded-For`), `RATE_LIMIT_ENABLED` (`1`), `RATE_LIMIT_MAX_BUCKETS` (10000). `CLIPPYME_BIND` (compose-level, default `127.0.0.1`) — host interface both published ports (8000/5175) bind to; the trusted-client model treats every private-network peer as authorized for config/state endpoints, so LAN exposure (`CLIPPYME_BIND=0.0.0.0`) should be a deliberate choice on a fully-trusted network. Note the dashboard port matters as much as the API port: the Vite proxy reaches the backend from inside the docker network as a trusted private peer. `CLIPPYME_API_TOKEN` (unset) — optional shared-secret auth for deliberate LAN deploys: when set, an app middleware 401s every `/api` request missing the token (`X-API-Token` or `Authorization: Bearer`, constant-time compare in `security.enforce_api_token`); the dashboard stores the token in localStorage (Settings → API token) and `lib/apiToken.js:apiFetch` attaches the header on every API call. Static media mounts (`/videos`/`/thumbnails`/`/fonts`) stay IP-open (`<video>`/FontFace can't send custom headers). Unset = byte-identical no-op.
-- **Smart Cut / auto-editor** (`domain/smartcut.py`): `AE_MAX_PARALLEL` (2), `AE_SILENCE_THRESHOLD` (0.8s gap), `AE_SILENCE_KEEP` (0.3s), `AE_MAX_POLISH_CUT_RATIO` (0.5 — refuse a stage-2 polish that would cut >50%), `AE_AUDIO_THRESHOLD` (0.04), `AE_MARGIN` (`0.2sec`), `AE_TIMEOUT_SECONDS` (300), `AE_SKIP_POLISH_THRESHOLD` (8.0s — skip polish if stage-1 already saved this much). `AUTO_EDITOR_AUTO_UPDATE` (`0`; `1` enables the 24h binary self-update loop in `auto_editor_updater.py`).
-- **Pipeline** (`pipeline/main.py`, `download.py`): `WHISPER_DIARIZE` (`true`), `DEEPGRAM_DIARIZE` (`true`), `CLIPPYME_LANGUAGE` (ASR language override, unset = auto), `CLIPPYME_SILENCE_SNAP` (`1`; `0`/`false` disables the waveform silence-trough clip-edge refinement #2c), `GEMINI_MAX_RETRIES` (3), `GEMINI_RETRY_MODEL` (`gemini-2.5-flash` — fallback model on retry), `YTDLP_NOCHECKCERT` (off; `1` skips TLS verify), `YTDLP_THROTTLED_RATE` (102400 bytes/s — yt-dlp throttled-rate trigger).
-
-## Code organization rules
-
-- **Backend:** endpoint handlers stay thin (validate → call helper → return JSON). If a handler grows past ~25 lines, extract into a `clippyme.domain.*` module. Don't re-merge `app.py`.
-- **Frontend:** `redesign/RedesignApp.jsx` only owns top-level state wiring + tab/JSX composition. Side effects → custom hooks (`hooks/`), visual chunks → `redesign/` components. (The legacy `App.jsx` + `components/` tree is gone — edit `redesign/` only.)
+- `docs/*-analysis.md` — 14 comparative analyses of the OSS projects ideas
+  were ported from (reframe smoothers, ClipsAI TextTiling, flycut manual trim,
+  VideoLingo subtitle splitting, …) with adopt/reject rationale.
+- `docs/fable5-improvement-log.md` — audit-driven fix log with verification
+  evidence per change.
+- `docs/reframe-improvements-research.md` — the comfort-mode research and
+  measured A/B numbers.
+- `docs/architecture-history.md` — summary of major refactors (what moved
+  where and why); the pre-rewrite CLAUDE.md is in git history.
