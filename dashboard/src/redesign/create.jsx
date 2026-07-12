@@ -2,9 +2,10 @@
 import { useState, useRef } from 'react';
 import { Icon, Btn, Panel, Segmented, Switch, Stepper } from './primitives';
 import { Hero } from './chrome';
-import { SUBTITLE_PRESETS, LANGUAGES, GEMINI_MODELS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, GRADE_PRESETS, HOOK_STYLE_DEFAULT } from './data';
-import { useFontList } from '../hooks/useFontList';
+import { LANGUAGES, GEMINI_MODELS, HOOK_STYLE_DEFAULT } from './data';
 import { HookStyleControls, HookPreview } from './hookStyle';
+import { SubtitleControls } from './subtitleControls';
+import { LogoControls, GradeControls } from './layerControls';
 
 function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelete, onSaveCurrent }) {
   const corner = { position: 'absolute', top: 12, left: 12, display: 'flex', gap: 8, zIndex: 2 };
@@ -175,110 +176,36 @@ function OptRow({ icon, label, desc, on, set, onConfig, configActive }) {
   );
 }
 
+// Adapter over the shared SubtitleControls: resolves the recipe's inline
+// defaults into a fully-populated value object (the shared component never
+// applies defaults) and reverse-maps the seedClipParams-vocabulary partials
+// back onto the persisted sub* opts keys.
+const SUB_KEYMAP = {
+  mode: 'subMode', preset: 'subPreset', font: 'subFont', font_color: 'subColor',
+  outline_color: 'subStroke', font_size: 'subFontSize', border_width: 'subOutlineW',
+  bg: 'subBg', position: 'subPosition', align: 'subAlign', offset_y: 'subOffsetY',
+};
+
 function SubConfig({ opts, set }) {
-  const fonts = useFontList();
-  return (
-    <div className="cfg-drawer fade-in">
-      <div className="cf-row">
-        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Mode</span>
-        <Segmented full value={opts.subMode} onChange={(id) => set({ subMode: id })}
-          options={[{ id: 'karaoke', label: 'Karaoke' }, { id: 'classic', label: 'Classic' }]} />
-      </div>
-      {opts.subMode === 'karaoke' && (
-        <>
-          <div className="cf-row">
-            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Style preset</span>
-            <div className="subgrid">
-              {SUBTITLE_PRESETS.map((p) => (
-                <button key={p.id} type="button" className={'subpre' + (opts.subPreset === p.id ? ' on' : '')} onClick={() => set({ subPreset: p.id })}>
-                  <div className="prev"><span style={p.style}>WORD <span style={{ color: p.hi }}>UP</span></span></div>
-                  <div className="nm">{p.label}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="cf-row">
-            <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
-              <span>Font size</span><span className="od">{opts.subFontSize > 0 ? opts.subFontSize : 'Auto'}</span>
-            </span>
-            <input type="range" min="0" max="80" step="1" value={opts.subFontSize || 0} aria-label="Subtitle font size"
-              onChange={(e) => set({ subFontSize: Number(e.target.value) })} style={{ width: '100%' }} />
-          </div>
-          <div className="cf-row" style={{ display: 'flex', gap: 12 }}>
-            <label style={{ flex: 1 }}>
-              <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Text color</span>
-              <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input type="color" aria-label="Subtitle text color" value={opts.subColor || '#FFFFFF'}
-                  onChange={(e) => set({ subColor: e.target.value })}
-                  style={{ width: 40, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
-                <span className="od">{(opts.subColor || '#FFFFFF').toUpperCase()}</span>
-              </span>
-            </label>
-            <label style={{ flex: 1 }}>
-              <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Stroke color</span>
-              <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <input type="color" aria-label="Subtitle stroke color" value={opts.subStroke || '#000000'}
-                  onChange={(e) => set({ subStroke: e.target.value })}
-                  style={{ width: 40, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
-                <span className="od">{(opts.subStroke || '#000000').toUpperCase()}</span>
-              </span>
-            </label>
-          </div>
-        </>
-      )}
-      {opts.subMode === 'classic' && (
-        <>
-          <div className="cf-row">
-            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
-            <select className="sel" style={{ width: '100%' }} value={opts.subFont || 'Montserrat-Black'}
-              onChange={(e) => set({ subFont: e.target.value })}>
-              {fonts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          </div>
-          <div className="cf-row">
-            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Color</span>
-            <div className="swatches">
-              {SUB_COLORS.map((c) => (
-                <button key={c} type="button" aria-label={`Font color ${c}`}
-                  className={'swatch' + ((opts.subColor || '#FFFFFF').toUpperCase() === c.toUpperCase() ? ' on' : '')}
-                  style={{ background: c }} onClick={() => set({ subColor: c })} />
-              ))}
-            </div>
-          </div>
-          <div className="cf-row">
-            <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
-              <span>Outline width</span><span className="od">{opts.subOutlineW ?? 2}</span>
-            </span>
-            <input type="range" min="0" max="6" step="1" value={opts.subOutlineW ?? 2} aria-label="Subtitle outline width"
-              onChange={(e) => set({ subOutlineW: Number(e.target.value) })} style={{ width: '100%' }} />
-          </div>
-          <div className="opt" style={{ paddingLeft: 0, paddingRight: 0 }}>
-            <div className="otxt"><div className="ot" style={{ fontSize: 13 }}>Background box</div>
-              <div className="od">Solid panel behind the text</div></div>
-            <Switch on={!!opts.subBg} onChange={(v) => set({ subBg: v })} />
-          </div>
-        </>
-      )}
-      <div className="cf-row">
-        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
-        <Segmented full value={opts.subPosition || 'bottom'} onChange={(id) => set({ subPosition: id })}
-          options={[{ id: 'top', label: 'Top' }, { id: 'center', label: 'Center' }, { id: 'bottom', label: 'Bottom' }]} />
-      </div>
-      <div className="cf-row">
-        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Alignment</span>
-        <Segmented full value={opts.subAlign || 'center'} onChange={(id) => set({ subAlign: id })}
-          options={[{ id: 'left', label: 'Left' }, { id: 'center', label: 'Center' }]} />
-        <div className="od" style={{ marginTop: 6 }}>Left = ragged (a bandiera), margin from edge · no right (social buttons)</div>
-      </div>
-      <div className="cf-row">
-        <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
-          <span>Vertical nudge</span><span className="od">{(opts.subOffsetY || 0) > 0 ? `+${opts.subOffsetY}` : (opts.subOffsetY || 0)}</span>
-        </span>
-        <input type="range" min="-50" max="50" step="1" value={opts.subOffsetY || 0} aria-label="Subtitle vertical position"
-          onChange={(e) => set({ subOffsetY: Number(e.target.value) })} style={{ width: '100%' }} />
-      </div>
-    </div>
-  );
+  const value = {
+    mode: opts.subMode,
+    preset: opts.subPreset,
+    font: opts.subFont || 'Montserrat-Black',
+    font_color: opts.subColor || '#FFFFFF',
+    outline_color: opts.subStroke || '#000000',
+    font_size: opts.subFontSize || 0,
+    border_width: opts.subOutlineW ?? 2,
+    bg: !!opts.subBg,
+    position: opts.subPosition || 'bottom',
+    align: opts.subAlign || 'center',
+    offset_y: opts.subOffsetY || 0,
+  };
+  const onChange = (partial) => {
+    const patch = {};
+    for (const [k, v] of Object.entries(partial)) patch[SUB_KEYMAP[k]] = v;
+    set(patch);
+  };
+  return <SubtitleControls variant="create" value={value} onChange={onChange} />;
 }
 
 function HookConfig({ opts, set }) {
@@ -305,21 +232,9 @@ function HookConfig({ opts, set }) {
 function LogoConfig({ opts, set }) {
   return (
     <div className="cfg-drawer fade-in">
-      <div className="cf-row">
-        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
-        <div className="seg-grid">
-          {LOGO_POSITIONS.map(([v, l]) => (
-            <button key={v} type="button"
-              className={'seg-cell' + ((opts.logoPos || 'top-right') === v ? ' on' : '')}
-              onClick={() => set({ logoPos: v })}>{l}</button>
-          ))}
-        </div>
-      </div>
-      <div className="cf-row">
-        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Size</span>
-        <Segmented full value={opts.logoSize || 'M'} onChange={(id) => set({ logoSize: id })}
-          options={LOGO_SIZES.map(([v, l]) => ({ id: v, label: l }))} />
-      </div>
+      <LogoControls position={opts.logoPos || 'top-right'} size={opts.logoSize || 'M'}
+        onChange={(p) => set(p.position !== undefined
+          ? { logoPos: p.position } : { logoSize: p.size })} />
       <div className="od" style={{ marginTop: 2 }}>Upload your logo PNG in Settings → Brand logo.</div>
     </div>
   );
@@ -399,8 +314,8 @@ function OptionsPanel({ opts, set }) {
       <div className="opt">
         <div className="oico"><Icon n="palette" /></div>
         <div className="otxt"><div className="ot">Colour grade</div><div className="od">Cinematic colour pass on every clip</div></div>
-        <div className="r"><Segmented value={opts.gradePreset || 'none'} onChange={(id) => set({ gradePreset: id })}
-          options={[{ id: 'none', label: 'Off' }, ...GRADE_PRESETS.map((g) => ({ id: g.id, label: g.label }))]} /></div>
+        <div className="r"><GradeControls withOff full={false} preset={opts.gradePreset || 'none'}
+          onChange={(p) => set({ gradePreset: p.preset })} /></div>
       </div>
     </Panel>
   );

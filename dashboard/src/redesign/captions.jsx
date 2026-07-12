@@ -16,11 +16,12 @@
 // logo — is applied across the selected clips (see lib/bulkApply.js).
 import { useState, useEffect } from 'react';
 import { Icon, Btn, Segmented, Switch } from './primitives';
-import { SUBTITLE_PRESETS, SUB_COLORS, LOGO_POSITIONS, LOGO_SIZES, GRADE_PRESETS, HOOK_STYLE_DEFAULT } from './data';
+import { HOOK_STYLE_DEFAULT } from './data';
 import { useModalA11y } from './useModalA11y';
 import { clipPreviewSrc, getClipTranscript, editClipAI } from './realApi';
-import { useFontList } from '../hooks/useFontList';
 import { HookStyleControls, HookPreview } from './hookStyle';
+import { SubtitleControls } from './subtitleControls';
+import { LogoControls, GradeControls } from './layerControls';
 import { seedSubtitleParams, seedHookParams, seedLogoParams } from '../lib/seedClipParams';
 
 // Pull the IG-style hook style keys out of a flat hookParams object.
@@ -80,7 +81,6 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   // Colour grade (video-use-style). Preset 'none' = grade layer off.
   const gp0 = initial?.gradeParams || { preset: preselections?.grade?.preset || 'none' };
   const [gradePreset, setGradePreset] = useState(gp0.preset || 'none');
-  const fonts = useFontList();
 
   const [mode, setMode] = useState(sp.mode || preSubs.mode || 'karaoke');
   const [preset, setPreset] = useState(sp.preset || preSubs.preset || 'hormozi_bold');
@@ -98,6 +98,16 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const [kSize, setKSize] = useState(Number(sp.font_size ?? preSubs.font_size ?? 0));
   const [cOutline, setCOutline] = useState(Number(sp.border_width ?? preSubs.border_width ?? 2));
   const [cBg, setCBg] = useState(Number(sp.bg_opacity ?? preSubs.bg_opacity ?? 0) > 0);
+  // Routes SubtitleControls' seedClipParams-vocabulary partials onto the
+  // individual useState setters (they collapse into one object in the
+  // follow-up state-grouping commit).
+  const subSetters = { mode: setMode, preset: setPreset, font: setSubFont,
+    font_color: setSubColor, outline_color: setSubStroke, font_size: setKSize,
+    border_width: setCOutline, bg: setCBg, position: setPosition,
+    align: setAlign, offset_y: setOffsetY };
+  const applySubPatch = (partial) => {
+    for (const [k, val] of Object.entries(partial)) subSetters[k]?.(val);
+  };
   const [hookText, setHookText] = useState(
     initial?.hookParams?.text || clip.viral_hook_text || clip.hook_text || '',
   );
@@ -322,105 +332,11 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                   <Switch on={subsOn} onChange={setSubsOn} />
                 </div>
                 {subsOn && (
-                  <div className="cfg-drawer fade-in">
-                    <div className="cf-row">
-                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Mode</span>
-                      <Segmented full value={mode} onChange={setMode}
-                        options={[{ id: 'karaoke', label: 'Karaoke' }, { id: 'classic', label: 'Classic' }]} />
-                    </div>
-                    {mode === 'karaoke' && (
-                      <>
-                        <div className="cf-row">
-                          <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Style preset</span>
-                          <div className="subgrid">
-                            {SUBTITLE_PRESETS.map((p) => (
-                              <button key={p.id} type="button" className={'subpre' + (preset === p.id ? ' on' : '')} onClick={() => setPreset(p.id)}>
-                                <div className="prev"><span style={p.style}>WORD <span style={{ color: p.hi }}>UP</span></span></div>
-                                <div className="nm">{p.label}</div>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="cf-row">
-                          <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
-                            <span>Font size</span><span className="eo-d">{kSize > 0 ? kSize : 'Auto'}</span>
-                          </span>
-                          <input type="range" min="0" max="80" step="1" value={kSize} aria-label="Subtitle font size"
-                            onChange={(e) => setKSize(Number(e.target.value))} style={{ width: '100%' }} />
-                        </div>
-                        <div className="cf-row" style={{ display: 'flex', gap: 12 }}>
-                          <label style={{ flex: 1 }}>
-                            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Text color</span>
-                            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                              <input type="color" aria-label="Subtitle text color" value={subColor}
-                                onChange={(e) => setSubColor(e.target.value)}
-                                style={{ width: 40, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
-                              <span className="eo-d">{subColor.toUpperCase()}</span>
-                            </span>
-                          </label>
-                          <label style={{ flex: 1 }}>
-                            <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Stroke color</span>
-                            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                              <input type="color" aria-label="Subtitle stroke color" value={subStroke}
-                                onChange={(e) => setSubStroke(e.target.value)}
-                                style={{ width: 40, height: 30, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
-                              <span className="eo-d">{subStroke.toUpperCase()}</span>
-                            </span>
-                          </label>
-                        </div>
-                      </>
-                    )}
-                    {mode === 'classic' && (
-                      <>
-                        <div className="cf-row">
-                          <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
-                          <select className="sel" style={{ width: '100%' }} value={subFont} onChange={(e) => setSubFont(e.target.value)}>
-                            {fonts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                          </select>
-                        </div>
-                        <div className="cf-row">
-                          <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Color</span>
-                          <div className="swatches">
-                            {SUB_COLORS.map((c) => (
-                              <button key={c} type="button" aria-label={`Font color ${c}`}
-                                className={'swatch' + (subColor.toUpperCase() === c.toUpperCase() ? ' on' : '')}
-                                style={{ background: c }} onClick={() => setSubColor(c)} />
-                            ))}
-                          </div>
-                        </div>
-                        <div className="cf-row">
-                          <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
-                            <span>Outline width</span><span className="eo-d">{cOutline}</span>
-                          </span>
-                          <input type="range" min="0" max="6" step="1" value={cOutline} aria-label="Subtitle outline width"
-                            onChange={(e) => setCOutline(Number(e.target.value))} style={{ width: '100%' }} />
-                        </div>
-                        <div className="edit-opt" style={{ marginTop: 4 }}>
-                          <div className="eo-txt"><div className="eo-t" style={{ fontSize: 13 }}>Background box</div>
-                            <div className="eo-d">Solid panel behind the text</div></div>
-                          <Switch on={cBg} onChange={setCBg} />
-                        </div>
-                      </>
-                    )}
-                    <div className="cf-row">
-                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
-                      <Segmented full value={position} onChange={setPosition}
-                        options={[{ id: 'top', label: 'Top' }, { id: 'center', label: 'Center' }, { id: 'bottom', label: 'Bottom' }]} />
-                    </div>
-                    <div className="cf-row">
-                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Alignment</span>
-                      <Segmented full value={align} onChange={setAlign}
-                        options={[{ id: 'left', label: 'Left' }, { id: 'center', label: 'Center' }]} />
-                      <div className="eo-d" style={{ marginTop: 6 }}>Left = ragged (a bandiera) with a margin from the edge · no right (social buttons there)</div>
-                    </div>
-                    <div className="cf-row">
-                      <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
-                        <span>Vertical nudge</span><span className="eo-d">{offsetY > 0 ? `+${offsetY}` : offsetY}</span>
-                      </span>
-                      <input type="range" min="-50" max="50" step="1" value={offsetY} aria-label="Subtitle vertical position"
-                        onChange={(e) => setOffsetY(Number(e.target.value))} style={{ width: '100%' }} />
-                    </div>
-                  </div>
+                  <SubtitleControls variant="edit"
+                    value={{ mode, preset, font: subFont, font_color: subColor,
+                      outline_color: subStroke, font_size: kSize, border_width: cOutline,
+                      bg: cBg, position, align, offset_y: offsetY }}
+                    onChange={applySubPatch} />
                 )}
               </>
             )}
@@ -462,20 +378,11 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                 </div>
                 {logoOn && (
                   <div className="cfg-drawer fade-in">
-                    <div className="cf-row">
-                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
-                      <div className="seg-grid">
-                        {LOGO_POSITIONS.map(([v, l]) => (
-                          <button key={v} type="button" className={'seg-cell' + (logoPos === v ? ' on' : '')}
-                            onClick={() => setLogoPos(v)}>{l}</button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="cf-row" style={{ marginBottom: 0 }}>
-                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Size</span>
-                      <Segmented full value={logoSize} onChange={setLogoSize}
-                        options={LOGO_SIZES.map(([v, l]) => ({ id: v, label: l }))} />
-                    </div>
+                    <LogoControls position={logoPos} size={logoSize}
+                      onChange={(p) => {
+                        if (p.position !== undefined) setLogoPos(p.position);
+                        if (p.size !== undefined) setLogoSize(p.size);
+                      }} />
                   </div>
                 )}
               </>
@@ -492,8 +399,7 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
                   <div className="cfg-drawer fade-in">
                     <div className="cf-row" style={{ marginBottom: 0 }}>
                       <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Look</span>
-                      <Segmented full value={gradePreset} onChange={setGradePreset}
-                        options={GRADE_PRESETS} />
+                      <GradeControls preset={gradePreset} onChange={(p) => setGradePreset(p.preset)} />
                     </div>
                   </div>
                 )}

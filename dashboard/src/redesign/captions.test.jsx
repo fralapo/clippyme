@@ -83,6 +83,58 @@ test('stale karaoke font_size from a prior edit does NOT leak into a classic app
   expect(subtitleParams.font_size).toBeUndefined();       // the stale 60 must not ride along
 });
 
+// --- classic background box ------------------------------------------------------
+
+test('classic Background box on → bg_opacity 0.6 with the hardcoded black panel', () => {
+  const { onApply } = mount();
+  fireEvent.click(tab('Captions'));
+  fireEvent.click(screen.getByRole('switch'));            // subtitles on
+  fireEvent.click(screen.getByRole('button', { name: 'Classic' }));
+  // Two switches now: the Subtitles toggle + the drawer's Background box.
+  fireEvent.click(screen.getAllByRole('switch')[1]);
+  fireEvent.click(applyBtn());
+  const { subtitleParams } = onApply.mock.calls[0][0];
+  expect(subtitleParams.bg_opacity).toBe(0.6);
+  expect(subtitleParams.bg_color).toBe('#000000');
+});
+
+// --- logo tab ---------------------------------------------------------------------
+
+test('logo tab: enable + reposition → logoParams and toggle ride the payload', () => {
+  const { onApply } = mount();
+  fireEvent.click(tab('Logo'));
+  fireEvent.click(screen.getByRole('switch'));            // logo on (defaults top-right / M)
+  fireEvent.click(screen.getByRole('button', { name: 'Bot L' }));
+  fireEvent.click(screen.getByRole('button', { name: 'S' }));
+  fireEvent.click(applyBtn());
+  const p = onApply.mock.calls[0][0];
+  expect(p.toggles.logo).toBe(true);
+  expect(p.logoParams).toEqual({ position: 'bottom-left', size: 'S' });
+});
+
+// --- grade tab ---------------------------------------------------------------------
+
+test('grade tab: switch on defaults to warm_cinematic, preset click refines it', () => {
+  const { onApply } = mount();
+  fireEvent.click(tab('Grade'));
+  fireEvent.click(screen.getByRole('switch'));            // grade on → warm_cinematic
+  fireEvent.click(screen.getByRole('button', { name: 'Cool' }));
+  fireEvent.click(applyBtn());
+  const p = onApply.mock.calls[0][0];
+  expect(p.toggles.grade).toBe(true);
+  expect(p.gradeParams).toEqual({ preset: 'cool_crisp' });
+});
+
+test('grade switch off maps back to preset none and toggle false', () => {
+  const { onApply } = mount({ initial: { gradeParams: { preset: 'vivid_pop' }, toggles: { grade: true } } });
+  fireEvent.click(tab('Grade'));
+  fireEvent.click(screen.getByRole('switch'));            // grade off
+  fireEvent.click(applyBtn());
+  const p = onApply.mock.calls[0][0];
+  expect(p.toggles.grade).toBe(false);
+  expect(p.gradeParams).toEqual({ preset: 'none' });
+});
+
 // --- 2. manual trim forces smartcut --------------------------------------------
 
 test('dropping a transcript segment forces smartcut and sends its span', async () => {
