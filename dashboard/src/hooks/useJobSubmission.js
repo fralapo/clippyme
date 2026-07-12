@@ -31,13 +31,13 @@ export function useJobSubmission({
   // coupling this hook to a tab state machine.
   onBatchFinished,
 }) {
-  // Hold the batch poll interval so it can be cleared on unmount (the interval
-  // is created inside an async handler, not a useEffect, so without this it
+  // Hold the batch poll timer so it can be cleared on unmount (the loop is
+  // created inside an async handler, not a useEffect, so without this it
   // leaks and keeps calling fetch/setState on an unmounted component).
   const pollRef = useRef(null);
   useEffect(
     () => () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+      if (pollRef.current) clearTimeout(pollRef.current);
     },
     [],
   );
@@ -145,30 +145,43 @@ export function useJobSubmission({
 
       const TAIL = 6; // how many recent lines per job to show in the panel
 
-      // Clear any interval still running from a previous batch submission
+      // Resilient poll loop, mirroring useJobPolling: a recursive setTimeout
+      // (the next tick is armed only after this one finishes, so slow
+      // responses can never overlap into a fetch storm the way the old
+      // setInterval could with 20 sequential awaits per tick), exponential
+      // backoff while the backend errors, and termination with a visible
+      // message after MAX_POLL_ERRORS consecutive dead rounds instead of
+      // silently swallowing errors forever.
+      const POLL_MS = 2000;
+      const MAX_POLL_ERRORS = 5;
+      let consecutiveErrors = 0;
+
+      // Clear any poll loop still running from a previous batch submission
       // before starting a new one (rapid re-submit would otherwise stack them).
-      if (pollRef.current) clearInterval(pollRef.current);
-      const pollAll = setInterval(async () => {
+      if (pollRef.current) clearTimeout(pollRef.current);
+
+      const tick = async () => {
+        let roundHadSuccess = false;
         for (const jid of allJobIds) {
+          if (finished.has(jid)) continue; // terminal logs are already cached
           try {
             const r = await apiFetch(getApiUrl(`/api/status/${jid}`));
             if (!r.ok) continue;
+            roundHadSuccess = true;
             const s = await r.json();
             if (Array.isArray(s.logs)) lastLogs.set(jid, s.logs);
-            if (!finished.has(jid)) {
-              // 'stopped' is terminal-with-clips (graceful stop keeps finished
-              // clips), so count it as a success. Without it the batch never
-              // reaches all-terminal and the poll loop hangs forever.
-              if (s.status === 'completed' || s.status === 'stopped') {
-                finished.add(jid);
-                succeeded += 1;
-              } else if (s.status === 'failed' || s.status === 'cancelled') {
-                finished.add(jid);
-                failed += 1;
-              }
+            // 'stopped' is terminal-with-clips (graceful stop keeps finished
+            // clips), so count it as a success. Without it the batch never
+            // reaches all-terminal and the poll loop hangs forever.
+            if (s.status === 'completed' || s.status === 'stopped') {
+              finished.add(jid);
+              succeeded += 1;
+            } else if (s.status === 'failed' || s.status === 'cancelled') {
+              finished.add(jid);
+              failed += 1;
             }
           } catch {
-            /* ignore poll errors */
+            /* counted per-round via roundHadSuccess */
           }
         }
 
@@ -193,7 +206,6 @@ export function useJobSubmission({
         setLogs(merged);
 
         if (finished.size >= total) {
-          clearInterval(pollAll);
           pollRef.current = null;
           setStatus('complete');
           setLogs((l) => [
@@ -216,9 +228,25 @@ export function useJobSubmission({
               console.warn('onBatchFinished callback threw:', err);
             }
           }
+          return;
         }
-      }, 2000);
-      pollRef.current = pollAll;
+
+        consecutiveErrors = roundHadSuccess ? 0 : consecutiveErrors + 1;
+        if (consecutiveErrors >= MAX_POLL_ERRORS) {
+          pollRef.current = null;
+          setStatus('error');
+          setLogs((l) => [
+            ...l,
+            `Lost contact with the backend after ${MAX_POLL_ERRORS} failed polls — batch polling stopped. The jobs may still be running; check the History tab once the server is reachable again.`,
+          ]);
+          return;
+        }
+        const delay = consecutiveErrors > 0
+          ? Math.min(POLL_MS * 2 ** consecutiveErrors, 30_000)
+          : POLL_MS;
+        pollRef.current = setTimeout(tick, delay);
+      };
+      pollRef.current = setTimeout(tick, POLL_MS);
     } catch (e) {
       setStatus('error');
       setLogs((l) => [...l, `Batch error: ${e.message}`]);
