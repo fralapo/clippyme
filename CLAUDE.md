@@ -35,20 +35,37 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   scene analysis, frame strategies, render loops, `process_video_to_vertical`),
   `reframe_track.py` (pure tracking classes — host-tested, no cv2),
   `reframe_detect.py` (YOLO/MediaPipe detectors), `reframe_ops.py` (pure
-  camera math), `cut_ops.py` (clip-edge snapping), `media_probe.py` (ffprobe +
-  silencedetect wrappers), `texttiling_ops.py` (no-AI topic-segmentation
-  fallback), `deepgram_transcribe.py`, `elevenlabs_transcribe.py`,
-  `gemini_service.py`, `gemini_parser.py`, `scene_detection.py`,
-  `download.py`, `postprocess.py`, `diarization.py`, `hardware.py`,
-  `transcribe_cache.py`.
+  camera math), `cut_ops.py` (clip-edge snapping primitives + the
+  `snap_clips_to_transcript`/`compute_neighbor_bounds` batch orchestration),
+  `run_ops.py` (pure entrypoint helpers: `resolve_output_dir`,
+  `build_cut_command`), `gemini_request.py` (prompt template + pricing +
+  prompt/cost/retry-classification — the pure half of `get_viral_clips`),
+  `media_probe.py` (ffprobe + silencedetect wrappers), `texttiling_ops.py`
+  (no-AI topic-segmentation fallback), `deepgram_transcribe.py`,
+  `elevenlabs_transcribe.py`, `gemini_service.py`, `gemini_parser.py`,
+  `scene_detection.py`, `download.py`, `postprocess.py`, `diarization.py`,
+  `hardware.py`, `transcribe_cache.py`. `main.py` imports cv2/torch at the
+  top → NOT host-importable: pure logic goes in the modules above, never
+  inline in `main.py` (it re-imports moved names for back-compat).
+- `netutil.py` — bounded DNS resolution (daemon thread + timeout) shared by
+  the SSRF guards in `download.py` / `social_publisher.py`; never mutate
+  `socket.setdefaulttimeout` (it doesn't even apply to `getaddrinfo`).
 - `integrations/` — `social_publisher.py` (Zernio client + SmartScheduler),
   `auto_editor_updater.py` (auto-editor binary self-update).
 - `storage/` — `config_store.py` (persisted config in `data/config.json`).
 
 Frontend lives entirely in `dashboard/src/redesign/` (`main.jsx` renders
-`RedesignApp`). Shared hooks in `dashboard/src/hooks/`, pure logic in
+`RedesignApp`). Shared hooks in `dashboard/src/hooks/` (incl.
+`useManualTrim.js` — the modal's trim state machine), pure logic in
 `dashboard/src/lib/` (incl. `applyEdit.js` — the reprocess orchestration,
-`seedClipParams.js`, `bulkApply.js`, `taste.js`).
+`seedClipParams.js`, `trimSelection.js`, `bulkApply.js`, `taste.js`).
+Subtitle/logo/grade controls are SHARED between the Create recipe and the
+EditClipModal via `subtitleControls.jsx` / `layerControls.jsx` (hookStyle.jsx
+pattern: fully-controlled `value` + `onChange(partial)`, per-surface `variant`
+chrome, defaults resolved by thin adapters) — never re-clone these controls
+per surface. `captions.jsx` is the modal shell; tab bodies live in
+`editTabs.jsx` with state lifted in the shell (tabs are conditionally
+rendered).
 
 ## Commands
 
@@ -68,9 +85,11 @@ docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest 
 cd dashboard && npm ci && npm test && npm run lint && npm run build
 ```
 
-CI (`.github/workflows/ci.yml`): backend host suite + ruff bug-class rules +
-blocking `pip-audit`; frontend lint + **test** + build; the Docker integration
-job runs on main pushes or `workflow_dispatch`.
+CI (`.github/workflows/ci.yml`): backend host suite (with report-only
+coverage) + ruff bug-class rules + blocking `pip-audit`; frontend lint +
+**test** (with coverage) + build; the Docker integration job runs on main
+pushes or `workflow_dispatch`, pre-building the backend image with GHA layer
+caching (tagged `clippyme-backend` so compose reuses it).
 
 ## Architecture
 
@@ -164,6 +183,9 @@ through verbatim (the frontend parses per-platform 429 daily limits).
   blocks `*_metadata.json` and `source_*` from the `/videos` mount; secrets
   never enter the job journal; `tmp/` is gitignored and must never be
   committed. Pre-commit secret scan: `git config core.hooksPath .githooks`.
+  With `TRUST_PROXY=1`, `client_ip` reads the **last** `X-Forwarded-For`
+  hop (the shipped nginx APPENDS via `$proxy_add_x_forwarded_for` — the
+  first hop is client-forgeable); keep append+last-hop in sync.
 
 ## API endpoints
 

@@ -35,7 +35,7 @@ jobs:
           # suite imports (numpy/pydantic/fastapi/yt-dlp/…). `pip install -e .`
           # alone installs no runtime deps; the heavy CV/ML stack stays in Docker.
           pip install -e ".[host-tests]"
-          pip install pytest pip-audit ruff
+          pip install pytest pytest-cov pip-audit ruff
 
       # Lint for real bugs only — undefined names (F82, the class behind the
       # silently-swallowed MAR NameError regression), syntax errors (E9),
@@ -44,8 +44,11 @@ jobs:
       - name: Lint (ruff — bug-class rules)
         run: ruff check src/clippyme tests --select E9,F63,F7,F82
 
+      # Coverage is report-only (visible in the job log) — no external
+      # service, no threshold gate. The percentages under-count modules that
+      # only run in the Docker integration tier (reframe/detect and friends).
       - name: Run host test suite (excludes integration)
-        run: pytest -m "not integration" -q
+        run: pytest -m "not integration" -q --cov=clippyme --cov-report=term
 
       # Audit the pinned tree for known CVEs. Now BLOCKING (we're on a lock
       # file): a newly-disclosed CVE in any pinned dep fails CI so it gets
@@ -90,9 +93,9 @@ jobs:
         run: npm run lint
 
       # Vitest (jsdom): the pure-function suites + the component tests for the
-      # edit/compose flows. These were previously never executed in CI.
+      # edit/compose flows. Coverage (v8) is report-only, in the job log.
       - name: Test
-        run: npm test
+        run: npm test -- --coverage
 
       - name: Build
         run: npm run build
@@ -107,5 +110,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: docker/setup-buildx-action@v3
+
+      # Pre-build the backend image with GitHub Actions layer caching and tag
+      # it exactly as docker-compose.yml names it (image: clippyme-backend),
+      # so the compose run below reuses it instead of rebuilding the heavy
+      # CV/ML image from scratch on every run. Cache scope is repo-wide; a
+      # Dockerfile/requirements change invalidates only the layers below it.
+      - name: Build backend image (GHA layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: clippyme-backend:latest
+          # Mirror docker-compose.yml's defaults so the prebuilt image is
+          # byte-equivalent to what `docker compose run` would have built.
+          build-args: |
+            GPU_RUNTIME=cpu
+            ENABLE_WHISPER_DIARIZE=0
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       - name: Run integration suite in the backend image
-        run: docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"
+        run: docker compose run --rm --no-build -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"
