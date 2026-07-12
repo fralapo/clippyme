@@ -184,30 +184,40 @@ Backend uses an **`src/`-layout** Python package; frontend is a separate Vite ap
 
 ```
 src/clippyme/
-  api/                FastAPI surface
-    app.py            App factory, lifespan, all HTTP endpoints
+  netutil.py          Bounded DNS resolution shared by the SSRF guards (no global socket state)
+  api/                FastAPI surface (thin: validate → domain helper → JSON)
+    app.py            Thin FastAPI layer: job-lifecycle routes, middleware, static mounts, lifespan
+    config_routes.py  Config-family APIRouter (keys/cookies/fonts/logo/zernio/models), include_router'ed by app.py
     schemas.py        Pydantic request models (strict validation)
-    security.py       Trusted-origin checks, job-id UUID4 validation
-  pipeline/           Heavy lifters
+    security.py       Trusted-origin / rate-limit / API-token gates, job-id validation
+  pipeline/           Heavy lifters (main.py imports cv2/torch → pure logic lives in the *_ops modules)
     main.py           CLI orchestrator: download → transcribe → Gemini → reframe → postprocess
-    deepgram_transcribe.py   Deepgram Nova-3 REST client (retry/backoff, keyterms)
+    run_ops.py        Pure entrypoint helpers (output-dir resolve, cut-command argv) → host-tested
+    gemini_request.py Pure Gemini prompt template + pricing + cost/retry classification → host-tested
     gemini_parser.py  5-level JSON parsing chain + Pydantic validation + dedupe
-    gemini_service.py List available Gemini models
+    gemini_service.py List available Gemini models (bounded timeout)
     texttiling_ops.py Lexical TextTiling topic segmentation (no-AI clip fallback, no cv2/torch → host-tested)
-    reframe.py        cv2/YOLO/MediaPipe glue: SpeakerTracker + SmoothedCameraman
-    reframe_ops.py    Pure decision math (no cv2 → host-tested): smoothers, zoom
+    reframe.py        cv2 render orchestrator: scene strategy, frame strategies, render loops
+    reframe_track.py  Pure tracking classes (SpeakerTracker / SmoothedCameraman, no cv2 → host-tested)
+    reframe_ops.py    Pure camera/decision math (no cv2 → host-tested): smoothers, zoom, crops
+    reframe_detect.py YOLO / MediaPipe detectors
+    cut_ops.py        Pure clip-edge snapping + neighbour-bounds / transcript-snap orchestration → host-tested
     media_probe.py    cv2-free ffprobe + A/V-sync helpers (VFR, start_time, fps)
-  domain/             Endpoint-facing business logic
-    compose.py        Subtitles → Smart Cut → Hook → Logo compose pipeline
-    clip_endpoints.py        Smart Cut + history restore helpers
-    job_results.py    Worker loop result loaders + main.py command builder (whitelisted)
-    job_artifacts.py  Filesystem helpers for job outputs
-    job_worker.py     Async queue workers + log enqueue
-    history_service.py       Disk-backed job history scan
+  domain/             Endpoint-facing business logic (never imports FastAPI; raises errors.ClippyMeError)
+    errors.py         Domain exceptions (Validation/NotFound/Conflict) mapped to HTTP by one app handler
+    clip_resolve.py   Shared resolve_clip(): job dir → metadata → clip entry → path (used by every per-clip route)
+    job_submission.py · job_runner.py · job_worker.py   Submit + per-job subprocess loop + queue dispatch/cleanup
+    job_journal.py · job_control.py · job_actions.py    Crash-safe journal + recovery, status machine, cancel/stop
+    job_results.py · job_artifacts.py   Result loaders + main.py command builder; atomic metadata IO
+    compose.py        Grade → Subtitles → Smart Cut → Hook → Logo compose pipeline (pass-fused)
     smartcut.py       Two-stage filler-word + audio polish (auto-editor v3 timeline)
+    smartcut_ops.py   Pure silence/filler/timeline math (host-tested), re-exported by smartcut.py
+    clip_endpoints.py · clip_edit_ai.py · clip_qa.py   Smart-cut runner + NL→drop_ranges + QA self-eval
     subtitles.py      ASS karaoke (6 presets) + SRT + ffmpeg burn (filtergraph-escape hardened)
     hooks.py          Text overlay (Pillow + NotoColorEmoji) w/ IG-style banner/outline/font
-    logo.py           Brand-logo / watermark overlay (ffmpeg overlay, positioned)
+    logo.py · grade.py   Brand-logo / watermark overlay + colour-grade presets
+    encode.py         Single source of x264 settings for every render pass
+    publish_service.py · history_service.py   Zernio publish flow + disk-backed job history scan
   integrations/       External clients
     social_publisher.py      Zernio REST + SmartScheduler + publish_clip orchestrator
     auto_editor_updater.py   Background daily updater for the auto-editor binary
@@ -217,14 +227,16 @@ src/clippyme/
 dashboard/
   src/
     main.jsx                Mounts redesign/RedesignApp
-    redesign/               The live UI. RedesignApp (state + tab orchestration),
-                            create / results / publish / captions / views (Settings +
-                            History) / chrome / processing, realApi.js (backend client),
+    redesign/               The live UI. RedesignApp (top-level state wiring),
+                            create / results / publish / views (Settings + History) / processing,
+                            captions.jsx (EditClipModal shell) + editTabs.jsx (per-tab bodies),
+                            subtitleControls.jsx / layerControls.jsx / hookStyle.jsx (controls shared
+                            between Create and the edit modal), realApi.js (backend client),
                             data.js (presets/options), primitives.jsx, icon.jsx
-    hooks/                  useJobSubmission, useJobPolling, useHistory,
-                            useSessionPersistence, useBackendStatus, useClipStates
-    lib/                    Pure helpers (host-tested via `npm test`): pipelineStep,
-                            bulkApply (apply-to-all / multi-select), seedClipParams
+    hooks/                  useJobSubmission (resilient batch poller), useJobPolling, useManualTrim,
+                            useHistory, useSessionPersistence, useBackendStatus, useClipStates
+    lib/                    Pure helpers (host-tested via `npm test`): applyEdit (reprocess orchestration),
+                            pipelineStep, bulkApply, seedClipParams, trimSelection, taste
 
 fonts/                Bundled TTF fonts served via /fonts (subtitle + hook rendering)
 data/                 Persisted config, cookies, transcript cache (git-ignored)
