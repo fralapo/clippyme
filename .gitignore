@@ -58,3 +58,6 @@ fonts/NotoColorEmoji.ttf
 
 # pip --user installs leaking from container `docker compose run` into mounted /app
 .local/
+
+# pytest coverage data (report-only in CI)
+.coverage
