@@ -1,6 +1,8 @@
 // ClippyMe redesign — EditClipModal: one staged editing surface per clip,
-// organised into TABS (Reframe · Captions · Hook · Smart Cut · Trim · Logo) so
-// each concern lives in its own section instead of one long scroll.
+// organised into TABS (Reframe · Captions · Hook · Smart Cut · Trim · Logo ·
+// Grade). This file is the modal SHELL — header, live preview, tab bar,
+// footer and the staged state + apply() payload seam. The tab bodies live in
+// editTabs.jsx; the manual-trim state machine in hooks/useManualTrim.
 //
 // Reframe mode + Smart Cut + Subtitles + Hook + Logo are edited as *pending*
 // state and only committed when the user presses "Apply & reprocess" — no
@@ -14,15 +16,18 @@
 // is hidden; the hook TEXT field is hidden too (each clip keeps its own Gemini
 // opener). Only shared config — reframe / smart-cut / subtitles / hook style /
 // logo — is applied across the selected clips (see lib/bulkApply.js).
-import { useState, useEffect } from 'react';
-import { Icon, Btn, Segmented, Switch } from './primitives';
+import { useState } from 'react';
+import { Icon, Btn } from './primitives';
 import { HOOK_STYLE_DEFAULT } from './data';
 import { useModalA11y } from './useModalA11y';
-import { clipPreviewSrc, getClipTranscript, editClipAI } from './realApi';
-import { HookStyleControls, HookPreview } from './hookStyle';
-import { SubtitleControls } from './subtitleControls';
-import { LogoControls, GradeControls } from './layerControls';
-import { seedSubtitleParams, seedHookParams, seedLogoParams } from '../lib/seedClipParams';
+import { clipPreviewSrc } from './realApi';
+import { useManualTrim } from '../hooks/useManualTrim';
+import {
+  ReframeTab, SmartCutTab, TrimTab, CaptionsTab, HookTab, LogoTab, GradeTab,
+} from './editTabs';
+import {
+  seedSubtitleParams, seedHookParams, seedLogoParams, seedGradeParams,
+} from '../lib/seedClipParams';
 
 // Pull the IG-style hook style keys out of a flat hookParams object.
 const HOOK_STYLE_KEYS = ['bg_enabled', 'bg_color', 'bg_opacity', 'text_color', 'outline_width', 'outline_color', 'font'];
@@ -32,27 +37,9 @@ function pickHookStyle(src) {
   return out;
 }
 
-const REFRAME_OPTS = [
-  { id: 'auto', label: 'Auto' },
-  { id: 'subject', label: 'Subject' },
-  { id: 'disabled', label: 'Off' },
-];
 // 'object' is the legacy name for the FrameShift 'subject' mode — normalize a
 // value persisted under the old name so the segmented control highlights right.
 const canonReframe = (m) => (m === 'object' ? 'subject' : (m || 'auto'));
-
-// Reconstruct which transcript segments were marked dropped from previously
-// saved drop_ranges: a segment is "dropped" if a saved span covers its
-// midpoint. Lets the manual-trim checklist restore state on modal reopen.
-function dropSetFromRanges(segments, ranges) {
-  const set = new Set();
-  if (!ranges?.length) return set;
-  segments.forEach((s) => {
-    const mid = (s.start + s.end) / 2;
-    if (ranges.some(([a, b]) => mid >= a && mid <= b)) set.add(s.index);
-  });
-  return set;
-}
 
 export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselections,
                                 bulk = false, targetCount = 0, onClose, onApply }) {
@@ -67,47 +54,41 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const [tab, setTab] = useState('reframe');
   const [reframeMode, setReframeMode] = useState(baseMode);
   const [smartcut, setSmartcut] = useState(t0.smartcut ?? !!pre.smartcut);
-  // Manual trim (flycut-style): transcript segments + the set the user dropped.
-  const [segments, setSegments] = useState(null); // null = not loaded
-  const [segErr, setSegErr] = useState(false);
-  const [dropped, setDropped] = useState(() => new Set());
   const [subsOn, setSubsOn] = useState(t0.subtitles ?? !!pre.subtitles);
   const [hookOn, setHookOn] = useState(t0.hook ?? !!pre.hook);
   const [logoOn, setLogoOn] = useState(t0.logo ?? !!pre.logo);
 
   const lp0 = initial?.logoParams || seedLogoParams(preselections);
-  const [logoPos, setLogoPos] = useState(lp0.position || 'top-right');
-  const [logoSize, setLogoSize] = useState(lp0.size || 'M');
+  const [logo, setLogo] = useState(() => ({
+    position: lp0.position || 'top-right',
+    size: lp0.size || 'M',
+  }));
   // Colour grade (video-use-style). Preset 'none' = grade layer off.
-  const gp0 = initial?.gradeParams || { preset: preselections?.grade?.preset || 'none' };
+  const gp0 = initial?.gradeParams || seedGradeParams(preselections);
   const [gradePreset, setGradePreset] = useState(gp0.preset || 'none');
 
-  const [mode, setMode] = useState(sp.mode || preSubs.mode || 'karaoke');
-  const [preset, setPreset] = useState(sp.preset || preSubs.preset || 'hormozi_bold');
-  // Default matches the Create pre-selection + backend ('bottom').
-  const [position, setPosition] = useState(sp.position || preSubs.position || 'bottom');
-  const [subFont, setSubFont] = useState(sp.font || preSubs.font || 'Montserrat-Black');
-  const [subColor, setSubColor] = useState(sp.font_color || preSubs.font_color || '#FFFFFF');
-  // Karaoke stroke (outline) colour — defaults to black; the user can recolour
-  // it per preset, but the default stays black.
-  const [subStroke, setSubStroke] = useState(sp.outline_color || preSubs.outline_color || '#000000');
-  // Horizontal alignment: 'center' or 'left' (a bandiera). No 'right' — the
-  // social UI (like/comment/share) lives down the right edge.
-  const [align, setAlign] = useState(sp.align || preSubs.align || 'center');
-  const [offsetY, setOffsetY] = useState(Number(sp.offset_y ?? preSubs.offset_y ?? 0));
-  const [kSize, setKSize] = useState(Number(sp.font_size ?? preSubs.font_size ?? 0));
-  const [cOutline, setCOutline] = useState(Number(sp.border_width ?? preSubs.border_width ?? 2));
-  const [cBg, setCBg] = useState(Number(sp.bg_opacity ?? preSubs.bg_opacity ?? 0) > 0);
-  // Routes SubtitleControls' seedClipParams-vocabulary partials onto the
-  // individual useState setters (they collapse into one object in the
-  // follow-up state-grouping commit).
-  const subSetters = { mode: setMode, preset: setPreset, font: setSubFont,
-    font_color: setSubColor, outline_color: setSubStroke, font_size: setKSize,
-    border_width: setCOutline, bg: setCBg, position: setPosition,
-    align: setAlign, offset_y: setOffsetY };
-  const applySubPatch = (partial) => {
-    for (const [k, val] of Object.entries(partial)) subSetters[k]?.(val);
-  };
+  // Staged subtitle state, one object in the seedClipParams key vocabulary
+  // (plus the UI-only boolean `bg`). Seeded prior-edit → pre-selection →
+  // default, exactly like the former per-key useStates.
+  const [subs, setSubs] = useState(() => ({
+    mode: sp.mode || preSubs.mode || 'karaoke',
+    preset: sp.preset || preSubs.preset || 'hormozi_bold',
+    // Default matches the Create pre-selection + backend ('bottom').
+    position: sp.position || preSubs.position || 'bottom',
+    font: sp.font || preSubs.font || 'Montserrat-Black',
+    font_color: sp.font_color || preSubs.font_color || '#FFFFFF',
+    // Karaoke stroke (outline) colour — defaults to black; the user can
+    // recolour it per preset, but the default stays black.
+    outline_color: sp.outline_color || preSubs.outline_color || '#000000',
+    // Horizontal alignment: 'center' or 'left' (a bandiera). No 'right' — the
+    // social UI (like/comment/share) lives down the right edge.
+    align: sp.align || preSubs.align || 'center',
+    offset_y: Number(sp.offset_y ?? preSubs.offset_y ?? 0),
+    font_size: Number(sp.font_size ?? preSubs.font_size ?? 0),
+    border_width: Number(sp.border_width ?? preSubs.border_width ?? 2),
+    bg: Number(sp.bg_opacity ?? preSubs.bg_opacity ?? 0) > 0,
+  }));
+
   const [hookText, setHookText] = useState(
     initial?.hookParams?.text || clip.viral_hook_text || clip.hook_text || '',
   );
@@ -116,65 +97,14 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
     () => pickHookStyle(initial?.hookParams || (preselections || {}).hook),
   );
 
-  // Lazy-load transcript segments the first time the Trim tab is opened (and
-  // never in bulk mode — manual trim is per-clip). Cheap GET; backend reads
-  // metadata.json. Failure → hide the trim list silently.
-  useEffect(() => {
-    if (bulk || tab !== 'trim' || segments !== null || !jobId) return;
-    let alive = true;
-    getClipTranscript(jobId, idx)
-      .then((d) => { if (!alive) return;
-        const segs = d.segments || [];
-        setSegments(segs);
-        setDropped(dropSetFromRanges(segs, initial?.dropRanges));
-      })
-      .catch(() => { if (alive) setSegErr(true); });
-    return () => { alive = false; };
-  }, [bulk, tab, segments, jobId, idx, initial]);
-
-  const toggleDrop = (i) => setDropped((prev) => {
-    const next = new Set(prev);
-    next.has(i) ? next.delete(i) : next.add(i);
-    return next;
+  // Manual trim (flycut-style) — transcript load + dropped set + AI trim.
+  const trim = useManualTrim({
+    jobId, idx,
+    active: !bulk && tab === 'trim',
+    initialDropRanges: initial?.dropRanges,
   });
-
-  // Conversational trim: ask Gemini which spans to cut, then mark every segment
-  // overlapping a returned span as dropped (reuses the tap-to-cut state).
-  const [aiText, setAiText] = useState('');
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiMsg, setAiMsg] = useState('');
-  const askAITrim = async () => {
-    const instr = aiText.trim();
-    if (!instr || aiBusy || !jobId) return;
-    setAiBusy(true); setAiMsg('');
-    try {
-      const { drop_ranges = [], explanation = '' } = await editClipAI(jobId, idx, instr);
-      const segs = segments || [];
-      const hit = new Set();
-      for (const [ds, de] of drop_ranges) {
-        for (const s of segs) {
-          // overlap test between [s.start,s.end] and [ds,de]
-          if (s.start < de && s.end > ds) hit.add(s.index);
-        }
-      }
-      if (hit.size) {
-        setDropped((prev) => new Set([...prev, ...hit]));
-        setAiMsg(explanation || `Cut ${hit.size} segment${hit.size === 1 ? '' : 's'}.`);
-      } else {
-        setAiMsg(explanation || 'Nothing to cut for that instruction.');
-      }
-    } catch (e) {
-      setAiMsg(e.message || 'AI trim failed.');
-    } finally {
-      setAiBusy(false);
-    }
-  };
-
-  // Dropped segment indices → merged [start, end] spans for the backend. Never
-  // in bulk (per-clip content).
-  const dropRanges = bulk ? [] : (segments || [])
-    .filter((s) => dropped.has(s.index))
-    .map((s) => [s.start, s.end]);
+  // Dropped spans for the backend. Never in bulk (per-clip content).
+  const dropRanges = bulk ? [] : trim.dropRanges;
   const hasDrops = dropRanges.length > 0;
 
   const panelRef = useModalA11y(onClose);
@@ -203,14 +133,16 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   const apply = () => {
     // Build from the clean seed + current UI state only (no raw `...sp` spread,
     // which would leak stale style keys into a karaoke re-compose).
-    const subtitleParams = { ...seedSubtitleParams(preselections), mode, preset, position, align,
-      offset_y: offsetY,
-      ...(mode === 'karaoke'
-        ? { font_size: kSize > 0 ? kSize : undefined, font_color: subColor, outline_color: subStroke }
-        : { font: subFont, font_color: subColor, border_width: cOutline,
-            bg_opacity: cBg ? 0.6 : 0, bg_color: '#000000' }) };
+    const subtitleParams = { ...seedSubtitleParams(preselections),
+      mode: subs.mode, preset: subs.preset, position: subs.position, align: subs.align,
+      offset_y: subs.offset_y,
+      ...(subs.mode === 'karaoke'
+        ? { font_size: subs.font_size > 0 ? subs.font_size : undefined,
+            font_color: subs.font_color, outline_color: subs.outline_color }
+        : { font: subs.font, font_color: subs.font_color, border_width: subs.border_width,
+            bg_opacity: subs.bg ? 0.6 : 0, bg_color: '#000000' }) };
     const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), ...hookStyle, text: hookText };
-    const logoParams = { position: logoPos, size: logoSize };
+    const logoParams = { position: logo.position, size: logo.size };
     const gradeParams = { preset: gradePreset };
     const toggles = { smartcut: effSmartcut, subtitles: subsOn, hook: hookOn, logo: logoOn, grade: gradeOn };
     onApply({ reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams, gradeParams,
@@ -256,155 +188,23 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
               ))}
             </div>
 
-            {tab === 'reframe' && (
-              <div className="field" style={{ marginTop: 4 }}>
-                <span className="field-label">Reframe</span>
-                <Segmented full value={reframeMode} onChange={setReframeMode} options={REFRAME_OPTS} />
-                <div className="eo-d" style={{ marginTop: 6 }}>Auto face-track · Subject FrameShift crop · Off letterbox bands</div>
-              </div>
-            )}
-
-            {tab === 'smartcut' && (
-              <>
-                <div className="edit-opt">
-                  <div className="eo-ico"><Icon n="scissors" /></div>
-                  <div className="eo-txt"><div className="eo-t">Smart Cut</div><div className="eo-d">Auto-remove silence &amp; filler words</div></div>
-                  <Switch on={smartcut} onChange={setSmartcut} />
-                </div>
-                <div className="eo-d" style={{ marginTop: 8 }}>
-                  Detects and trims dead air + fillers automatically. To cut specific
-                  sentences or words, use the {bulk ? 'Trim section on a single clip' : <b>Trim</b>} tab.
-                </div>
-              </>
-            )}
-
-            {tab === 'trim' && !bulk && (
-              <div className="cf-row" style={{ marginBottom: 0 }}>
-                <span className="field-label" style={{ marginBottom: 9, display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Manual trim</span>
-                  {hasDrops && <span className="eo-d">{dropRanges.length} dropped</span>}
-                </span>
-                <div className="eo-d" style={{ marginBottom: 8 }}>
-                  Tap any line to cut it, or describe the edit below. Trimming also runs Smart Cut&apos;s auto silence pass.
-                </div>
-                <div style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
-                  <input className="input-field" style={{ flex: 1 }}
-                    placeholder="e.g. cut the intro and the part where he stumbles"
-                    value={aiText} onChange={(e) => setAiText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') askAITrim(); }}
-                    disabled={aiBusy || !segments || segments.length === 0} />
-                  <Btn onClick={askAITrim} disabled={aiBusy || !aiText.trim() || !segments || segments.length === 0}>
-                    <Icon n={aiBusy ? 'loader' : 'wand-sparkles'} style={{ width: 14, height: 14 }} />
-                    {aiBusy ? 'Thinking…' : 'AI trim'}
-                  </Btn>
-                </div>
-                {aiMsg && <div className="eo-d" style={{ marginBottom: 8 }}>{aiMsg}</div>}
-                {segments === null && !segErr && <div className="eo-d">Loading transcript…</div>}
-                {segErr && <div className="eo-d">Transcript unavailable — auto Smart Cut still applies.</div>}
-                {segments && segments.length === 0 && <div className="eo-d">No transcript segments for this clip.</div>}
-                {segments && segments.length > 0 && (
-                  <div className="trim-list">
-                    {segments.map((s) => {
-                      const off = dropped.has(s.index);
-                      return (
-                        <button key={s.index} type="button"
-                          className={'trim-seg' + (off ? ' cut' : '')}
-                          onClick={() => toggleDrop(s.index)}
-                          title={off ? 'Will be cut — tap to keep' : 'Kept — tap to cut'}>
-                          <Icon n={off ? 'scissors' : 'check'} style={{ width: 13, height: 13, flexShrink: 0 }} />
-                          <span className="trim-txt" title={s.text}>
-                            {s.text && s.text.length > 140 ? s.text.slice(0, 140) + '…' : s.text}
-                          </span>
-                          <span className="trim-time">{s.start.toFixed(1)}s</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
+            {tab === 'reframe' && <ReframeTab mode={reframeMode} onChange={setReframeMode} />}
+            {tab === 'smartcut' && <SmartCutTab on={smartcut} onChange={setSmartcut} bulk={bulk} />}
+            {tab === 'trim' && !bulk && <TrimTab trim={trim} />}
             {tab === 'captions' && (
-              <>
-                <div className="edit-opt">
-                  <div className="eo-ico"><Icon n="captions" /></div>
-                  <div className="eo-txt"><div className="eo-t">Subtitles</div><div className="eo-d">Burn karaoke or classic captions</div></div>
-                  <Switch on={subsOn} onChange={setSubsOn} />
-                </div>
-                {subsOn && (
-                  <SubtitleControls variant="edit"
-                    value={{ mode, preset, font: subFont, font_color: subColor,
-                      outline_color: subStroke, font_size: kSize, border_width: cOutline,
-                      bg: cBg, position, align, offset_y: offsetY }}
-                    onChange={applySubPatch} />
-                )}
-              </>
+              <CaptionsTab on={subsOn} onToggle={setSubsOn} subs={subs}
+                onSubsChange={(partial) => setSubs((s) => ({ ...s, ...partial }))} />
             )}
-
             {tab === 'hook' && (
-              <>
-                <div className="edit-opt">
-                  <div className="eo-ico"><Icon n="type" /></div>
-                  <div className="eo-txt"><div className="eo-t">Text hook</div><div className="eo-d">A scroll-stopping opener overlaid on the clip</div></div>
-                  <Switch on={hookOn} onChange={setHookOn} />
-                </div>
-                {hookOn && (
-                  <div className="cfg-drawer fade-in">
-                    {bulk ? (
-                      <div className="eo-d" style={{ marginBottom: 10 }}>
-                        Applying the hook <b>style</b> to all selected clips. Each clip keeps its own hook text.
-                      </div>
-                    ) : (
-                      <div className="cf-row">
-                        <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Hook text</span>
-                        <textarea className="ta" rows="2" value={hookText} placeholder="e.g. THIS changed everything"
-                          onChange={(e) => setHookText(e.target.value)}></textarea>
-                      </div>
-                    )}
-                    <div style={{ marginTop: bulk ? 0 : 10 }}><HookPreview text={bulk ? 'Your hook text' : hookText} style={hookStyle} /></div>
-                    <HookStyleControls style={hookStyle}
-                      set={(partial) => setHookStyle((s) => ({ ...s, ...partial }))} />
-                  </div>
-                )}
-              </>
+              <HookTab on={hookOn} onToggle={setHookOn} bulk={bulk}
+                text={hookText} onText={setHookText} style={hookStyle}
+                onStyle={(partial) => setHookStyle((s) => ({ ...s, ...partial }))} />
             )}
-
             {tab === 'logo' && (
-              <>
-                <div className="edit-opt">
-                  <div className="eo-ico"><Icon n="stamp" /></div>
-                  <div className="eo-txt"><div className="eo-t">Brand logo</div><div className="eo-d">Burn your uploaded logo onto the clip</div></div>
-                  <Switch on={logoOn} onChange={setLogoOn} />
-                </div>
-                {logoOn && (
-                  <div className="cfg-drawer fade-in">
-                    <LogoControls position={logoPos} size={logoSize}
-                      onChange={(p) => {
-                        if (p.position !== undefined) setLogoPos(p.position);
-                        if (p.size !== undefined) setLogoSize(p.size);
-                      }} />
-                  </div>
-                )}
-              </>
+              <LogoTab on={logoOn} onToggle={setLogoOn} logo={logo}
+                onChange={(partial) => setLogo((l) => ({ ...l, ...partial }))} />
             )}
-
-            {tab === 'grade' && (
-              <>
-                <div className="edit-opt">
-                  <div className="eo-ico"><Icon n="palette" /></div>
-                  <div className="eo-txt"><div className="eo-t">Colour grade</div><div className="eo-d">Cinematic colour pass burned before overlays</div></div>
-                  <Switch on={gradeOn} onChange={(on) => setGradePreset(on ? 'warm_cinematic' : 'none')} />
-                </div>
-                {gradeOn && (
-                  <div className="cfg-drawer fade-in">
-                    <div className="cf-row" style={{ marginBottom: 0 }}>
-                      <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Look</span>
-                      <GradeControls preset={gradePreset} onChange={(p) => setGradePreset(p.preset)} />
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
+            {tab === 'grade' && <GradeTab preset={gradePreset} onChange={setGradePreset} />}
           </div>
         </div>
 
