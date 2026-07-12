@@ -510,3 +510,97 @@ def predict_polish_saving(silences, margin_seconds: float) -> float:
         if length > m2:
             total += length - m2
     return total
+
+
+# --- clip-batch snap orchestration (moved from main.py __main__) -------------
+# The neighbour computation + three-stage snap loop used to live inline in the
+# pipeline entrypoint, where it was unreachable by unit tests. It is pure
+# (dict/list mutation, no IO), so it belongs here with the primitives it
+# drives. main.py calls it and prints the returned events.
+
+
+class SnapEvent:
+    """One clip whose edges moved: main.py logs these."""
+
+    __slots__ = ("index", "path", "old_start", "old_end", "new_start", "new_end")
+
+    def __init__(self, index, path, old_start, old_end, new_start, new_end):
+        self.index = index
+        self.path = path
+        self.old_start = old_start
+        self.old_end = old_end
+        self.new_start = new_start
+        self.new_end = new_end
+
+
+def compute_neighbor_bounds(raw_intervals, idx):
+    """Time-adjacent neighbour bounds for clip ``idx``.
+
+    ``raw_intervals`` are the RAW (pre-snap) ``(start, end)`` tuples, or None
+    for malformed entries. Shorts arrive score-sorted, not time-sorted, so
+    "adjacent in the list" is not "adjacent in time": the next clip in time is
+    the minimum start among intervals that begin at/after this clip's raw end,
+    and the previous is the maximum end among those closing at/before its raw
+    start. Returns ``(neighbor_start, neighbor_end)`` — either may be None.
+    """
+    self_iv = raw_intervals[idx]
+    if self_iv is None:
+        return None, None
+    raw_start, raw_end = self_iv
+    following = [iv[0] for k, iv in enumerate(raw_intervals)
+                 if k != idx and iv is not None and iv[0] >= raw_end]
+    preceding = [iv[1] for k, iv in enumerate(raw_intervals)
+                 if k != idx and iv is not None and iv[1] <= raw_start]
+    return (min(following) if following else None,
+            max(preceding) if preceding else None)
+
+
+def snap_clips_to_transcript(shorts, words, *, source_duration=None,
+                             silences=None, default_reframe_mode="auto"):
+    """Three-stage edge repair for every clip, in place.
+
+    Per clip: word-snap (never open/close mid-word) → sentence-snap (never
+    mid-sentence; forward extension clamped by duration cap and time-adjacent
+    neighbours) → optional waveform-silence refine when ``silences`` is
+    non-empty. Also ``setdefault``s ``reframe_mode`` on every entry (the
+    dashboard reads it per clip). Entries without word timing or start/end
+    keys keep their edges untouched.
+
+    Returns the list of :class:`SnapEvent` for clips whose edges moved.
+    """
+    raw_intervals = []
+    for clip in shorts:
+        try:
+            raw_intervals.append((float(clip["start"]), float(clip["end"])))
+        except (KeyError, TypeError, ValueError):
+            raw_intervals.append(None)
+
+    events = []
+    for idx, clip in enumerate(shorts):
+        clip.setdefault("reframe_mode", default_reframe_mode)
+        if not (words and "start" in clip and "end" in clip):
+            continue
+        raw_start, raw_end = clip["start"], clip["end"]
+        word_start, word_end = snap_clip_to_words(
+            raw_start, raw_end, words, source_duration=source_duration,
+        )
+        neighbor_start, neighbor_end = compute_neighbor_bounds(raw_intervals, idx)
+        new_start, new_end, path = snap_clip_to_sentences(
+            raw_start, raw_end, words,
+            word_start=word_start, word_end=word_end,
+            source_duration=source_duration,
+            neighbor_start=neighbor_start, neighbor_end=neighbor_end,
+        )
+        if silences:
+            new_start, new_end, silence_path = refine_edges_to_silence(
+                new_start, new_end, silences,
+                source_duration=source_duration,
+                neighbor_start=neighbor_start, neighbor_end=neighbor_end,
+            )
+            if silence_path != "none":
+                path = f"{path}+{silence_path}"
+        if (new_start, new_end) != (raw_start, raw_end):
+            clip["start"] = new_start
+            clip["end"] = new_end
+            events.append(SnapEvent(idx, path, raw_start, raw_end, new_start, new_end))
+    return events

@@ -269,3 +269,90 @@ def test_predict_polish_saving_edge_cases():
     assert predict_polish_saving([(0.0, 0.4)], 0.2) == 0.0
     # Garbage tuples are skipped, valid ones still counted.
     assert abs(predict_polish_saving([("x", "y"), (0.0, 1.0)], 0.2) - 0.6) < 1e-9
+
+
+# --- snap orchestration (moved from main.py __main__) -------------------------
+# compute_neighbor_bounds + snap_clips_to_transcript used to be inline script
+# code in the pipeline entrypoint with zero unit coverage. These tests pin the
+# exact behaviours that mattered there.
+
+from clippyme.pipeline.cut_ops import (  # noqa: E402
+    compute_neighbor_bounds,
+    snap_clips_to_transcript,
+)
+
+_WORDS = [
+    {"start": 0.0, "end": 0.4, "word": "Hello"},
+    {"start": 0.5, "end": 0.9, "word": "world."},
+    {"start": 5.0, "end": 5.4, "word": "Second"},
+    {"start": 5.5, "end": 5.9, "word": "sentence."},
+]
+
+
+def test_neighbor_bounds_score_sorted_list():
+    # Shorts are score-sorted: list order is NOT time order.
+    raw = [(10.0, 20.0), (30.0, 40.0), (0.0, 5.0), None]
+    # Clip 0: next-in-time starts at 30, previous-in-time ends at 5.
+    assert compute_neighbor_bounds(raw, 0) == (30.0, 5.0)
+    # Clip 1 (latest): nothing follows; nearest preceding end is 20.
+    assert compute_neighbor_bounds(raw, 1) == (None, 20.0)
+    # Clip 2 (earliest): nearest following start is 10; nothing precedes.
+    assert compute_neighbor_bounds(raw, 2) == (10.0, None)
+    # Malformed entry: no bounds at all.
+    assert compute_neighbor_bounds(raw, 3) == (None, None)
+
+
+def test_snap_clips_mutates_in_place_and_reports_events():
+    shorts = [{"start": 0.1, "end": 0.8}]
+    events = snap_clips_to_transcript(
+        shorts, _WORDS, source_duration=60.0, default_reframe_mode="subject")
+    assert shorts[0]["reframe_mode"] == "subject"
+    assert len(events) == 1
+    ev = events[0]
+    assert (ev.old_start, ev.old_end) == (0.1, 0.8)
+    assert (shorts[0]["start"], shorts[0]["end"]) == (ev.new_start, ev.new_end)
+    # Word/sentence snapping must land on the sentence, not drift into the
+    # next one (which starts at 5.0).
+    assert 0.0 <= shorts[0]["start"] < 0.5
+    assert 0.9 <= shorts[0]["end"] < 5.0
+    assert ev.path  # a non-empty snap path for observability
+
+
+def test_snap_clips_without_word_timing_is_noop_but_sets_mode():
+    shorts = [{"start": 3.0, "end": 9.0}, {"note": "malformed, no times"}]
+    events = snap_clips_to_transcript(shorts, [], default_reframe_mode="auto")
+    assert events == []
+    assert shorts[0] == {"start": 3.0, "end": 9.0, "reframe_mode": "auto"}
+    assert shorts[1]["reframe_mode"] == "auto"
+
+
+def test_snap_clips_preserves_existing_reframe_mode():
+    shorts = [{"start": 0.1, "end": 0.8, "reframe_mode": "disabled"}]
+    snap_clips_to_transcript(shorts, _WORDS, default_reframe_mode="auto")
+    assert shorts[0]["reframe_mode"] == "disabled"
+
+
+def test_snap_clips_silence_stage_composes_path():
+    # A silence trough right after the sentence end (word-snapped end ≈0.98):
+    # stage 3 must nudge the edge and append its path segment.
+    shorts = [{"start": 0.1, "end": 0.8}]
+    events = snap_clips_to_transcript(
+        shorts, _WORDS, source_duration=60.0,
+        silences=[(1.0, 1.6)],
+    )
+    assert len(events) == 1
+    assert "silence" in events[0].path
+    assert "+" in events[0].path  # composed onto the sentence-stage path
+    # End landed inside the trough (start + tail), before the next sentence.
+    assert 1.0 <= shorts[0]["end"] <= 1.6
+
+
+def test_snap_clips_neighbor_clamp_prevents_overlap():
+    # Two clips adjacent in time (listed score-first): the earlier clip's
+    # forward sentence extension must never cross the later clip's raw start.
+    shorts = [
+        {"start": 5.1, "end": 5.7},   # higher score, later in time
+        {"start": 0.1, "end": 0.8},   # earlier in time
+    ]
+    snap_clips_to_transcript(shorts, _WORDS, source_duration=60.0)
+    assert shorts[1]["end"] <= 5.1
