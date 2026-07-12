@@ -3,6 +3,7 @@ import re
 import subprocess
 
 from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
+from clippyme.domain.errors import ComposeError
 
 
 def _strip_ass_braces(text: str) -> str:
@@ -56,18 +57,31 @@ def _select_whisper_model():
         if ram >= 8: return "small"
         return "base"
 
+# Model instances are expensive to build (weights load from disk); cache one
+# per (model, device, compute_type) like main.py's _get_whisper_model does.
+_whisper_models: dict = {}
+
+
+def _get_cached_whisper_model(whisper_model, device, compute_type):
+    from faster_whisper import WhisperModel
+
+    key = (whisper_model, device, compute_type)
+    if key not in _whisper_models:
+        _whisper_models[key] = WhisperModel(
+            whisper_model, device=device, compute_type=compute_type)
+    return _whisper_models[key]
+
+
 def transcribe_audio(video_path):
     """
     Transcribe audio from a video file using faster-whisper.
     Returns transcript in the same format as main.py for compatibility.
     """
-    from faster_whisper import WhisperModel
-
     device = "cuda" if _check_cuda() else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
     whisper_model = _select_whisper_model()
     print(f"🎙️  Transcribing audio [{whisper_model}] from: {video_path} ({device.upper()} mode)")
-    model = WhisperModel(whisper_model, device=device, compute_type=compute_type)
+    model = _get_cached_whisper_model(whisper_model, device, compute_type)
     segments, info = model.transcribe(video_path, word_timestamps=True)
     segments = list(segments)
 
@@ -834,7 +848,12 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
 
     if result.returncode != 0:
         print(f"❌ FFmpeg Subtitle Error: {result.stderr.decode()}")
-        raise Exception(f"FFmpeg failed: {result.stderr.decode()}")
+        # Domain error, not bare Exception: the app-level ClippyMeError
+        # handler maps this to a clean HTTP response when the burn is
+        # triggered from a compose/publish request. Tail only — full ffmpeg
+        # stderr can be pages long and embeds absolute paths.
+        tail = result.stderr.decode(errors="replace")[-500:]
+        raise ComposeError(f"FFmpeg subtitle burn failed: {tail}", status_code=500)
 
     return True
 

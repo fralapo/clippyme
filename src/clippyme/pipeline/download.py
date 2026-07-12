@@ -8,12 +8,13 @@ precedence are preserved verbatim from the original ``main``.
 import ipaddress
 import os
 import re
-import socket
 import sys
 import time
 from urllib.parse import urlparse
 
 import yt_dlp
+
+from clippyme.netutil import resolve_host_addresses
 
 
 def _reject_rebound_internal(url: str) -> None:
@@ -28,18 +29,10 @@ def _reject_rebound_internal(url: str) -> None:
             ip_obj = ipaddress.ip_address(host)
             addrs = [ip_obj]
         except ValueError:
-            _prev_timeout = socket.getdefaulttimeout()
-            socket.setdefaulttimeout(5)
-            try:
-                infos = socket.getaddrinfo(host, None)
-            finally:
-                socket.setdefaulttimeout(_prev_timeout)
-            addrs = []
-            for info in infos:
-                try:
-                    addrs.append(ipaddress.ip_address(info[4][0]))
-                except ValueError:
-                    continue
+            # Bounded resolution (daemon thread, see netutil) — never mutate
+            # the process-wide socket default. A resolver timeout lands in
+            # the best-effort except below, same as a gaierror.
+            addrs = resolve_host_addresses(host, timeout=5.0)
         if any(
             a.is_private or a.is_loopback or a.is_link_local or a.is_reserved or a.is_unspecified
             for a in addrs

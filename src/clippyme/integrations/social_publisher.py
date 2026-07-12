@@ -75,6 +75,8 @@ def _reject_internal_upload_url(url: str) -> None:
     import socket
     from urllib.parse import urlparse
 
+    from clippyme.netutil import resolve_host_addresses
+
     parsed = urlparse((url or "").strip())
     if parsed.scheme.lower() != "https":
         raise ZernioError(f"refusing non-https upload URL: {parsed.scheme!r}")
@@ -85,20 +87,12 @@ def _reject_internal_upload_url(url: str) -> None:
     try:
         candidates.add(ipaddress.ip_address(host))
     except ValueError:
-        # Bound the DNS resolution so a hung resolver can't pin a thread-pool
-        # slot indefinitely. Restore the previous default in a finally.
-        _old_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(5)
+        # Bounded resolution (daemon thread, see netutil) — a hung resolver
+        # can't pin a FastAPI thread-pool slot, and nothing global is touched.
         try:
-            for info in socket.getaddrinfo(host, None):
-                try:
-                    candidates.add(ipaddress.ip_address(info[4][0]))
-                except ValueError:
-                    continue
-        except (socket.gaierror, UnicodeError, OSError):
+            candidates.update(resolve_host_addresses(host, timeout=5.0))
+        except (socket.gaierror, UnicodeError, OSError, TimeoutError):
             return
-        finally:
-            socket.setdefaulttimeout(_old_timeout)
     for ip in candidates:
         if (ip.is_private or ip.is_loopback or ip.is_link_local
                 or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
@@ -329,12 +323,24 @@ class SmartScheduler:
         if candidates:
             return self.rng.choice(candidates)
 
-        # 3. Last-resort random pick inside any slot window
+        # 3. Last-resort random pick inside any slot window — still never in
+        # the past (steps 1-2 both guard `> now`; this one used to skip it,
+        # so a fully-occupied day could schedule a publish at a time already
+        # gone and Zernio would reject it).
         window = self.rng.choice(windows)
-        return datetime.combine(
-            day,
-            time(hour=self.rng.randint(window[0], window[1] - 1), minute=self.rng.randint(0, 59)),
-        )
+        for _ in range(30):
+            candidate = datetime.combine(
+                day,
+                time(hour=self.rng.randint(window[0], window[1] - 1),
+                     minute=self.rng.randint(0, 59)),
+            )
+            if candidate > now:
+                return candidate
+        # Day (or its windows) entirely in the past: push past the collision
+        # gap from now instead of returning an unusable timestamp. Floor of
+        # one minute keeps the result strictly in the future even when the
+        # scheduler was built with min_gap_seconds=0.
+        return now + timedelta(seconds=max(self.min_gap_seconds, 60))
 
 
 # ---------------------------------------------------------------------------

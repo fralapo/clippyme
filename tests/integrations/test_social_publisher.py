@@ -5,7 +5,7 @@ Covers the two pure, network-free pieces:
 - SmartScheduler.find_slot() — the deterministic (seeded) prime-time slot picker.
 """
 import random
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
@@ -119,6 +119,35 @@ def test_is_window_free_detects_occupancy():
     occupied = [datetime.combine(day, time(13, 0))]
     assert s._is_window_free(day, window, occupied) is False
     assert s._is_window_free(day, (18, 21), occupied) is True
+
+
+def test_find_slot_last_resort_never_returns_past(monkeypatch):
+    # Regression: step 3 (fully-occupied day fallback) picked a random time
+    # inside a window with no `> now` guard — late in the day it could
+    # schedule a publish at a time already gone.
+    day = date(2026, 6, 1)  # Monday: windows (12,14) and (18,21)
+    now = datetime.combine(day, time(20, 30))
+    # Occupy every 15-minute step so steps 1 and 2 both fail.
+    occupied = [datetime.combine(day, time(7, 0)) + timedelta(minutes=m)
+                for m in range(0, 16 * 60, 15)]
+    s = SmartScheduler(rng=random.Random(3), min_gap_seconds=0)
+    # min_gap 0 would let step 2 succeed; occupy makes windows non-free but
+    # gap_ok trivially true — so force step 3 by making _gap_ok fail instead.
+    monkeypatch.setattr(s, "_gap_ok", lambda candidate, occ: False)
+    for seed in range(20):
+        s.rng = random.Random(seed)
+        assert s.find_slot(day, occupied=occupied, now=now) > now
+
+
+def test_find_slot_day_fully_past_falls_back_after_now():
+    # The whole day (and all its windows) is already behind `now`: the
+    # fallback must still be usable — now + min_gap, never yesterday.
+    day = date(2026, 6, 1)
+    now = datetime.combine(day, time(23, 30))
+    s = SmartScheduler(rng=random.Random(5), min_gap_seconds=5400)
+    occupied = [datetime.combine(day, time(h, 0)) for h in range(7, 23)]
+    slot = s.find_slot(day, occupied=occupied, now=now)
+    assert slot > now
 
 
 def test_gap_ok_enforces_minimum_gap():

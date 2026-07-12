@@ -3,6 +3,7 @@ import os
 
 import pytest
 
+from clippyme import netutil
 from clippyme.pipeline import download as dl
 
 
@@ -24,13 +25,13 @@ def test_reject_rebound_literal_public_ip_passes():
 
 
 def test_reject_rebound_all_internal_resolution_raises(monkeypatch):
-    monkeypatch.setattr(dl.socket, "getaddrinfo", _fake_getaddrinfo("192.168.1.10", "127.0.0.1"))
+    monkeypatch.setattr(netutil.socket, "getaddrinfo", _fake_getaddrinfo("192.168.1.10", "127.0.0.1"))
     with pytest.raises(ValueError):
         dl._reject_rebound_internal("http://rebind.evil.test/x")
 
 
 def test_reject_rebound_public_resolution_passes(monkeypatch):
-    monkeypatch.setattr(dl.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
+    monkeypatch.setattr(netutil.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
     dl._reject_rebound_internal("http://example.com/x")  # no raise
 
 
@@ -38,7 +39,7 @@ def test_reject_rebound_mixed_public_and_internal_raises(monkeypatch):
     # ANY internal address → reject. A split-horizon / round-robin host that
     # returns one public + one loopback/private address must NOT pass: yt-dlp
     # could otherwise connect to the internal one (SSRF via DNS rebinding).
-    monkeypatch.setattr(dl.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34", "10.0.0.1"))
+    monkeypatch.setattr(netutil.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34", "10.0.0.1"))
     with pytest.raises(ValueError):
         dl._reject_rebound_internal("http://example.com/x")
 
@@ -50,7 +51,7 @@ def test_reject_rebound_no_host_returns_none():
 def test_reject_rebound_resolution_failure_is_swallowed(monkeypatch):
     def _boom(*a, **k):
         raise OSError("dns down")
-    monkeypatch.setattr(dl.socket, "getaddrinfo", _boom)
+    monkeypatch.setattr(netutil.socket, "getaddrinfo", _boom)
     # Resolution hiccup must not block a legit download — yt-dlp handles it.
     assert dl._reject_rebound_internal("http://example.com/x") is None
 

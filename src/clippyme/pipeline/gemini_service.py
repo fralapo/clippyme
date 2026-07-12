@@ -3,8 +3,13 @@ import re
 from typing import List, Optional
 
 from google import genai
+from google.genai import types as genai_types
 
 ALLOWED_MODEL_PREFIXES = ("gemini-2.5-", "gemini-3")
+
+# models.list() serves the Settings UI synchronously — an unbounded call
+# against a hung endpoint would pin the request thread forever. Milliseconds.
+LIST_MODELS_TIMEOUT_MS = 15_000
 
 # Google API keys look like ``AIza`` + 35 url-safe chars. Redact any such token
 # from an error string before it is returned to the client / written to logs,
@@ -25,7 +30,10 @@ def list_available_models(api_key: Optional[str]) -> dict:
         return {"models": [], "error": "API Key missing"}
 
     try:
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(
+            api_key=api_key,
+            http_options=genai_types.HttpOptions(timeout=LIST_MODELS_TIMEOUT_MS),
+        )
         models: List[dict] = []
         for model in client.models.list():
             # The new google-genai SDK (>=1.0) renamed the old
