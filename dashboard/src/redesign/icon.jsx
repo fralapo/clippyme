@@ -3,8 +3,7 @@
 // (TikTok/Instagram/YouTube) come from the Simple Icons CDN, matching the
 // prototype.
 import {
-  // lucide-react 0.344 predates the icon rename; alias the three renamed ones.
-  Wand2 as WandSparkles, CheckCircle as CircleCheck, AlertTriangle as TriangleAlert,
+  WandSparkles, CircleCheck, TriangleAlert,
   Clock, Settings, Check, Link, Square, Layers, Globe, FileUp,
   Clipboard, FileVideo, Upload, Sparkles, ScanFace, Scissors, ZoomIn, Languages,
   Captions, Type, SlidersHorizontal, Crop, Flame, UserRound, Mic, Plus, ArrowLeft,
