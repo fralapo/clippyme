@@ -33,8 +33,12 @@ def _trust_proxy_enabled() -> bool:
     OFF by default: when the app is reachable directly, those headers are
     fully attacker-controlled, so trusting them would let any client spoof
     its IP to dodge rate limiting or forge a "trusted" private address.
-    Set TRUST_PROXY=1 only when ClippyMe sits behind a reverse proxy that
-    overwrites these headers (nginx/Traefik/uvicorn --proxy-headers).
+    Set TRUST_PROXY=1 only when ClippyMe sits behind exactly one reverse
+    proxy (nginx/Traefik/uvicorn --proxy-headers). The proxy may either
+    overwrite X-Forwarded-For or append to it (nginx's
+    $proxy_add_x_forwarded_for) — client_ip reads the LAST hop, which is
+    the address the proxy itself wrote, so a client-forged prefix is
+    ignored either way.
     """
     return os.environ.get("TRUST_PROXY", "0") == "1"
 
@@ -52,13 +56,22 @@ def client_ip(request: Request) -> str:
     legitimate LAN client behind the proxy is unaffected: its real address
     arrives via X-Forwarded-For while the peer is the (private) proxy.
     Otherwise we use the socket peer address, which the client can't spoof.
+
+    Within X-Forwarded-For we take the LAST hop, not the first. The shipped
+    nginx.conf uses $proxy_add_x_forwarded_for, which APPENDS the peer to any
+    incoming header instead of overwriting it — so the first hop is
+    client-controlled ("X-Forwarded-For: 127.0.0.1" would spoof loopback
+    trust and dodge per-IP rate limits), while the last hop is the value the
+    trusted proxy itself appended: the real client address. With a proxy
+    that overwrites the header there is only one hop and last == first, so
+    this is safe for both proxy configurations. (Only a single trusted
+    proxy is supported; a chain would need a trusted-hop count.)
     """
     peer = request.client.host if request.client else ""
     if _trust_proxy_enabled() and is_trusted_client_host(peer):
         fwd = request.headers.get("x-forwarded-for")
         if fwd:
-            # First hop is the original client (proxy appends its own IP).
-            return fwd.split(",")[0].strip()
+            return fwd.split(",")[-1].strip()
         real = request.headers.get("x-real-ip")
         if real:
             return real.strip()
@@ -170,13 +183,20 @@ _rate_state: Dict[Tuple[str, str], Tuple[float, float]] = {}
 _RATE_STATE_MAX = int(os.environ.get("RATE_LIMIT_MAX_BUCKETS", "10000"))
 
 
-def _evict_rate_state(capacity: float, now: float) -> None:
-    """Drop fully-refilled (idle) buckets when the table grows too large."""
+def _evict_rate_state(now: float) -> None:
+    """Drop fully-refilled (idle) buckets when the table grows too large.
+
+    Each entry's idle check uses its OWN bucket's capacity/refill (buckets
+    have different capacities — process=20, publish/compose=30). Judging a
+    process entry against the current request's capacity would either never
+    see it as refilled or evict it while still draining.
+    """
     if len(_rate_state) < _RATE_STATE_MAX:
         return
     stale = [
         k for k, (tokens, last) in _rate_state.items()
-        if min(capacity, tokens + max(0.0, now - last) * refill_for(k)) >= capacity
+        if min(capacity_for(k), tokens + max(0.0, now - last) * refill_for(k))
+        >= capacity_for(k)
     ]
     for k in stale:
         _rate_state.pop(k, None)
@@ -186,18 +206,25 @@ def _evict_rate_state(capacity: float, now: float) -> None:
             _rate_state.pop(k, None)
 
 
-# Per-bucket refill rates so eviction can recompute "is this idle" correctly.
+# Per-bucket refill rates + capacities so eviction can recompute "is this
+# idle" correctly for every entry, not just the current request's bucket.
 _bucket_refill: Dict[str, float] = {}
+_bucket_capacity: Dict[str, float] = {}
 
 
 def refill_for(key: Tuple[str, str]) -> float:
     return _bucket_refill.get(key[0], 1.0)
 
 
+def capacity_for(key: Tuple[str, str]) -> float:
+    return _bucket_capacity.get(key[0], 1.0)
+
+
 def _rate_limit_allow(key: Tuple[str, str], capacity: float, refill_per_sec: float, now: float) -> bool:
     """Token-bucket check. Returns True if a token was available (and consumed)."""
     _bucket_refill[key[0]] = refill_per_sec
-    _evict_rate_state(capacity, now)
+    _bucket_capacity[key[0]] = capacity
+    _evict_rate_state(now)
     tokens, last = _rate_state.get(key, (capacity, now))
     tokens = min(capacity, tokens + max(0.0, now - last) * refill_per_sec)
     if tokens < 1.0:

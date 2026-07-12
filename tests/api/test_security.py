@@ -184,6 +184,52 @@ def test_require_trusted_request_allows_cli_no_sec_fetch():
     assert require_trusted_config_request(req) is None
 
 
+# --- client_ip / X-Forwarded-For -------------------------------------------
+
+def test_client_ip_ignores_forwarded_headers_without_trust_proxy(monkeypatch):
+    monkeypatch.delenv("TRUST_PROXY", raising=False)
+    req = _FakeRequest(client_host="127.0.0.1")
+    req.headers["x-forwarded-for"] = "9.9.9.9"
+    assert security.client_ip(req) == "127.0.0.1"
+
+
+def test_client_ip_reads_last_hop_from_appending_proxy(monkeypatch):
+    # Regression: the shipped nginx.conf APPENDS the peer to X-Forwarded-For
+    # ($proxy_add_x_forwarded_for). Reading the FIRST hop would let a client
+    # behind the proxy forge "X-Forwarded-For: 127.0.0.1" and be treated as
+    # loopback (config access) while dodging per-IP rate limits. The last
+    # hop is the address the trusted proxy itself wrote.
+    monkeypatch.setenv("TRUST_PROXY", "1")
+    req = _FakeRequest(client_host="172.18.0.2")  # the proxy container
+    req.headers["x-forwarded-for"] = "127.0.0.1, 9.9.9.9"
+    assert security.client_ip(req) == "9.9.9.9"
+    assert security.is_trusted_client_host(security.client_ip(req)) is False
+
+
+def test_client_ip_single_hop_overwriting_proxy(monkeypatch):
+    # With a proxy that overwrites the header there is one hop: last == first.
+    monkeypatch.setenv("TRUST_PROXY", "1")
+    req = _FakeRequest(client_host="172.18.0.2")
+    req.headers["x-forwarded-for"] = "8.8.8.8"
+    assert security.client_ip(req) == "8.8.8.8"
+
+
+def test_client_ip_untrusted_peer_never_honours_forwarded(monkeypatch):
+    # TRUST_PROXY=1 left on while the app is also reachable directly: a
+    # public peer's forged header must be ignored (second gate).
+    monkeypatch.setenv("TRUST_PROXY", "1")
+    req = _FakeRequest(client_host="8.8.8.8")
+    req.headers["x-forwarded-for"] = "127.0.0.1"
+    assert security.client_ip(req) == "8.8.8.8"
+
+
+def test_client_ip_x_real_ip_fallback(monkeypatch):
+    monkeypatch.setenv("TRUST_PROXY", "1")
+    req = _FakeRequest(client_host="127.0.0.1")
+    req.headers["x-real-ip"] = "9.9.9.9"
+    assert security.client_ip(req) == "9.9.9.9"
+
+
 # --- rate limiting ---------------------------------------------------------
 
 @pytest.fixture(autouse=True)
@@ -226,6 +272,25 @@ def test_enforce_rate_limit_raises_429(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         security.enforce_rate_limit(req, "process", capacity=1, refill_per_sec=0.0)
     assert exc.value.status_code == 429
+
+
+def test_eviction_judges_each_bucket_by_its_own_capacity(monkeypatch):
+    # Regression: eviction used the CURRENT request's capacity for every
+    # entry, so a small-capacity bucket checked during a large-capacity
+    # request was never seen as idle (its tokens can't reach the larger
+    # capacity) and idle entries survived while active ones got mass-purged.
+    monkeypatch.setattr(security, "_RATE_STATE_MAX", 3)
+    # Idle small bucket: full at its own capacity (2.0).
+    assert security._rate_limit_allow(("small", "ip1"), 2, 10.0, now=0.0) is True
+    # Two active large buckets, freshly drained (no refill).
+    assert security._rate_limit_allow(("big", "ip2"), 30, 0.0, now=100.0) is True
+    assert security._rate_limit_allow(("big", "ip3"), 30, 0.0, now=100.0) is True
+    # Table is at max → the next call triggers targeted eviction. The small
+    # bucket refilled to ITS capacity long ago and must be the one dropped.
+    assert security._rate_limit_allow(("big", "ip4"), 30, 0.0, now=100.0) is True
+    assert ("small", "ip1") not in security._rate_state
+    assert ("big", "ip2") in security._rate_state
+    assert ("big", "ip3") in security._rate_state
 
 
 def test_enforce_rate_limit_disabled_via_env(monkeypatch):

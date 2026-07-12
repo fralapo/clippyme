@@ -27,8 +27,11 @@ def test_no_trust_proxy_uses_peer(monkeypatch):
 
 
 def test_trust_proxy_with_private_peer_honours_xff(monkeypatch):
+    # LAST hop, not first: the shipped nginx APPENDS the peer it saw to any
+    # incoming header, so the last entry is the proxy-written real client
+    # while earlier entries are client-controlled.
     monkeypatch.setenv("TRUST_PROXY", "1")
-    req = _FakeRequest("192.168.1.2", {"x-forwarded-for": "8.8.4.4, 192.168.1.2"})
+    req = _FakeRequest("192.168.1.2", {"x-forwarded-for": "10.0.0.5, 8.8.4.4"})
     assert security.client_ip(req) == "8.8.4.4"
 
 
