@@ -6,6 +6,7 @@ the host. The bot-detection-resistant yt-dlp options and the cookies-resolution
 precedence are preserved verbatim from the original ``main``.
 """
 import ipaddress
+import json
 import os
 import re
 import sys
@@ -178,6 +179,35 @@ def classify_download_error(msg: str) -> str:
     return "fatal"
 
 
+SOURCE_INFO_FILENAME = "source_info.json"
+
+
+def _write_source_info(output_dir, info):
+    """Persist source-channel metadata (uploader/channel/webpage + a suggested
+    attribution banner) as a sidecar the pipeline folds into the job metadata so
+    the dashboard can pre-fill the attribution banner. Best-effort — a failure
+    here never breaks the download."""
+    try:
+        from clippyme.domain.banner import suggest_banner
+
+        channel_url = info.get("channel_url") or info.get("uploader_url")
+        webpage_url = info.get("webpage_url") or info.get("original_url")
+        uploader_id = info.get("uploader_id") or info.get("channel_id")
+        banner = suggest_banner(channel_url or webpage_url or "", channel_hint=uploader_id)
+        data = {
+            "uploader_id": uploader_id,
+            "channel_url": channel_url,
+            "webpage_url": webpage_url,
+            "banner": banner,  # {platform, handle} | None
+        }
+        tmp = os.path.join(output_dir, SOURCE_INFO_FILENAME + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, os.path.join(output_dir, SOURCE_INFO_FILENAME))
+    except Exception as exc:  # pragma: no cover — telemetry only, never fatal
+        print(f"   ⚠️  source_info capture skipped: {exc}")
+
+
 def download_youtube_video(url, output_dir=".", cookies_file_path=None):
     """
     Downloads a YouTube video using yt-dlp.
@@ -249,6 +279,7 @@ def download_youtube_video(url, output_dir=".", cookies_file_path=None):
                 info = ydl.extract_info(url, download=False)
                 video_title = info.get('title', 'youtube_video')
                 sanitized_title = sanitize_filename(video_title)
+                _write_source_info(output_dir, info)
 
             output_template = os.path.join(output_dir, f'{sanitized_title}.%(ext)s')
             expected_file = os.path.join(output_dir, f'{sanitized_title}.mp4')

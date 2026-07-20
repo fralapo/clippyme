@@ -36,6 +36,7 @@ const DEFAULT_OPTS = {
   subFont: 'Montserrat-Black', subColor: '#FFFFFF',
   hooks: true, hookPos: 'top', hookSize: 'M', hookStyle: { ...HOOK_STYLE_DEFAULT },
   logo: false, logoPos: 'top-right', logoSize: 'M', gradePreset: 'none',
+  banner: false, bannerPlatform: 'kick', bannerHandle: '', bannerYPct: 0.85,
   language: 'multi',
   platforms: { tiktok: true, ig: true, yt: false },
   preset: 'viral',
@@ -378,6 +379,7 @@ export default function RedesignApp() {
       hookParams: params.hookParams,
       logoParams: params.logoParams,
       gradeParams: params.gradeParams,
+      bannerParams: params.bannerParams,
     };
     const plan = buildBulkPlan(srcParams, targets, clipStates);
     if (!plan.length) return;
@@ -441,7 +443,7 @@ export default function RedesignApp() {
         <EditClipModal clip={editClip.clip} idx={editClip.idx} jobId={jobId}
           initial={clipStates[editClip.idx]}
           appliedMode={clipStates[editClip.idx]?.reframeMode || editClip.clip.reframe_mode || 'auto'}
-          preselections={preselections}
+          preselections={preselections} sourceBanner={results?.source_info?.banner}
           onClose={() => setEditClip(null)}
           onApply={(params) => { reprocessClip(editClip.idx, editClip.clip, params); setEditClip(null); }} />
       )}
@@ -450,7 +452,7 @@ export default function RedesignApp() {
           bulk targetCount={bulkEdit.targets.length}
           initial={clipStates[bulkEdit.targets[0].i]}
           appliedMode={clipStates[bulkEdit.targets[0].i]?.reframeMode || bulkEdit.targets[0].c.reframe_mode || 'auto'}
-          preselections={preselections}
+          preselections={preselections} sourceBanner={results?.source_info?.banner}
           onClose={() => setBulkEdit(null)}
           onApply={(params) => { applyBulkEdit(params, bulkEdit.targets); setBulkEdit(null); }} />
       )}

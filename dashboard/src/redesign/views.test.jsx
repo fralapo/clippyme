@@ -95,6 +95,22 @@ test('clearing a present key saves an empty value and the badge flips to empty',
   await waitFor(() => expect(within(geminiRow()).getByText('empty')).toBeInTheDocument());
 });
 
+test('Twitch client id/secret rows reflect backend present state', async () => {
+  getConfig.mockResolvedValue({ ...EMPTY_CONFIG, TWITCH_CLIENT_ID: 'abcd1234', TWITCH_CLIENT_SECRET: 'shhh12345678' });
+  mount();
+  const idRow = () => screen.getByLabelText('Twitch client ID').closest('.keyrow');
+  const secretRow = () => screen.getByLabelText('Twitch client secret').closest('.keyrow');
+  await waitFor(() => expect(within(idRow()).getByText('set')).toBeInTheDocument());
+  expect(within(secretRow()).getByText('set')).toBeInTheDocument();
+});
+
+test('Twitch client id/secret rows show empty when unset', async () => {
+  getConfig.mockResolvedValue(EMPTY_CONFIG);
+  mount();
+  const idRow = () => screen.getByLabelText('Twitch client ID').closest('.keyrow');
+  await waitFor(() => expect(within(idRow()).getByText('empty')).toBeInTheDocument());
+});
+
 // HistoryView — title + per-job "published" badge (derived from
 // history_service.scan_history's additive `title`/`publishedCount` fields).
 test('history row shows the video title and a published-count badge when clips were published', () => {

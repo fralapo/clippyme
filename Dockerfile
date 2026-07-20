@@ -20,7 +20,7 @@ RUN apt-get update && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     python3.11 python3.11-venv python3.11-dev python3.11-distutils \
-    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libcairo2 \
     curl unzip ca-certificates gosu && \
     curl -fsSL https://deno.land/install.sh | sh -s v2.8.3 && \
     mv /root/.deno/bin/deno /usr/local/bin/ && \
@@ -56,7 +56,7 @@ FROM python:3.11-slim AS runtime-cpu
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 \
+    ffmpeg libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libcairo2 \
     curl unzip ca-certificates gosu && \
     curl -fsSL https://deno.land/install.sh | sh -s v2.8.3 && \
     mv /root/.deno/bin/deno /usr/local/bin/ && \
@@ -121,6 +121,19 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     if [ "$ENABLE_WHISPER_DIARIZE" = "1" ]; then \
         pip install 'pyannote.audio>=3.1'; \
     fi
+# streamlink captures Twitch (and Kick, when no HLS playback URL is exposed)
+# live streams for the content monitor (subprocess, see domain/live_monitor.py).
+# NOT added to requirements.lock — that lock is uv-compiled for the pure-Python
+# video pipeline; streamlink is a runtime CLI tool like ffmpeg / auto-editor.
+RUN --mount=type=cache,target=/root/.cache/pip pip install 'streamlink==7.*'
+
+# cairosvg rasterizes the committed platform SVGs (assets/platform_logos/) to
+# PNGs for the attribution banner (domain/banner.py) — ffmpeg/Pillow can't read
+# SVG. NOT added to requirements.lock: that lock is uv-compiled for the pure
+# video pipeline, and cairosvg needs the system libcairo2 installed above, so it
+# lives here beside streamlink as a runtime extra rather than a locked dep.
+RUN --mount=type=cache,target=/root/.cache/pip pip install --no-cache-dir cairosvg
+
 # NOTE: do NOT `pip install --upgrade yt-dlp` here — that would un-pin yt-dlp
 # from requirements.lock and pull whatever the latest (unverified) release is at
 # build time, breaking reproducibility and opening a supply-chain window. yt-dlp

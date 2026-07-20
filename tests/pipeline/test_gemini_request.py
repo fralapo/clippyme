@@ -8,6 +8,7 @@ from clippyme.pipeline.gemini_request import (
     build_reformat_prompt,
     build_viral_prompt,
     compute_gemini_cost,
+    encode_words_toon,
     extract_prompt_words,
     is_rate_limit_error,
 )
@@ -35,8 +36,61 @@ def test_build_viral_prompt_embeds_duration_and_words():
     prompt, words = build_viral_prompt(TRANSCRIPT, 123.4)
     assert "VIDEO_DURATION_SECONDS: 123.4" in prompt
     assert '"hello world"' in prompt          # transcript text, json-encoded
-    assert '"w": "hello"' in prompt
+    assert "words[2]{w,s,e}:" in prompt       # TOON header, not JSON
+    assert "  hello,0.0,0.4" in prompt
+    assert '"w":' not in prompt               # no per-word JSON keys
     assert len(words) == 2
+
+
+# --- TOON word encoding ----------------------------------------------------
+
+def test_encode_words_toon_header_and_plain_rows():
+    words = [{"w": "hello", "s": 0.0, "e": 0.42}, {"w": "world", "s": 0.42, "e": 0.9}]
+    toon = encode_words_toon(words)
+    lines = toon.splitlines()
+    assert lines[0] == "words[2]{w,s,e}:"
+    assert lines[1] == "  hello,0.0,0.42"
+    assert lines[2] == "  world,0.42,0.9"
+
+
+def test_encode_words_toon_quotes_comma_and_colon():
+    words = [{"w": "wor,ld", "s": 0.0, "e": 0.1}, {"w": "a:b", "s": 0.1, "e": 0.2}]
+    toon = encode_words_toon(words)
+    lines = toon.splitlines()
+    assert lines[1] == '  "wor,ld",0.0,0.1'
+    assert lines[2] == '  "a:b",0.1,0.2'
+
+
+def test_encode_words_toon_quotes_numeric_looking_and_reserved_words():
+    words = [
+        {"w": "123", "s": 0.0, "e": 0.1},
+        {"w": "true", "s": 0.1, "e": 0.2},
+        {"w": "", "s": 0.2, "e": 0.3},
+    ]
+    toon = encode_words_toon(words)
+    lines = toon.splitlines()
+    assert lines[1] == '  "123",0.0,0.1'
+    assert lines[2] == '  "true",0.1,0.2'
+    assert lines[3] == '  "",0.2,0.3'
+
+
+def test_encode_words_toon_escapes_quote_and_backslash():
+    words = [{"w": 'say "hi"', "s": 0.0, "e": 0.1}, {"w": "back\\slash", "s": 0.1, "e": 0.2}]
+    toon = encode_words_toon(words)
+    lines = toon.splitlines()
+    assert lines[1] == '  "say \\"hi\\"",0.0,0.1'
+    assert lines[2] == '  "back\\\\slash",0.1,0.2'
+
+
+def test_encode_words_toon_preserves_timestamp_precision():
+    # s/e strings must round-trip exactly — response timestamps are copied
+    # from these values, precision must not shift (e.g. no int-ification).
+    words = [{"w": "x", "s": 12.340, "e": 1517.724}]
+    toon = encode_words_toon(words)
+    row = toon.splitlines()[1]
+    assert row == "  x,12.34,1517.724"
+    assert row.split(",")[1] == str(12.340)
+    assert row.split(",")[2] == str(1517.724)
 
 
 def test_instructions_are_fenced_and_delimiter_stripped():

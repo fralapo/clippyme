@@ -59,8 +59,8 @@ normally on the words alone.
 - no cold-open ambiguity ("...and then she said" with no setup)
 - 0 ≤ start < end ≤ VIDEO_DURATION_SECONDS
 - ANCHOR TO REAL TIMESTAMPS: `start` MUST equal the `s` (start) of the FIRST
-  word of the opening sentence in WORDS_JSON, and `end` MUST equal the `e`
-  (end) of the LAST word of the closing sentence. Do NOT invent times between
+  word of the opening sentence in the WORDS section, and `end` MUST equal the
+  `e` (end) of the LAST word of the closing sentence. Do NOT invent times between
   words and do NOT round to whole seconds — copy the exact `s`/`e` of those two
   words. This is how you avoid cutting mid-sentence or mid-word.
 - start and end are FLOAT SECONDS with up to 3 decimals (e.g. 12.340, 1517.724).
@@ -107,8 +107,8 @@ VIDEO_DURATION_SECONDS: {video_duration}
 TRANSCRIPT_TEXT (raw):
 {transcript_text}
 
-WORDS_JSON (array of {{w, s, e}} where s/e are seconds):
-{words_json}
+WORDS (TOON tabular: header `words[N]{{w,s,e}}:`, then one row `w,s,e` per word, s/e seconds):
+{words_toon}
 
 {user_instructions_block}
 
@@ -156,6 +156,47 @@ def extract_prompt_words(transcript_result):
     return words
 
 
+def _toon_quote_word(text):
+    """Quote a TOON field value only when required by the spec (v3.3):
+    empty, leading/trailing whitespace, a true/false/null literal, numeric-
+    looking text, or containing comma/colon/quote/backslash/bracket/brace/
+    control chars. Otherwise the bare token is cheaper and still unambiguous.
+    """
+    needs_quote = (
+        text == ""
+        or text != text.strip()
+        or text.lower() in ("true", "false", "null")
+        or _looks_numeric(text)
+        or any(c in text for c in ',:"\\[]{}')
+        or any(ord(c) < 32 for c in text)
+    )
+    if not needs_quote:
+        return text
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _looks_numeric(text):
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
+
+
+def encode_words_toon(words):
+    """Encode the {w,s,e} word list as a TOON tabular block — same data as
+    ``json.dumps(words)`` at a fraction of the tokens (no repeated key names,
+    no braces per row). ``s``/``e`` are emitted with ``str()`` so their exact
+    rounding is preserved unchanged (response timestamps are copied back).
+    """
+    lines = [f"words[{len(words)}]{{w,s,e}}:"]
+    for word in words:
+        w = _toon_quote_word(word['w'])
+        lines.append(f"  {w},{word['s']},{word['e']}")
+    return "\n".join(lines)
+
+
 def build_viral_prompt(transcript_result, video_duration, instructions=None):
     """Return ``(prompt, words)`` for the primary Gemini call.
 
@@ -182,7 +223,7 @@ def build_viral_prompt(transcript_result, video_duration, instructions=None):
     prompt = GEMINI_PROMPT_TEMPLATE.format(
         video_duration=video_duration,
         transcript_text=json.dumps(transcript_result.get('text', '')),
-        words_json=json.dumps(words),
+        words_toon=encode_words_toon(words),
         user_instructions_block=user_instructions_block,
     )
     return prompt, words

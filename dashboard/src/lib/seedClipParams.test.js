@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import {
-  seedToggles, seedGradeParams, seedLogoParams, seedHookParams, seedSubtitleParams,
+  seedToggles, seedGradeParams, seedLogoParams, seedHookParams, seedSubtitleParams, seedBannerParams,
 } from './seedClipParams.js';
 
 // seedClipParams is the single seam that keeps the Create pre-selection panel,
@@ -11,8 +11,25 @@ import {
 
 test('seedToggles defaults everything off', () => {
   assert.deepEqual(seedToggles(undefined), {
-    smartcut: false, hook: false, subtitles: false, logo: false, grade: false,
+    smartcut: false, hook: false, subtitles: false, logo: false, grade: false, banner: false,
   });
+});
+
+test('seedBannerParams prefers an explicit pre-selection over the source suggestion', () => {
+  const pre = { banner: { enabled: true, platform: 'twitch', handle: 'xqc', y_pct: 0.7 } };
+  assert.deepEqual(seedBannerParams(pre, { platform: 'kick', handle: 'other' }),
+    { enabled: true, platform: 'twitch', handle: 'xqc', y_pct: 0.7 });
+});
+
+test('seedBannerParams falls back to the job source_info auto-suggestion', () => {
+  assert.deepEqual(seedBannerParams(undefined, { platform: 'youtube', handle: 'GrenBaudLounge' }),
+    { enabled: true, platform: 'youtube', handle: 'GrenBaudLounge', y_pct: 0.85 });
+});
+
+test('seedBannerParams defaults disabled when neither is present', () => {
+  assert.deepEqual(seedBannerParams(undefined, null),
+    { enabled: false, platform: 'kick', handle: '', y_pct: 0.85 });
+  assert.equal(seedBannerParams({ banner: false }, null).enabled, false);
 });
 
 test('seedToggles turns grade on only for a real preset', () => {

@@ -183,7 +183,8 @@ def load_partial_result(job_id: str, output_dir: str) -> dict | None:
         ready = _build_clips(data, base_name, job_id, output_dir, only_ready=True)
         if not ready:
             return None
-        return {'clips': ready, 'cost_analysis': data.get('cost_analysis')}
+        return {'clips': ready, 'cost_analysis': data.get('cost_analysis'),
+                'source_info': data.get('source_info')}
     except (OSError, json.JSONDecodeError, ValueError):
         return None
 
@@ -205,4 +206,5 @@ def load_final_result(job_id: str, output_dir: str) -> dict | None:
 
     base_name = os.path.basename(target_json).replace('_metadata.json', '')
     clips = _build_clips(data, base_name, job_id, output_dir, only_ready=False)
-    return {'clips': clips, 'cost_analysis': data.get('cost_analysis')}
+    return {'clips': clips, 'cost_analysis': data.get('cost_analysis'),
+            'source_info': data.get('source_info')}

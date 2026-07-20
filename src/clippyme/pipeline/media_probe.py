@@ -155,6 +155,27 @@ def probe_duration(media_path: str) -> float:
     return 0.0
 
 
+def probe_dimensions(video_path: str, default=(1080, 1920)) -> tuple[int, int]:
+    """ffprobe the first video stream's ``(width, height)`` in pixels.
+
+    Never raises — a missing ffprobe, unreadable file, or odd output returns
+    ``default`` (1080x1920, the pipeline's vertical target) so overlay callers
+    still place something sane instead of crashing.
+    """
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", video_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            w, h = result.stdout.strip().split("\n")[0].split("x")
+            return int(w), int(h)
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    return default
+
+
 def probe_is_variable_frame_rate(video_path: str, threshold: float = 0.5) -> bool:
     """ffprobe whether the first video stream is VFR.
 

@@ -17,8 +17,41 @@ from typing import Optional
 logger = logging.getLogger("clippyme")
 
 API_URL = "https://kick.com/api/v2/channels/{slug}"
+VIDEOS_URL = "https://kick.com/api/v2/channels/{slug}/videos"
 # Rotated on repeated 403 (Cloudflare challenge). Ordered most→least common.
 DEFAULT_PROFILES = ("chrome124", "chrome131", "safari17_0")
+
+
+def extract_vods(payload) -> list:
+    """Best-effort VOD list from a Kick channel JSON *or* a /videos payload.
+
+    Kick's VOD shape is UNVERIFIED and drifts across API versions, so we probe
+    several known field names defensively. Returns ``[{id, url, created_at}]``
+    (possibly empty). ``url`` is the yt-dlp-friendly ``kick.com/video/{uuid}``.
+    """
+    if not payload:
+        return []
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict):
+        items = (payload.get("previous_livestreams")
+                 or payload.get("videos")
+                 or payload.get("data") or [])
+    else:
+        return []
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        video = it.get("video") if isinstance(it.get("video"), dict) else it
+        vid = video.get("uuid") or it.get("uuid") or video.get("id") or it.get("id")
+        if not vid:
+            continue
+        created = (it.get("created_at") or it.get("start_time")
+                   or video.get("created_at") or "")
+        out.append({"id": str(vid), "url": f"https://kick.com/video/{vid}",
+                    "created_at": created})
+    return out
 
 
 def is_live(channel: Optional[dict]) -> bool:
@@ -65,8 +98,14 @@ class KickClient:
         returned 403 do we give up (None) — the caller treats that as
         "try again next poll", not a hard failure.
         """
+        return self._get_json(API_URL.format(slug=slug))
+
+    def get_channel_videos(self, slug: str):
+        """GET the channel's VOD list (used only when the channel JSON has none)."""
+        return self._get_json(VIDEOS_URL.format(slug=slug))
+
+    def _get_json(self, url: str):
         cf = self._cf_requests()
-        url = API_URL.format(slug=slug)
         for _ in range(len(self._profiles)):
             profile = self._profiles[self._pi % len(self._profiles)]
             try:
@@ -83,12 +122,12 @@ class KickClient:
             if status == 404:
                 return None
             if status >= 400:
-                logger.warning("Kick get_channel for %s → HTTP %s", slug, status)
+                logger.warning("Kick GET %s → HTTP %s", url, status)
                 return None
             try:
                 return resp.json()
             except Exception:
-                logger.warning("Kick get_channel: response was not valid JSON")
+                logger.warning("Kick GET: response was not valid JSON")
                 return None
-        logger.warning("Kick get_channel: all profiles returned 403 for %s", slug)
+        logger.warning("Kick GET: all profiles returned 403 for %s", url)
         return None

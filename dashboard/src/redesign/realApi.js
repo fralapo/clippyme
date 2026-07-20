@@ -5,7 +5,7 @@
 // strictly, and Vite accepts the explicit form unchanged.
 import { getApiUrl } from '../config.js';
 import { apiFetch } from '../lib/apiToken.js';
-import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from '../lib/seedClipParams.js';
+import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams, seedBannerParams } from '../lib/seedClipParams.js';
 import { clipDownloadName } from '../lib/clipFilename.js';
 
 export { clipDownloadName };
@@ -81,11 +81,11 @@ export async function stopJob(jobId) {
   return res.json().catch(() => ({}));
 }
 
-export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params, logo_params, grade_params, drop_ranges }) {
+export async function composeClip(jobId, index, { toggles, hook_params, subtitle_params, logo_params, grade_params, banner_params, drop_ranges }) {
   const res = await apiFetch(getApiUrl(`/api/compose/${jobId}/${index}`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ toggles, hook_params, subtitle_params, logo_params, grade_params: grade_params || {}, drop_ranges: drop_ranges || [] }),
+    body: JSON.stringify({ toggles, hook_params, subtitle_params, logo_params, grade_params: grade_params || {}, banner_params: banner_params || {}, drop_ranges: drop_ranges || [] }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -128,12 +128,14 @@ export async function exportClip(jobId, index, clip, state, preselections) {
   const subs = state?.subtitleParams ?? seedSubtitleParams(preselections);
   const logo = state?.logoParams ?? seedLogoParams(preselections);
   const grade = state?.gradeParams ?? { preset: preselections?.grade?.preset || 'none' };
+  const banner = state?.bannerParams ?? seedBannerParams(preselections);
   const { composed_url } = await composeClip(jobId, index, {
     toggles,
     hook_params: toggles.hook ? hook : {},
     subtitle_params: toggles.subtitles ? subs : {},
     logo_params: toggles.logo ? logo : {},
     grade_params: toggles.grade ? grade : {},
+    banner_params: toggles.banner ? banner : {},
     drop_ranges: toggles.smartcut ? (state?.dropRanges || []) : [],
   });
   const href = safeResolveUrl(composed_url);
@@ -319,8 +321,14 @@ export async function startLiveMonitor(config) {
   return res.json();
 }
 
-export async function stopLiveMonitor() {
-  const res = await apiFetch(getApiUrl('/api/live-monitor/stop'), { method: 'POST' });
+export async function stopLiveMonitor(monitorId) {
+  const res = await apiFetch(getApiUrl('/api/live-monitor/stop'), {
+    method: 'POST',
+    ...(monitorId ? {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ monitor_id: monitorId }),
+    } : {}),
+  });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.detail || `HTTP ${res.status}`);
@@ -388,6 +396,13 @@ export function optsToPreselections(opts) {
     // Colour grade default for every generated clip (compose-time layer). Off
     // ('none') → omitted so seedToggles leaves the grade toggle off.
     grade: opts.gradePreset && opts.gradePreset !== 'none' ? { preset: opts.gradePreset } : false,
+    // Attribution banner default (compose-time layer). No source URL exists
+    // yet at Create time, so this is just the user's manual choice — the
+    // per-job auto-suggestion (source_info.banner) only prefills the Edit
+    // modal once a job has actually run.
+    banner: opts.banner
+      ? { enabled: true, platform: opts.bannerPlatform || 'kick', handle: opts.bannerHandle || '', y_pct: opts.bannerYPct ?? 0.85 }
+      : false,
   };
 }
 

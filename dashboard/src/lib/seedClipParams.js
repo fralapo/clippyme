@@ -15,7 +15,25 @@ export function seedToggles(preselections) {
         subtitles: !!preselections?.subtitles,
         logo: !!preselections?.logo,
         grade: !!(preselections?.grade && preselections.grade.preset && preselections.grade.preset !== 'none'),
+        banner: !!(preselections?.banner && preselections.banner.enabled),
     };
+}
+
+// Attribution banner (platform logo + handle burned bottom-of-clip). Prefers
+// an explicit Create-time pre-selection; else falls back to the per-job
+// auto-suggestion carried in the job's `source_info.banner` (uploader
+// platform/handle inferred from the source URL) so a fresh clip edit opens
+// with the banner already pointed at the right channel. `sourceBanner` is
+// `source_info.banner` — only available once a job has actually run.
+export function seedBannerParams(preselections, sourceBanner) {
+    const b = preselections?.banner;
+    if (b && b.enabled) {
+        return { enabled: true, platform: b.platform || 'kick', handle: b.handle || '', y_pct: b.y_pct ?? 0.85 };
+    }
+    if (sourceBanner && sourceBanner.platform) {
+        return { enabled: true, platform: sourceBanner.platform, handle: sourceBanner.handle || '', y_pct: 0.85 };
+    }
+    return { enabled: false, platform: 'kick', handle: '', y_pct: 0.85 };
 }
 
 export function seedGradeParams(preselections) {

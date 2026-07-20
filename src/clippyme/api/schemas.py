@@ -221,11 +221,16 @@ class ComposeRequest(BaseModel):
     subtitle_params: dict = {}
     logo_params: dict = {}
     grade_params: dict = {}
+    # Attribution banner: {enabled, platform, handle, y_pct?, mode?}. Flat scalar
+    # dict like the other overlay params (bounded below). `enabled` acts as the
+    # banner's own active flag (no separate toggles entry required).
+    banner_params: dict = {}
     # Manual Smart Cut trim: hand-picked [[start, end], …] spans (clip-relative
     # seconds) removed on top of the automatic filler/silence pass.
     drop_ranges: list = []
 
-    @field_validator("hook_params", "subtitle_params", "logo_params", "grade_params")
+    @field_validator("hook_params", "subtitle_params", "logo_params", "grade_params",
+                     "banner_params")
     @classmethod
     def _bound_overlay(cls, v):
         return _validate_overlay_params(v)
@@ -300,9 +305,11 @@ class PublishRequest(BaseModel):
     subtitle_params: Optional[dict] = None
     logo_params: Optional[dict] = None
     grade_params: Optional[dict] = None
+    banner_params: Optional[dict] = None
     drop_ranges: Optional[list] = None
 
-    @field_validator("hook_params", "subtitle_params", "logo_params", "grade_params")
+    @field_validator("hook_params", "subtitle_params", "logo_params", "grade_params",
+                     "banner_params")
     @classmethod
     def _bound_overlay(cls, v):
         return _validate_overlay_params(v)
@@ -326,22 +333,72 @@ class PublishRequest(BaseModel):
 
 
 class LiveMonitorStartRequest(BaseModel):
-    """Start the Kick live-marathon monitor for a channel.
+    """Start a content monitor for one channel on one platform.
 
     All runtime config is body-supplied (no env). ``platforms`` reuses the same
     Zernio target validation as PublishRequest; every produced clip is published
-    with schedule_mode='auto' and a shared >=min_gap_seconds spacing.
+    with schedule_mode='auto' and a shared >=min_gap_seconds spacing that is
+    GLOBAL across all running monitors.
+
+    ``platform`` (default 'kick' for back-compat) and ``mode`` (default 'live')
+    select the source. ``slug`` is the channel: a kick/twitch login, or for
+    youtube an @handle / UC… id / channel URL. Per-platform channel validation
+    (and the youtube-can't-do-live rule) is enforced in the domain layer, which
+    raises a clean 400, so the schema keeps ``slug`` permissive.
     """
-    slug: str = Field(..., pattern=r"^[a-z0-9_-]+$", max_length=64)
+    slug: str = Field(..., min_length=1, max_length=256)
+    platform: str = Field("kick", pattern=r"^(kick|twitch|youtube)$")
+    mode: str = Field("live", pattern=r"^(live|vod)$")
     platforms: List[dict] = Field(..., min_length=1, max_length=14)
     segment_seconds: int = Field(1800, ge=60, le=3600)
     prelive_skip_seconds: int = Field(1800, ge=0, le=7200)
     min_gap_seconds: int = Field(900, ge=0, le=86400)
-    poll_interval: int = Field(60, ge=30, le=600)
+    # Optional: domain picks a mode-appropriate default (60s live / 600s vod).
+    poll_interval: Optional[int] = Field(None, ge=30, le=3600)
     loop: bool = False
     caption_template: str = Field("", max_length=2200)
     title_template: str = Field("", max_length=500)
     timezone: Optional[str] = Field(None, max_length=64)
+    # Attribution-banner override for auto-published clips. None → auto from the
+    # monitor's own platform + channel; {"enabled": false} disables it; a dict
+    # overrides {platform, handle, y_pct}. Flat scalar dict (bounded).
+    banner: Optional[dict] = None
+    # Optional compose-recipe overrides for the monitor's auto-publish flow:
+    # {toggles?, hook_params?, subtitle_params?, banner?}. Defaults (hook top,
+    # banner attached under the letterbox band, subtitles bottom-left) apply
+    # when omitted. Shallow-merged over the defaults in build_monitor_compose.
+    compose: Optional[dict] = None
+
+    @field_validator("banner")
+    @classmethod
+    def _bound_banner(cls, v):
+        return _validate_overlay_params(v)
+
+    @field_validator("compose")
+    @classmethod
+    def _bound_compose(cls, v):
+        # Nested overlay dicts are allowed here (hook_params/subtitle_params/
+        # banner), so bound each nested value individually but keep the shape.
+        if v is None:
+            return v
+        if not isinstance(v, dict):
+            raise ValueError("compose must be an object")
+        if len(v) > 8:
+            raise ValueError("compose has too many keys")
+        for key, val in v.items():
+            if isinstance(val, dict):
+                _validate_overlay_params(val)
+            elif not isinstance(val, (str, int, float, bool)) and val is not None:
+                raise ValueError(f"compose[{key!r}] must be a scalar or object")
+        return v
+
+    @field_validator("slug")
+    @classmethod
+    def _clean_slug(cls, v: str) -> str:
+        v = v.strip()
+        if not v or any(c.isspace() for c in v):
+            raise ValueError("channel must not be blank or contain whitespace")
+        return v
 
     @field_validator("platforms")
     @classmethod

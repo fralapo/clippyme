@@ -820,6 +820,17 @@ if __name__ == '__main__':
             # to 9:16 and silently squashes a 1:1/16:9 job when the user flips
             # reframe mode after the run.
             clips_data['aspect'] = args.aspect
+            # Fold the download-time source-channel sidecar (uploader/channel/
+            # webpage + suggested attribution banner) into the job metadata so
+            # job_results can surface it to the dashboard. URL jobs only; a
+            # missing sidecar (local upload / older run) is fine.
+            _src_sidecar = os.path.join(output_dir, "source_info.json")
+            if os.path.exists(_src_sidecar):
+                try:
+                    with open(_src_sidecar, encoding="utf-8") as _sf:
+                        clips_data['source_info'] = json.load(_sf)
+                except (OSError, json.JSONDecodeError):
+                    pass
             metadata_file = os.path.join(output_dir, f"{video_title}_metadata.json")
             metadata_tmp = metadata_file + ".tmp"
             with open(metadata_tmp, 'w') as f:

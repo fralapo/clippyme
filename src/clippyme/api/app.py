@@ -109,11 +109,12 @@ persist_jobs = make_journal_writer(jobs=jobs, path=JOURNAL_PATH)
 # rule: the body lives in clippyme.domain.job_runner).
 run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs)
 
-# Kick live-marathon monitor: one asyncio task that captures live segments,
-# submits them as normal jobs, and auto-publishes clips. Bound to the same
+# Multi-platform content monitor registry: concurrent asyncio tasks (one per
+# platform:channel) that detect live streams / new VODs, submit them as normal
+# jobs, and auto-publish clips with GLOBAL publish spacing. Bound to the same
 # shared job state (thin-handler rule: logic lives in domain.live_monitor).
-from clippyme.domain.live_monitor import LiveMonitor
-live_monitor = LiveMonitor(
+from clippyme.domain.live_monitor import LiveMonitorRegistry
+live_monitor = LiveMonitorRegistry(
     jobs=jobs, job_queue=job_queue, output_dir=OUTPUT_DIR,
     upload_dir=UPLOAD_DIR, on_job_change=persist_jobs,
 )
@@ -741,6 +742,7 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, reques
             subtitle_params=req.subtitle_params,
             logo_params=req.logo_params,
             grade_params=req.grade_params,
+            banner_params=req.banner_params,
             drop_ranges=req.drop_ranges,
         )
         return {"composed_url": f"/videos/{job_id}/{composed_filename}"}
@@ -782,12 +784,13 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
 
 
 # ---------------------------------------------------------------------------
-# Kick live-monitor endpoints
+# Content-monitor endpoints (multi-platform, multi-channel)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/live-monitor/start")
 async def live_monitor_start(req: LiveMonitorStartRequest, request: Request):
-    """Start monitoring a Kick channel: poll → capture segments → publish clips."""
+    """Start a monitor for one platform:channel. Returns that monitor's status
+    (incl. its ``id``). Starting a duplicate (platform, channel) → 409."""
     require_trusted_config_request(request)
     enforce_rate_limit(request, "livemonitor", capacity=10, refill_per_sec=10 / 60)
     # start() raises ValidationError/ConflictError (ClippyMeError) → mapped to HTTP.
@@ -796,16 +799,24 @@ async def live_monitor_start(req: LiveMonitorStartRequest, request: Request):
 
 @app.post("/api/live-monitor/stop")
 async def live_monitor_stop(request: Request):
-    """Stop the live monitor and let in-flight publishes drain."""
+    """Stop one monitor (body ``{"monitor_id": "..."}``) or ALL monitors (no
+    body). Lets in-flight publishes drain first."""
     require_trusted_config_request(request)
-    return await live_monitor.stop()
+    monitor_id = None
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            monitor_id = body.get("monitor_id")
+    except Exception:
+        pass  # no/invalid body → stop all
+    return await live_monitor.stop(monitor_id)
 
 
 @app.get("/api/live-monitor/status")
-async def live_monitor_status(request: Request):
-    """Current monitor state (running/state/counters/last error)."""
+async def live_monitor_status(request: Request, monitor_id: Optional[str] = None):
+    """One monitor's status (``?monitor_id=``) or ``{"monitors": [...]}`` for all."""
     require_trusted_config_request(request)
-    return live_monitor.status()
+    return live_monitor.status(monitor_id)
 
 
 @app.post("/api/history/{job_id}/restore")

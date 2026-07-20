@@ -6,6 +6,7 @@ import { Icon, Btn, Segmented, Switch } from './primitives';
 import { HookStyleControls, HookPreview } from './hookStyle';
 import { SubtitleControls } from './subtitleControls';
 import { LogoControls, GradeControls } from './layerControls';
+import { BannerControls } from './bannerControls';
 
 export const REFRAME_OPTS = [
   { id: 'auto', label: 'Auto' },
@@ -143,6 +144,23 @@ export function LogoTab({ on, onToggle, logo, onChange }) {
       {on && (
         <div className="cfg-drawer fade-in">
           <LogoControls position={logo.position} size={logo.size} onChange={onChange} />
+        </div>
+      )}
+    </>
+  );
+}
+
+export function BannerTab({ on, onToggle, banner, onChange }) {
+  return (
+    <>
+      <div className="edit-opt">
+        <div className="eo-ico"><Icon n="rss" /></div>
+        <div className="eo-txt"><div className="eo-t">Attribution banner</div><div className="eo-d">Platform logo + handle burned bottom of clip</div></div>
+        <Switch on={on} onChange={onToggle} />
+      </div>
+      {on && (
+        <div className="cfg-drawer fade-in">
+          <BannerControls value={banner} onChange={onChange} />
         </div>
       )}
     </>

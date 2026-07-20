@@ -7,14 +7,62 @@ from datetime import date, datetime
 
 import pytest
 
-from clippyme.domain.errors import ValidationError
+from clippyme.domain.errors import ConflictError, ValidationError
 from clippyme.domain.live_monitor import (
+    LiveMonitorRegistry,
     SharedGapScheduler,
+    build_monitor_compose,
     render_template,
     should_process_segment,
     validate_monitor_config,
     _hhmmss,
 )
+
+
+# --- build_monitor_compose (monitor auto-publish recipe) -------------------
+
+def test_build_monitor_compose_defaults():
+    clip = {"viral_hook_text": "Wait for it", "title": "T"}
+    recipe = build_monitor_compose("kick", "grenbaud", clip, None)
+    assert recipe["toggles"] == {"hook": True, "subtitles": True, "banner": True}
+    assert recipe["hook_params"]["position"] == "top"
+    assert recipe["hook_params"]["text"] == "Wait for it"
+    # subtitles below the banner, left-aligned
+    assert recipe["subtitle_params"] == {"position": "bottom", "align": "left"}
+    # banner auto-injected from the monitor's platform + channel
+    assert recipe["banner_params"]["platform"] == "kick"
+    assert recipe["banner_params"]["handle"] == "grenbaud"
+    assert recipe["banner_params"]["enabled"] is True
+
+
+def test_build_monitor_compose_no_hook_text_disables_hook():
+    recipe = build_monitor_compose("twitch", "chan", {}, None)
+    assert recipe["toggles"]["hook"] is False
+
+
+def test_build_monitor_compose_banner_override_disables():
+    recipe = build_monitor_compose("kick", "grenbaud", {"viral_hook_text": "x"},
+                                   {"banner": {"enabled": False}})
+    assert recipe["toggles"]["banner"] is False
+    assert recipe["banner_params"] == {}
+
+
+def test_build_monitor_compose_subtitle_override_merges():
+    recipe = build_monitor_compose("kick", "grenbaud", {"viral_hook_text": "x"},
+                                   {"subtitle_params": {"align": "center"}})
+    assert recipe["subtitle_params"]["align"] == "center"
+    assert recipe["subtitle_params"]["position"] == "bottom"  # default kept
+
+
+def test_validate_monitor_config_carries_banner_and_compose():
+    cfg = validate_monitor_config({
+        "platform": "kick", "mode": "live", "slug": "grenbaud",
+        "platforms": [{"platform": "tiktok", "accountId": "acc"}],
+        "banner": {"enabled": False},
+        "compose": {"subtitle_params": {"align": "center"}},
+    })
+    assert cfg["banner"] == {"enabled": False}
+    assert cfg["compose"] == {"subtitle_params": {"align": "center"}}
 
 
 # --- should_process_segment ------------------------------------------------
@@ -110,6 +158,89 @@ def test_validate_config_rejects_incomplete_platform():
 def test_validate_config_custom_timezone_passthrough():
     cfg = validate_monitor_config(_base_cfg(timezone="America/New_York"))
     assert cfg["timezone"] == "America/New_York"
+
+
+# --- multi-platform config -------------------------------------------------
+
+def test_validate_config_platform_mode_defaults():
+    cfg = validate_monitor_config(_base_cfg())
+    assert cfg["platform"] == "kick"
+    assert cfg["mode"] == "live"
+    assert cfg["channel"] == "somechannel"
+    assert cfg["poll_interval"] == 60  # live default
+
+
+def test_validate_config_vod_poll_default():
+    cfg = validate_monitor_config(_base_cfg(platform="youtube", mode="vod", slug="@somebody"))
+    assert cfg["poll_interval"] == 600  # vod default
+    assert cfg["channel"] == "@somebody"
+
+
+def test_validate_config_youtube_live_rejected():
+    with pytest.raises(ValidationError):
+        validate_monitor_config(_base_cfg(platform="youtube", mode="live", slug="@x"))
+
+
+def test_validate_config_bad_platform_or_mode():
+    with pytest.raises(ValidationError):
+        validate_monitor_config(_base_cfg(platform="rumble"))
+    with pytest.raises(ValidationError):
+        validate_monitor_config(_base_cfg(mode="clip"))
+
+
+@pytest.mark.parametrize("chan", ["@handle", "UCabcdefghijklmnopqrstuv", "https://youtube.com/@x"])
+def test_validate_config_youtube_channel_forms(chan):
+    cfg = validate_monitor_config(_base_cfg(platform="youtube", mode="vod", slug=chan))
+    assert cfg["channel"] == chan
+
+
+def test_validate_config_youtube_rejects_junk_channel():
+    with pytest.raises(ValidationError):
+        validate_monitor_config(_base_cfg(platform="youtube", mode="vod", slug="not a handle"))
+
+
+# --- global slot sharing across monitors -----------------------------------
+
+def test_two_monitors_share_one_picked_slots_store():
+    shared = []
+    s1 = SharedGapScheduler(min_gap_seconds=900, picked_slots=shared)
+    s2 = SharedGapScheduler(min_gap_seconds=900, picked_slots=shared)
+    day = date(2026, 7, 21)
+    now = datetime(2026, 7, 21, 7, 0)
+    a = s1.find_slot(day, [], now=now)
+    b = s2.find_slot(day, [], now=now)  # different scheduler, same store
+    assert abs((a - b).total_seconds()) >= 900
+    assert len(shared) == 2
+
+
+# --- registry --------------------------------------------------------------
+
+def test_registry_rejects_duplicate(tmp_path):
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+
+    class _FakeRunning:
+        def is_running(self):
+            return True
+    reg._monitors["kick:foo"] = _FakeRunning()
+
+    with pytest.raises(ConflictError):
+        reg.start(_base_cfg(platform="kick", mode="live", slug="foo"))
+
+
+def test_registry_migrates_legacy_state(tmp_path):
+    import json
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({
+        "slug": "oldchan", "published": ["/a.mp4"],
+        "picked_slots": ["2026-07-21T10:00:00"],
+    }), encoding="utf-8")
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path), state_path=str(state))
+    assert "kick:oldchan" in reg._snapshots
+    assert reg._snapshots["kick:oldchan"]["published"] == ["/a.mp4"]
+    assert len(reg._picked_slots) == 1
 
 
 # --- _hhmmss ---------------------------------------------------------------

@@ -15,6 +15,8 @@ VALID_CONFIG_KEYS = (
     "DEEPGRAM_API_KEY",
     "ELEVENLABS_API_KEY",
     "TRANSCRIPTION_PROVIDER",  # "deepgram" (default), "elevenlabs", or "whisper"
+    "TWITCH_CLIENT_ID",        # Helix app creds for the twitch content monitor
+    "TWITCH_CLIENT_SECRET",
 )
 
 # Zernio config lives in a separate namespace under the same config.json file
@@ -148,6 +150,8 @@ def load_persistent_config() -> dict:
         "DEEPGRAM_API_KEY": os.environ.get("DEEPGRAM_API_KEY", ""),
         "ELEVENLABS_API_KEY": os.environ.get("ELEVENLABS_API_KEY", ""),
         "TRANSCRIPTION_PROVIDER": os.environ.get("TRANSCRIPTION_PROVIDER", "deepgram"),
+        "TWITCH_CLIENT_ID": os.environ.get("TWITCH_CLIENT_ID", ""),
+        "TWITCH_CLIENT_SECRET": os.environ.get("TWITCH_CLIENT_SECRET", ""),
     }
     raw = _read_raw_config()
     filtered = {k: v for k, v in raw.items() if k in VALID_CONFIG_KEYS}

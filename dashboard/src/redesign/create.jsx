@@ -6,6 +6,7 @@ import { LANGUAGES, GEMINI_MODELS, HOOK_STYLE_DEFAULT } from './data';
 import { HookStyleControls, HookPreview } from './hookStyle';
 import { SubtitleControls } from './subtitleControls';
 import { LogoControls, GradeControls } from './layerControls';
+import { BannerControls } from './bannerControls';
 
 function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelete, onSaveCurrent }) {
   const corner = { position: 'absolute', top: 12, left: 12, display: 'flex', gap: 8, zIndex: 2 };
@@ -240,10 +241,31 @@ function LogoConfig({ opts, set }) {
   );
 }
 
+function BannerConfig({ opts, set }) {
+  const value = {
+    platform: opts.bannerPlatform || 'kick',
+    handle: opts.bannerHandle || '',
+    y_pct: opts.bannerYPct ?? 0.85,
+  };
+  const onChange = (partial) => {
+    const patch = {};
+    if (partial.platform !== undefined) patch.bannerPlatform = partial.platform;
+    if (partial.handle !== undefined) patch.bannerHandle = partial.handle;
+    if (partial.y_pct !== undefined) patch.bannerYPct = partial.y_pct;
+    set(patch);
+  };
+  return (
+    <div className="cfg-drawer fade-in">
+      <BannerControls value={value} onChange={onChange} />
+    </div>
+  );
+}
+
 function OptionsPanel({ opts, set }) {
   const [subCfg, setSubCfg] = useState(false);
   const [hookCfg, setHookCfg] = useState(false);
   const [logoCfg, setLogoCfg] = useState(false);
+  const [bannerCfg, setBannerCfg] = useState(false);
   return (
     <Panel title="Recipe" sub="What ClippyMe makes from each video" icon="sliders-horizontal">
       <div className="label" style={{ marginBottom: 4 }}>Output</div>
@@ -311,6 +333,9 @@ function OptionsPanel({ opts, set }) {
       <OptRow icon="stamp" label="Brand logo" desc="Burn your logo onto every clip"
         on={opts.logo} set={(v) => set({ logo: v })} onConfig={() => setLogoCfg(!logoCfg)} configActive={logoCfg} />
       {opts.logo && logoCfg && <LogoConfig opts={opts} set={set} />}
+      <OptRow icon="rss" label="Attribution banner" desc="Platform logo + handle burned bottom of clip"
+        on={opts.banner} set={(v) => set({ banner: v })} onConfig={() => setBannerCfg(!bannerCfg)} configActive={bannerCfg} />
+      {opts.banner && bannerCfg && <BannerConfig opts={opts} set={set} />}
       <div className="opt">
         <div className="oico"><Icon n="palette" /></div>
         <div className="otxt"><div className="ot">Colour grade</div><div className="od">Cinematic colour pass on every clip</div></div>

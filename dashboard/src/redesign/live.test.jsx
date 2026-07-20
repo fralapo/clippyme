@@ -1,5 +1,5 @@
-// LiveMonitorView — pins: slug validation gates Start, and the status panel
-// renders correctly for a couple of monitor states.
+// LiveMonitorView — pins: per-platform channel validation gates Start, the
+// monitor list renders multiple concurrent monitors, and youtube forces VOD.
 import { test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LiveMonitorView } from './live.jsx';
@@ -11,54 +11,135 @@ vi.mock('./realApi', () => ({
     configured: true,
     accounts: { tiktok: 'tt-1', instagram: '', youtube: '' },
   })),
-  startLiveMonitor: vi.fn(async () => ({ running: true, state: 'waiting_live' })),
+  startLiveMonitor: vi.fn(async () => ({ id: 'kick:xqc', running: true, state: 'waiting_live' })),
   stopLiveMonitor: vi.fn(async () => ({ running: false, state: 'idle' })),
   getLiveMonitorStatus: (...args) => mockStatus(...args),
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockStatus.mockResolvedValue({ running: false, state: 'idle', segments_captured: 0, clips_published: 0 });
+  mockStatus.mockResolvedValue({ monitors: [] });
 });
 
-test('start is disabled until a valid slug is entered', async () => {
+test('start is disabled until a valid channel is entered', async () => {
   render(<LiveMonitorView />);
-  await screen.findByLabelText('Kick channel slug');
+  await screen.findByLabelText('Channel');
   const startBtn = screen.getByRole('button', { name: /Start monitor/ });
   expect(startBtn).toBeDisabled();
-  fireEvent.change(screen.getByLabelText('Kick channel slug'), { target: { value: 'xqc' } });
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
   await waitFor(() => expect(startBtn).not.toBeDisabled());
 });
 
-test('invalid slug shows an inline error after blur', () => {
+test('invalid channel shows an inline error after blur', () => {
   render(<LiveMonitorView />);
-  const input = screen.getByLabelText('Kick channel slug');
+  const input = screen.getByLabelText('Channel');
   fireEvent.change(input, { target: { value: 'has space' } });
   fireEvent.blur(input);
   expect(screen.getByText(/lowercase letters, numbers/)).toBeInTheDocument();
 });
 
-test('empty slug still blocks start after touching the field', () => {
+test('empty channel still blocks start after touching the field', () => {
   render(<LiveMonitorView />);
-  const input = screen.getByLabelText('Kick channel slug');
+  const input = screen.getByLabelText('Channel');
   fireEvent.blur(input);
-  expect(screen.getByText('Channel slug is required')).toBeInTheDocument();
+  expect(screen.getByText('Channel is required')).toBeInTheDocument();
 });
 
-test('capturing status hides the start form and shows Stop', async () => {
+test('start form is always visible alongside a running monitor', async () => {
   mockStatus.mockResolvedValue({
-    running: true, state: 'capturing', slug: 'xqc', segments_captured: 2, clips_published: 5,
+    monitors: [{ id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing',
+      channel: 'xqc', segments_captured: 2, clips_published: 5 }],
   });
   render(<LiveMonitorView />);
   expect(await screen.findByText('Capturing segment')).toBeInTheDocument();
   expect(screen.getByText('xqc')).toBeInTheDocument();
   expect(screen.getByText(/2 segment\(s\) captured/)).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: /Start monitor/ })).toBeNull();
+  expect(screen.getByRole('button', { name: /Start monitor/ })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Stop/ })).toBeInTheDocument();
 });
 
-test('idle status shows the start form', async () => {
+test('monitor list renders multiple concurrent monitors', async () => {
+  mockStatus.mockResolvedValue({
+    monitors: [
+      { id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing', channel: 'xqc' },
+      { id: 'youtube:@MrBeast', platform: 'youtube', mode: 'vod', running: true, state: 'watching', channel: '@MrBeast' },
+    ],
+  });
   render(<LiveMonitorView />);
-  expect(await screen.findByText('Idle')).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /Start monitor/ })).toBeInTheDocument();
+  expect(await screen.findByText('xqc')).toBeInTheDocument();
+  expect(screen.getByText('@MrBeast')).toBeInTheDocument();
+  expect(screen.getByText('Watching for new uploads')).toBeInTheDocument();
+  expect(screen.getAllByRole('button', { name: /Stop/ })).toHaveLength(2);
+});
+
+test('idle empty list shows "No monitors running."', async () => {
+  render(<LiveMonitorView />);
+  expect(await screen.findByText('No monitors running.')).toBeInTheDocument();
+});
+
+test('selecting YouTube forces VOD mode and hides live-only fields', async () => {
+  render(<LiveMonitorView />);
+  fireEvent.click(screen.getByRole('button', { name: 'YouTube' }));
+  await waitFor(() => expect(screen.queryByLabelText('Segment minutes')).toBeNull());
+  expect(screen.queryByLabelText('Prelive skip minutes')).toBeNull();
+  expect(screen.getByText(/YouTube: clips every new long-form upload/)).toBeInTheDocument();
+});
+
+test('duplicate monitor (409) shows a warning toast', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  startLiveMonitor.mockRejectedValueOnce(new Error('monitor already running: kick:xqc'));
+  const pushToast = vi.fn();
+  render(<LiveMonitorView pushToast={pushToast} />);
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(pushToast).toHaveBeenCalledWith('warn', expect.stringMatching(/already monitoring/i)));
+});
+
+test('banner defaults to Auto and sends null', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  expect(startLiveMonitor.mock.calls[0][0].banner).toBeNull();
+});
+
+test('banner Off sends {enabled:false}', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  fireEvent.click(screen.getByRole('button', { name: 'Off' }));
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  expect(startLiveMonitor.mock.calls[0][0].banner).toEqual({ enabled: false });
+});
+
+test('banner Custom reveals platform+handle and sends the override', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
+  const twitchBtns = screen.getAllByRole('button', { name: 'Twitch' });
+  fireEvent.click(twitchBtns[twitchBtns.length - 1]); // the banner drawer's platform picker
+  fireEvent.change(screen.getByLabelText('Banner handle'), { target: { value: 'xqc' } });
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  expect(startLiveMonitor.mock.calls[0][0].banner).toEqual({ platform: 'twitch', handle: 'xqc', y_pct: 0.85 });
+});
+
+test('twitch missing-credentials (400) points to Settings', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  startLiveMonitor.mockRejectedValueOnce(new Error(
+    'Twitch monitoring requires TWITCH_CLIENT_ID and TWITCH_CLIENT_SECRET (set them in Settings or the environment)'));
+  const pushToast = vi.fn();
+  render(<LiveMonitorView pushToast={pushToast} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Twitch' }));
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(pushToast).toHaveBeenCalledWith('error', expect.stringMatching(/Twitch not configured/i)));
 });

@@ -12,7 +12,7 @@
 // style, logo params) is shared config and is copied verbatim.
 //
 // Kept dependency-free + pure so it can be host-unit-tested with node:test.
-import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from './seedClipParams.js';
+import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams, seedBannerParams } from './seedClipParams.js';
 
 /**
  * Collapse a clip's saved per-clip state (which may be empty if the clip was
@@ -32,6 +32,7 @@ export function clipStateToParams(state, preselections, clip) {
     hookParams: state?.hookParams || seedHookParams(clip, preselections),
     logoParams: state?.logoParams || seedLogoParams(preselections),
     gradeParams: state?.gradeParams || { preset: preselections?.grade?.preset || 'none' },
+    bannerParams: state?.bannerParams || seedBannerParams(preselections),
   };
 }
 
@@ -69,6 +70,7 @@ export function buildClipParams(srcParams, targetClip, targetState) {
     hookParams: { ...srcParams.hookParams, text: targetHookText(srcParams, targetClip, targetState) },
     logoParams: { ...srcParams.logoParams },
     gradeParams: { ...(srcParams.gradeParams || { preset: 'none' }) },
+    bannerParams: { ...(srcParams.bannerParams || { enabled: false, platform: 'kick', handle: '', y_pct: 0.85 }) },
     // Manual trim is never propagated.
     dropRanges: [],
   };

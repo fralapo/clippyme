@@ -60,6 +60,7 @@ async def publish_clip_flow(*, job_id: str, clip_index: int,
                 subtitle_params=req.get("subtitle_params") or {},
                 logo_params=req.get("logo_params") or {},
                 grade_params=req.get("grade_params") or {},
+                banner_params=req.get("banner_params") or {},
                 drop_ranges=req.get("drop_ranges"),
             )
             upload_path = os.path.join(job_dir, composed_filename)

@@ -4,7 +4,32 @@ Pure readers (is_live / playback_url) plus get_channel with a fake curl_cffi
 module injected — no network, no curl_cffi wheel required on the host.
 """
 from clippyme.integrations import kick_client
-from clippyme.integrations.kick_client import KickClient, is_live, playback_url
+from clippyme.integrations.kick_client import KickClient, extract_vods, is_live, playback_url
+
+
+# --- extract_vods (defensive field fallbacks) ------------------------------
+
+def test_extract_vods_previous_livestreams_nested_video():
+    ch = {"previous_livestreams": [{"video": {"uuid": "u1"}, "created_at": "t1"}]}
+    vods = extract_vods(ch)
+    assert vods == [{"id": "u1", "url": "https://kick.com/video/u1", "created_at": "t1"}]
+
+
+def test_extract_vods_flat_list_payload():
+    vods = extract_vods([{"uuid": "u2", "start_time": "t2"}])
+    assert vods[0]["id"] == "u2"
+    assert vods[0]["url"] == "https://kick.com/video/u2"
+
+
+def test_extract_vods_videos_field_and_id_fallback():
+    vods = extract_vods({"videos": [{"id": "u3"}]})
+    assert vods[0]["id"] == "u3"
+
+
+def test_extract_vods_empty_and_bad():
+    assert extract_vods(None) == []
+    assert extract_vods({}) == []
+    assert extract_vods([{"no_id": 1}]) == []
 
 
 # --- is_live / playback_url (pure) -----------------------------------------

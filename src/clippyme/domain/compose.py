@@ -222,6 +222,35 @@ async def _apply_hook(
     return hook_output
 
 
+async def _apply_banner(
+    current_input: str,
+    job_dir: str,
+    clip_index: int,
+    banner_params: dict,
+    clip_info: dict,
+    intermediate_files: list,
+) -> str:
+    """Attribution-banner pass — the TOPMOST compose layer (after Logo).
+
+    Burns the platform-logo + channel-handle pill onto the clip. ``mode`` is
+    'attach' by default for a ``reframe_mode='disabled'`` (letterbox) clip so
+    the pill hugs the video band's bottom edge; otherwise it rides the safe-zone
+    ``y_pct``. Silently keeps the input when the params don't resolve to a real
+    banner (defensive — the caller already gated on ``enabled``)."""
+    from clippyme.domain.banner import add_banner_to_video, banner_text
+
+    bp = dict(banner_params or {})
+    if not banner_text(bp.get("platform"), bp.get("handle")):
+        return current_input
+    if not bp.get("mode") and (clip_info or {}).get("reframe_mode") == "disabled":
+        bp["mode"] = "attach"
+
+    banner_output = os.path.join(job_dir, f"composed_banner_{clip_index}.mp4")
+    intermediate_files.append(banner_output)
+    await asyncio.to_thread(add_banner_to_video, current_input, bp, banner_output)
+    return banner_output
+
+
 async def _apply_subtitles(
     current_input: str,
     job_dir: str,
@@ -348,6 +377,7 @@ async def compose_layers(
     subtitle_params: dict,
     logo_params: dict = None,
     grade_params: dict = None,
+    banner_params: dict = None,
     drop_ranges=None,
 ) -> str:
     """Run the active layer pipeline. Returns the final composed filename (basename).
@@ -367,7 +397,7 @@ async def compose_layers(
             metadata=metadata, clip_info=clip_info, toggles=toggles,
             hook_params=hook_params, subtitle_params=subtitle_params,
             logo_params=logo_params, grade_params=grade_params,
-            drop_ranges=drop_ranges,
+            banner_params=banner_params, drop_ranges=drop_ranges,
         )
 
 
@@ -383,9 +413,15 @@ async def _compose_layers_impl(
     subtitle_params: dict,
     logo_params: dict = None,
     grade_params: dict = None,
+    banner_params: dict = None,
     drop_ranges=None,
 ) -> str:
     active = {k: v for k, v in toggles.items() if v}
+    # The banner can be enabled via its own params.enabled (frontend convention)
+    # without a toggles entry — fold it in so the no-active short-circuit and the
+    # downstream active.get('banner') check both see it.
+    if (banner_params or {}).get("enabled"):
+        active["banner"] = True
     logger.info(
         "compose_layers: clip_index=%d active=%s hook_text_len=%d subtitle_mode=%s",
         clip_index, list(active.keys()),
@@ -531,6 +567,26 @@ async def _compose_layers_impl(
             )
             layers_applied.append("logo")
             logger.info("compose_layers: ✓ logo → %s", os.path.basename(current_input))
+
+        # Banner absolutely last (topmost) — the attribution pill sits on top of
+        # everything, including the logo. Enable via toggles['banner'] or an
+        # explicit banner_params.enabled (frontend sends the latter). Separate
+        # pass on purpose: fusing a third overlay into the hook+logo filtergraph
+        # is not trivial, and correctness > one saved encode generation.
+        from clippyme.domain.banner import banner_text
+        bp = banner_params or {}
+        banner_active = bool(active.get("banner") or bp.get("enabled"))
+        if banner_active and not banner_text(bp.get("platform"), bp.get("handle")):
+            logger.warning(
+                "compose_layers: banner enabled but platform/handle didn't "
+                "resolve to a valid banner — skipping banner layer.")
+            banner_active = False
+        if banner_active:
+            current_input = await _apply_banner(
+                current_input, job_dir, clip_index, bp, clip_info, intermediate_files,
+            )
+            layers_applied.append("banner")
+            logger.info("compose_layers: ✓ banner → %s", os.path.basename(current_input))
 
         if os.path.abspath(current_input) != os.path.abspath(composed_path):
             shutil.copy2(current_input, composed_path)

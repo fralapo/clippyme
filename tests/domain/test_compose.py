@@ -181,3 +181,82 @@ def test_cleanup_with_empty_keep_path_removes_everything(tmp_path):
     _cleanup_intermediates([a, b], "")
     assert not os.path.exists(a)
     assert not os.path.exists(b)
+
+
+# --- banner layer plumbing -------------------------------------------------
+
+def _install_banner_stub(monkeypatch, order):
+    async def fake_banner(current_input, job_dir, clip_index, banner_params,
+                          clip_info, intermediate_files):
+        order.append("banner")
+        # record what the layer received for assertions
+        order.append(("banner_params", dict(banner_params)))
+        out = os.path.join(job_dir, f"composed_banner_{clip_index}.mp4")
+        _touch(out)
+        intermediate_files.append(out)
+        return out
+
+    monkeypatch.setattr(compose, "_apply_banner", fake_banner)
+
+
+def _run_compose_banner(tmp_path, *, toggles, banner_params, reframe_mode=None):
+    base_clip = _touch(str(tmp_path / "clip_0.mp4"))
+    return asyncio.run(
+        compose_layers(
+            base_clip=base_clip,
+            job_dir=str(tmp_path),
+            clip_index=0,
+            metadata={"transcript": {}},
+            clip_info={"start": 0, "end": 30, "reframe_mode": reframe_mode},
+            toggles=toggles,
+            hook_params={"text": "Watch this", "position": "top", "size": "M"},
+            subtitle_params={"mode": "karaoke"},
+            banner_params=banner_params,
+        )
+    )
+
+
+def test_banner_runs_last_after_hook(tmp_path, monkeypatch):
+    order = []
+    _install_recording_stubs(monkeypatch, order)
+    _install_banner_stub(monkeypatch, order)
+    result = _run_compose_banner(
+        tmp_path,
+        toggles={"hook": True, "banner": True},
+        banner_params={"enabled": True, "platform": "kick", "handle": "grenbaud"},
+    )
+    steps = [o for o in order if isinstance(o, str)]
+    assert steps == ["hook", "banner"]  # banner is topmost, after hook
+    assert result == "composed_clip_0.mp4"
+
+
+def test_banner_enabled_via_params_only_no_toggle(tmp_path, monkeypatch):
+    # enabled lives in banner_params (frontend convention) with NO toggles entry;
+    # compose must still run the banner layer (and not short-circuit on empty
+    # toggles).
+    order = []
+    _install_recording_stubs(monkeypatch, order)
+    _install_banner_stub(monkeypatch, order)
+    result = _run_compose_banner(
+        tmp_path,
+        toggles={},
+        banner_params={"enabled": True, "platform": "youtube", "handle": "chan"},
+    )
+    assert "banner" in order
+    assert result == "composed_clip_0.mp4"
+
+
+def test_banner_skipped_when_handle_unresolvable(tmp_path, monkeypatch):
+    order = []
+    _install_recording_stubs(monkeypatch, order)
+    _install_banner_stub(monkeypatch, order)
+    result = _run_compose_banner(
+        tmp_path,
+        toggles={"banner": True},
+        banner_params={"enabled": True, "platform": "kick"},  # no handle
+    )
+    # Banner layer skipped (unresolvable), but the banner toggle counts as
+    # active, so a composed copy of the base is still emitted for a consistent
+    # return path.
+    assert "banner" not in order
+    assert result == "composed_clip_0.mp4"

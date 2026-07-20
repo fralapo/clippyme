@@ -33,7 +33,12 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   render, ffprobe, per-clip locks, `smart_cut`) + `smartcut_ops.py` (pure,
   host-tested: filler index, drop-range math, `analyze_silences`, v3 timeline
   builder — re-exported by smartcut.py for back-compat), `subtitles.py`,
-  `hooks.py`, `logo.py`,
+  `hooks.py`, `logo.py`, `banner.py` (attribution banner: platform logo +
+  handle, `suggest_banner` URL parsing, lazy-cairosvg raster, `attach`
+  letterbox positioning), `live_monitor.py` (`LiveMonitorRegistry` +
+  per-platform strategies: multi-channel Kick/Twitch/YouTube monitor, live +
+  vod modes, global `picked_slots` publish spacing, state in
+  `data/live_monitor.json`),
   `grade.py`, `clip_qa.py`, `clip_edit_ai.py`, `history_service.py`,
   `encode.py` (single source of x264 settings for every render pass),
   `errors.py` (domain exceptions mapped to HTTP by one app-level handler).
@@ -45,7 +50,9 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   `snap_clips_to_transcript`/`compute_neighbor_bounds` batch orchestration),
   `run_ops.py` (pure entrypoint helpers: `resolve_output_dir`,
   `build_cut_command`), `gemini_request.py` (prompt template + pricing +
-  prompt/cost/retry-classification — the pure half of `get_viral_clips`),
+  prompt/cost/retry-classification — the pure half of `get_viral_clips`; the
+  per-word payload is TOON-encoded (`encode_words_toon`, ~50% smaller than
+  JSON) while the response contract stays JSON),
   `media_probe.py` (ffprobe + silencedetect wrappers), `texttiling_ops.py`
   (no-AI topic-segmentation fallback), `deepgram_transcribe.py`,
   `elevenlabs_transcribe.py`, `gemini_service.py`, `gemini_parser.py`,
@@ -57,7 +64,11 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   the SSRF guards in `download.py` / `social_publisher.py`; never mutate
   `socket.setdefaulttimeout` (it doesn't even apply to `getaddrinfo`).
 - `integrations/` — `social_publisher.py` (Zernio client + SmartScheduler),
-  `auto_editor_updater.py` (auto-editor binary self-update).
+  `auto_editor_updater.py` (auto-editor binary self-update),
+  `kick_client.py` (Kick channel/VOD JSON via curl_cffi, Cloudflare profile
+  rotation), `twitch_client.py` (Helix app-token client: streams/users/videos),
+  `youtube_feed.py` (UULF long-form RSS polling — Shorts structurally
+  excluded).
 - `storage/` — `config_store.py` (persisted config in `data/config.json`).
 
 Frontend lives entirely in `dashboard/src/redesign/` (`main.jsx` renders
@@ -131,12 +142,16 @@ on any failure. All paths transcribe an extracted mono-16kHz FLAC, not the
 video. Transcripts are cached 7 days under `data/cache/` keyed by URL hash.
 
 **Compose** (`POST /api/compose/{job}/{clip}`): layers render in the order
-**Grade → Subtitles → Smart Cut → Hook → Logo**. Do NOT reorder — subtitles
-are burned before Smart Cut so their absolute timing can't drift; grade runs
-first so overlays keep authored colour; logo sits on top. Grade+subtitles and
-hook+logo are pass-fused (one encode each) when possible. Toggles are UI-only
-state; composition happens at download/publish time. Serialised per clip via
-`clip_locks.clip_lock`.
+**Grade → Subtitles → Smart Cut → Hook → Logo → Banner**. Do NOT reorder —
+subtitles are burned before Smart Cut so their absolute timing can't drift;
+grade runs first so overlays keep authored colour; logo sits on top; the
+attribution banner (`banner.py`: platform logo + handle, `attach` mode pins it
+under the letterbox band when `reframe_mode == disabled`) renders topmost as a
+separate pass. Grade+subtitles and hook+logo are pass-fused (one encode each)
+when possible. Toggles are UI-only state; composition happens at
+download/publish time. Serialised per clip via `clip_locks.clip_lock`.
+Hook overlay shows only the first 4s of the clip, EXCEPT
+`reframe_mode == disabled` where it stays for the whole clip.
 
 **Reframe**: three user modes — `auto` (face tracking + per-scene strategy),
 `subject` (FrameShift weighted-interest crop; legacy alias `object`),

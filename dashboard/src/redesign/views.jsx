@@ -132,6 +132,8 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
   const [deepgram, setDeepgram] = useState('');
   const [elevenlabs, setElevenlabs] = useState('');
   const [hf, setHf] = useState('');
+  const [twitchId, setTwitchId] = useState('');
+  const [twitchSecret, setTwitchSecret] = useState('');
   const [apiToken, setApiTokenState] = useState(() => getApiToken());
   const [present, setPresent] = useState({});
   const [zernio, setZernioState] = useState(null);
@@ -169,7 +171,10 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
   const refreshConfig = async () => {
     const c = await getConfig();
     if (!c) { pushToast?.('warn', 'Could not refresh key status'); return; }
-    setPresent({ gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY });
+    setPresent({
+      gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY,
+      twitchId: !!c.TWITCH_CLIENT_ID, twitchSecret: !!c.TWITCH_CLIENT_SECRET,
+    });
     if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
     if (c.GEMINI_MODEL) setModel(c.GEMINI_MODEL);
   };
@@ -270,6 +275,12 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
         <KeyRow icon="scan-face" name="Hugging Face token" desc="Speaker diarization models" value={hf} present={present.hf}
           onChange={setHf} onSave={() => saveKeys({ HF_TOKEN: hf })}
           onClear={() => { setHf(''); saveKeys({ HF_TOKEN: '' }); }} placeholder="hf_…" />
+        <KeyRow icon="rss" name="Twitch client ID" desc="Live Monitor: Twitch channel detection" value={twitchId} present={present.twitchId}
+          onChange={setTwitchId} onSave={() => saveKeys({ TWITCH_CLIENT_ID: twitchId })}
+          onClear={() => { setTwitchId(''); saveKeys({ TWITCH_CLIENT_ID: '' }); }} placeholder="Helix app client id" />
+        <KeyRow icon="rss" name="Twitch client secret" desc="Live Monitor: Twitch channel detection" value={twitchSecret} present={present.twitchSecret}
+          onChange={setTwitchSecret} onSave={() => saveKeys({ TWITCH_CLIENT_SECRET: twitchSecret })}
+          onClear={() => { setTwitchSecret(''); saveKeys({ TWITCH_CLIENT_SECRET: '' }); }} placeholder="Helix app client secret" />
         <KeyRow icon="key-round" name="API token" desc="Only for LAN deploys with CLIPPYME_API_TOKEN set — stored in this browser, sent as X-API-Token" value={apiToken} present={!!getApiToken()}
           onChange={setApiTokenState} onSave={() => { setApiToken(apiToken); pushToast?.('success', apiToken.trim() ? 'API token saved' : 'API token cleared'); }} placeholder="Shared secret (leave empty + Save to clear)" />
         <div className="opt" style={{ borderBottom: 0 }}>

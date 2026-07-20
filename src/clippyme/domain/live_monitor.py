@@ -1,24 +1,28 @@
-"""Kick.com live-marathon monitor.
+"""Multi-platform, multi-channel content monitor.
 
-Polls a Kick channel until it goes live, skips the prelive window, then
-repeatedly captures fixed-length segments of the live stream, submits each as a
-normal ClippyMe pipeline job (local-file, no download), and auto-publishes every
-produced clip to Zernio with a SHARED scheduler enforcing a minimum gap across
-ALL clips the monitor publishes.
+Watches one or more creator channels across **kick / twitch / youtube** in one of
+two modes:
 
-State machine (``self.state``):
-    idle → waiting_live → prelive → capturing → (draining) → stopped/idle
+- ``live`` (kick + twitch): poll until the channel goes live, skip the prelive
+  window, then repeatedly capture fixed-length segments of the stream, submit
+  each as a normal ClippyMe pipeline job (local-file, no download) and
+  auto-publish every produced clip.
+- ``vod`` (all three; for youtube it means "new long-form uploads"): poll a feed
+  for new items, submit each item's URL as a normal pipeline job, and
+  auto-publish the clips.
 
-Capture and processing overlap on purpose: ffmpeg captures the live edge in
-real time (a 30-min segment takes ~30 min of wall-clock), so submitting the job
-and immediately starting the next capture keeps the stream covered while the
-previous segment's pipeline job runs in the background queue. Each job's clips
-are published by a fire-and-forget task; publishes are serialised through one
-lock so the shared scheduler's slot list stays race-free.
+Every monitor is one long-running asyncio task. Multiple monitors run
+concurrently, keyed by ``f"{platform}:{channel}"`` in a :class:`LiveMonitorRegistry`.
+Publish spacing is GLOBAL: all monitors share one ``picked_slots`` list and one
+publish lock, so the >=min_gap spacing holds across every clip from every monitor.
+
+Per-platform detection/capture/vod I/O is isolated in small strategy objects
+(``KickStrategy`` / ``TwitchStrategy`` / ``YoutubeStrategy``) whose network calls
+are synchronous and wrapped in ``asyncio.to_thread`` by the loop — the pure
+parsers they delegate to live in ``clippyme.integrations`` and are host-tested.
 
 Shared mutable app state (jobs dict, queue, journal hook) is injected — this
-module never imports ``api.app`` (no circular import). Everything else (job
-submission, Zernio publish, config, media probe) is imported directly.
+module never imports ``api.app`` (no circular import).
 """
 from __future__ import annotations
 
@@ -28,17 +32,21 @@ import logging
 import os
 import random
 import re
+import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from clippyme.domain.errors import ConflictError, ValidationError
+from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
 from clippyme.integrations.social_publisher import SmartScheduler
 
 logger = logging.getLogger("clippyme")
 
-_SLUG_RE = re.compile(r"^[a-z0-9_-]+$")
+_SLUG_RE = re.compile(r"^[a-z0-9_-]+$")           # kick / twitch login
+_YT_HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]{1,64}$")
+_YT_UC_RE = re.compile(r"^UC[A-Za-z0-9_-]{20,40}$")
+_PLATFORMS = ("kick", "twitch", "youtube")
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "stopped"}
 # A segment shorter than this (stream ended mid-capture) is only worth
 # processing if it still holds enough content — matches the spec's 5-minute floor.
@@ -73,15 +81,49 @@ def render_template(template: str, clip: dict) -> str:
         return template
 
 
+def build_monitor_compose(platform: str, channel: str, clip: dict, override=None) -> dict:
+    """Compose recipe a monitor burns before auto-publishing one clip.
+
+    Default layout for a letterboxed (reframe 'disabled') monitor clip:
+      - hook  → top black bar (position 'top', full-clip since reframe disabled),
+      - banner → attribution pill attached under the video band (mode auto-
+        selected to 'attach' by the compose layer for disabled clips),
+      - subtitles → below the banner, left-aligned ('bottom' + align 'left').
+
+    ``override`` (the start request's ``compose`` object) shallow-merges over the
+    defaults: ``{toggles?, hook_params?, subtitle_params?, banner?}``. Pure /
+    host-testable — no I/O. Returns kwargs for ``compose_layers``.
+    """
+    from clippyme.domain.banner import monitor_banner_params
+
+    ov = override or {}
+    banner = monitor_banner_params(platform, channel, ov.get("banner"))
+    hook_text = str(clip.get("viral_hook_text") or clip.get("title") or "").strip()
+    hook_params = {"text": hook_text, "position": "top", **(ov.get("hook_params") or {})}
+    subtitle_params = {"position": "bottom", "align": "left", **(ov.get("subtitle_params") or {})}
+    toggles = {
+        "hook": bool(hook_params.get("text")),
+        "subtitles": True,
+        "banner": bool(banner),
+        **(ov.get("toggles") or {}),
+    }
+    return {
+        "toggles": toggles,
+        "hook_params": hook_params,
+        "subtitle_params": subtitle_params,
+        "banner_params": banner or {},
+    }
+
+
 @dataclass
 class SharedGapScheduler(SmartScheduler):
-    """SmartScheduler that also avoids slots the monitor already picked this run.
+    """SmartScheduler that also avoids slots already picked this run.
 
     ``publish_clip`` feeds ``find_slot`` only the occupied list from Zernio's
-    persisted posts for that single call, so back-to-back monitor publishes
-    wouldn't otherwise see each other. Merging ``picked_slots`` enforces the
-    minimum gap across every clip the monitor schedules (the spec's shared
-    ">=15-minute spacing across ALL clips").
+    persisted posts for that single call, so back-to-back publishes wouldn't
+    otherwise see each other. Merging ``picked_slots`` enforces the minimum gap
+    across every clip scheduled. The registry injects ONE shared ``picked_slots``
+    list into every monitor's scheduler so the gap is GLOBAL across monitors.
     """
     picked_slots: list = field(default_factory=list)
 
@@ -91,16 +133,43 @@ class SharedGapScheduler(SmartScheduler):
         return slot
 
 
+def _validate_channel(platform: str, raw) -> str:
+    """Per-platform channel validation. Returns the canonical channel string."""
+    ch = str(raw or "").strip()
+    if not ch:
+        raise ValidationError("channel is required")
+    if platform in ("kick", "twitch"):
+        ch = ch.lower()
+        if len(ch) > 64 or not _SLUG_RE.match(ch):
+            raise ValidationError(f"invalid {platform} channel (use a-z, 0-9, '_' or '-')")
+        return ch
+    # youtube: @handle, UC id, or a youtube.com URL. It flows through yt_dlp
+    # resolution / the SSRF-guarded URL submit path, so we only reject the
+    # obviously-hostile (whitespace / control chars / overlong).
+    if len(ch) > 256 or any(c.isspace() for c in ch):
+        raise ValidationError("invalid youtube channel (@handle, UC id, or channel URL)")
+    if not (_YT_HANDLE_RE.match(ch) or _YT_UC_RE.match(ch)
+            or ch.lower().startswith(("http://", "https://", "youtube.com", "www.youtube.com"))):
+        raise ValidationError("youtube channel must be an @handle, UC… id, or channel URL")
+    return ch
+
+
 def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome") -> dict:
     """Coerce + bound a raw start payload into the monitor's config dict.
 
-    Raises ``ValidationError`` on a bad slug or missing platform target. Numeric
-    knobs are clamped to sane ranges (defence in depth — the API schema also
-    bounds them).
+    Raises ``ValidationError`` on a bad platform/mode/channel. Numeric knobs are
+    clamped to sane ranges (defence in depth — the API schema also bounds them).
     """
-    slug = str(config.get("slug", "")).strip().lower()
-    if not slug or len(slug) > 64 or not _SLUG_RE.match(slug):
-        raise ValidationError("invalid channel slug (use a-z, 0-9, '_' or '-')")
+    platform = str(config.get("platform") or "kick").strip().lower()
+    if platform not in _PLATFORMS:
+        raise ValidationError(f"platform must be one of {list(_PLATFORMS)}")
+    mode = str(config.get("mode") or "live").strip().lower()
+    if mode not in ("live", "vod"):
+        raise ValidationError("mode must be 'live' or 'vod'")
+    if platform == "youtube" and mode == "live":
+        raise ValidationError("live mode not supported for youtube (use mode='vod')")
+
+    channel = _validate_channel(platform, config.get("channel") or config.get("slug"))
 
     platforms = config.get("platforms") or []
     if not isinstance(platforms, list) or not platforms:
@@ -116,17 +185,27 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
             return default
         return max(lo, min(hi, n))
 
+    # vod feeds lag minutes→hours; live wants a fast go-live poll.
+    default_poll = 600 if mode == "vod" else 60
     return {
-        "slug": slug,
+        "platform": platform,
+        "mode": mode,
+        "channel": channel,
+        "slug": channel,  # back-compat alias
         "platforms": platforms,
         "segment_seconds": _clamp_int(config.get("segment_seconds"), 1800, 60, 3600),
         "prelive_skip_seconds": _clamp_int(config.get("prelive_skip_seconds"), 1800, 0, 7200),
         "min_gap_seconds": _clamp_int(config.get("min_gap_seconds"), 900, 0, 86400),
-        "poll_interval": _clamp_int(config.get("poll_interval"), 60, 30, 600),
+        "poll_interval": _clamp_int(config.get("poll_interval"), default_poll, 30, 3600),
         "loop": bool(config.get("loop", False)),
         "caption_template": str(config.get("caption_template") or "")[:2200],
         "title_template": str(config.get("title_template") or "")[:500],
         "timezone": str(config.get("timezone") or default_timezone or "Europe/Rome")[:64],
+        # Banner + compose overrides for the auto-publish flow (None = defaults).
+        # Kept as-is here; build_monitor_compose / monitor_banner_params own the
+        # semantics. The API schema already bounds them.
+        "banner": config.get("banner") if isinstance(config.get("banner"), dict) else None,
+        "compose": config.get("compose") if isinstance(config.get("compose"), dict) else None,
     }
 
 
@@ -144,41 +223,121 @@ def _safe_remove(path: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# LiveMonitor
+# Per-platform strategies (network calls are sync → wrapped in to_thread)
+# ---------------------------------------------------------------------------
+
+
+class KickStrategy:
+    def __init__(self, channel: str):
+        from clippyme.integrations.kick_client import KickClient
+        self.channel = channel
+        self._client = KickClient()
+
+    def get_live_state(self):
+        from clippyme.integrations.kick_client import is_live, playback_url
+        ch = self._client.get_channel(self.channel)
+        return is_live(ch), playback_url(ch)
+
+    def capture_args(self, seg_path: str, seconds: int, url):
+        if url:
+            return ["ffmpeg", "-hide_banner", "-loglevel", "warning",
+                    "-i", url, "-c", "copy", "-t", str(seconds), "-y", seg_path]
+        if shutil.which("streamlink"):
+            return ["streamlink", "--hls-duration", _hhmmss(seconds),
+                    f"https://kick.com/{self.channel}", "best", "-o", seg_path]
+        return None
+
+    def fetch_vods(self):
+        from clippyme.integrations.kick_client import extract_vods
+        vods = extract_vods(self._client.get_channel(self.channel))
+        if not vods:
+            vods = extract_vods(self._client.get_channel_videos(self.channel))
+        return vods
+
+
+class TwitchStrategy:
+    def __init__(self, channel: str, client):
+        self.channel = channel
+        self._client = client
+        self._user_id = None
+
+    def get_live_state(self):
+        from clippyme.integrations.twitch_client import stream_is_live
+        return stream_is_live(self._client.get_stream(self.channel)), None
+
+    def capture_args(self, seg_path: str, seconds: int, url):
+        if not shutil.which("streamlink"):
+            return None
+        return ["streamlink", "--twitch-disable-ads", "--hls-duration", _hhmmss(seconds),
+                f"twitch.tv/{self.channel}", "best", "-o", seg_path]
+
+    def fetch_vods(self):
+        from clippyme.integrations.twitch_client import parse_vods
+        if self._user_id is None:
+            self._user_id = self._client.get_user_id(self.channel)
+        if not self._user_id:
+            return []
+        return parse_vods(self._client.get_videos(self._user_id))
+
+
+class YoutubeStrategy:
+    def __init__(self, channel: str):
+        self._input = channel
+        self._channel_id = None
+
+    def resolve(self):
+        from clippyme.integrations.youtube_feed import resolve_channel_id
+        self._channel_id = resolve_channel_id(self._input)
+
+    def fetch_vods(self):
+        from clippyme.integrations.youtube_feed import (
+            fetch_feed, feed_url, parse_feed, uploads_playlist_id,
+        )
+        pid = uploads_playlist_id(self._channel_id)
+        return parse_feed(fetch_feed(feed_url(pid)))
+
+
+# ---------------------------------------------------------------------------
+# LiveMonitor — one asyncio task per (platform, channel)
 # ---------------------------------------------------------------------------
 
 
 class LiveMonitor:
-    """One long-running asyncio task driving the capture→process→publish loop."""
+    """One long-running asyncio task driving detect→process→publish for a channel."""
 
-    def __init__(self, *, jobs: dict, job_queue, output_dir: str,
+    def __init__(self, *, id: str, jobs: dict, job_queue, output_dir: str,
                  upload_dir: str = "uploads", on_job_change=None,
-                 state_path: str = os.path.join("data", STATE_FILENAME)):
+                 picked_slots: list | None = None,
+                 publish_lock: asyncio.Lock | None = None,
+                 on_state_change=None):
+        self.id = id
         self._jobs = jobs
         self._job_queue = job_queue
         self._output_dir = output_dir
         self._upload_dir = upload_dir
         self._on_job_change = on_job_change
-        self._state_path = state_path
-
-        from clippyme.integrations.kick_client import KickClient
-        self._client = KickClient()
+        self._picked_slots = picked_slots if picked_slots is not None else []
+        self._publish_lock = publish_lock or asyncio.Lock()
+        self._on_state_change = on_state_change
 
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
-        self._publish_lock = asyncio.Lock()
         self._publish_tasks: set[asyncio.Task] = set()
         self._ffmpeg_proc = None
+        self._strategy = None
         self._scheduler: SharedGapScheduler | None = None
         self._published: set[str] = set()
+        self._seen_ids: set[str] = set()
         self._gemini_key = None
         self._zernio_key = None
 
         self.cfg: dict = {}
+        self.platform = id.split(":", 1)[0] if ":" in id else ""
+        self.mode = "live"
         self.state = "idle"
         self.last_error: str | None = None
         self.current_job_id: str | None = None
-        self.segments_captured = 0
+        self.segments_captured = 0   # live: segments; vod: items processed
         self.clips_published = 0
 
     # -- public API ------------------------------------------------------
@@ -188,9 +347,13 @@ class LiveMonitor:
 
     def status(self) -> dict:
         return {
+            "id": self.id,
+            "platform": self.platform,
+            "mode": self.mode,
             "running": self.is_running(),
             "state": self.state,
-            "slug": self.cfg.get("slug"),
+            "channel": self.cfg.get("channel"),
+            "slug": self.cfg.get("channel"),  # back-compat alias
             "loop": self.cfg.get("loop", False),
             "segments_captured": self.segments_captured,
             "clips_published": self.clips_published,
@@ -198,16 +361,40 @@ class LiveMonitor:
             "last_error": self.last_error,
         }
 
-    def start(self, config: dict) -> dict:
-        """Validate config, resolve secrets, and launch the monitor task."""
+    def snapshot(self) -> dict:
+        """Persistable per-monitor state (never secrets / Popen / logs)."""
+        return {
+            "platform": self.platform,
+            "mode": self.mode,
+            "channel": self.cfg.get("channel"),
+            "seen_ids": sorted(self._seen_ids),
+            "published": sorted(self._published),
+            "segments_captured": self.segments_captured,
+            "clips_published": self.clips_published,
+            "state": self.state,
+            "updated_at": datetime.now().isoformat(),
+        }
+
+    def restore(self, snap: dict) -> None:
+        """Rehydrate the double-publish / already-seen guards from disk."""
+        if not snap:
+            return
+        self._seen_ids = set(snap.get("seen_ids") or [])
+        self._published = set(snap.get("published") or [])
+        self.segments_captured = int(snap.get("segments_captured") or 0)
+        self.clips_published = int(snap.get("clips_published") or 0)
+
+    def start(self, cfg: dict) -> dict:
+        """Resolve secrets, build the platform strategy, and launch the task.
+
+        ``cfg`` is already validated by :func:`validate_monitor_config`.
+        """
         if self.is_running():
-            raise ConflictError("Live monitor is already running")
+            raise ConflictError(f"monitor already running: {self.id}")
 
         from clippyme.storage.config_store import load_persistent_config, load_zernio_config
-        cfg = validate_monitor_config(config, default_timezone=load_zernio_config().get("timezone"))
-
-        self._gemini_key = (load_persistent_config() or {}).get("GEMINI_API_KEY") \
-            or os.environ.get("GEMINI_API_KEY")
+        pc = load_persistent_config() or {}
+        self._gemini_key = pc.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not self._gemini_key:
             raise ValidationError("Gemini API key not configured")
         self._zernio_key = load_zernio_config().get("api_key")
@@ -215,21 +402,38 @@ class LiveMonitor:
             raise ValidationError("Zernio API key not configured")
 
         self.cfg = cfg
-        self._scheduler = SharedGapScheduler(min_gap_seconds=cfg["min_gap_seconds"])
-        self._published = set()
+        self.platform = cfg["platform"]
+        self.mode = cfg["mode"]
+        self._strategy = self._make_strategy(cfg, pc)
+        self._scheduler = SharedGapScheduler(
+            min_gap_seconds=cfg["min_gap_seconds"], picked_slots=self._picked_slots)
         self._stop = asyncio.Event()
-        self.segments_captured = 0
-        self.clips_published = 0
-        self.current_job_id = None
         self.last_error = None
-        self._load_state()  # restore published-guard + picked slots for same slug
+        self.current_job_id = None
 
         self._task = asyncio.create_task(self._run())
-        logger.info("LiveMonitor started for channel %s", cfg["slug"])
+        logger.info("LiveMonitor started: %s (mode=%s)", self.id, self.mode)
         return self.status()
 
+    def _make_strategy(self, cfg: dict, pc: dict):
+        platform, channel = cfg["platform"], cfg["channel"]
+        if platform == "kick":
+            return KickStrategy(channel)
+        if platform == "twitch":
+            cid = pc.get("TWITCH_CLIENT_ID") or os.environ.get("TWITCH_CLIENT_ID")
+            secret = pc.get("TWITCH_CLIENT_SECRET") or os.environ.get("TWITCH_CLIENT_SECRET")
+            if not cid or not secret:
+                raise ValidationError(
+                    "Twitch monitoring requires TWITCH_CLIENT_ID and "
+                    "TWITCH_CLIENT_SECRET (set them in Settings or the environment)")
+            from clippyme.integrations.twitch_client import TwitchClient
+            return TwitchStrategy(channel, TwitchClient(cid, secret))
+        if platform == "youtube":
+            return YoutubeStrategy(channel)
+        raise ValidationError(f"unsupported platform: {platform}")
+
     async def stop(self) -> dict:
-        """Signal the loop, kill any in-flight ffmpeg, and await teardown."""
+        """Signal the loop, kill any in-flight capture, and await teardown."""
         self._stop.set()
         proc = self._ffmpeg_proc
         if proc is not None and proc.returncode is None:
@@ -244,27 +448,21 @@ class LiveMonitor:
                 self._task.cancel()
         self.state = "idle"
         self._persist()
-        logger.info("LiveMonitor stopped")
+        logger.info("LiveMonitor stopped: %s", self.id)
         return self.status()
 
     # -- main loop -------------------------------------------------------
 
     async def _run(self) -> None:
         try:
-            self.state = "waiting_live"
-            while not self._stop.is_set():
-                channel = await asyncio.to_thread(self._client.get_channel, self.cfg["slug"])
-                from clippyme.integrations.kick_client import is_live
-                if is_live(channel):
-                    await self._marathon()
-                    if not self.cfg["loop"]:
-                        break
-                self.state = "waiting_live"
-                await self._interruptible_sleep(self._jittered_poll())
+            if self.mode == "vod":
+                await self._run_vod()
+            else:
+                await self._run_live()
         except asyncio.CancelledError:
             pass
         except Exception:
-            logger.exception("LiveMonitor run loop crashed")
+            logger.exception("LiveMonitor run loop crashed: %s", self.id)
             self.last_error = "monitor loop crashed"
         finally:
             # Let any in-flight publish tasks finish so scheduled posts aren't lost.
@@ -275,9 +473,21 @@ class LiveMonitor:
             self.current_job_id = None
             self._persist()
 
+    # -- live mode -------------------------------------------------------
+
+    async def _run_live(self) -> None:
+        self.state = "waiting_live"
+        while not self._stop.is_set():
+            live, _ = await asyncio.to_thread(self._strategy.get_live_state)
+            if live:
+                await self._marathon()
+                if not self.cfg["loop"]:
+                    break
+            self.state = "waiting_live"
+            await self._interruptible_sleep(self._jittered_poll())
+
     async def _marathon(self) -> None:
         """Handle one live session: prelive skip, then the capture loop."""
-        from clippyme.integrations.kick_client import is_live, playback_url
         from clippyme.pipeline.media_probe import probe_duration
 
         self.state = "prelive"
@@ -286,10 +496,10 @@ class LiveMonitor:
 
         self.state = "capturing"
         while not self._stop.is_set():
-            channel = await asyncio.to_thread(self._client.get_channel, self.cfg["slug"])
-            if not is_live(channel):
+            live, url = await asyncio.to_thread(self._strategy.get_live_state)
+            if not live:
                 break
-            seg_path = await self._capture_segment(playback_url(channel))
+            seg_path = await self._capture_segment(url)
             if seg_path is None:
                 break
             duration = await asyncio.to_thread(probe_duration, seg_path)
@@ -304,54 +514,39 @@ class LiveMonitor:
             self._publish_tasks.add(task)
             task.add_done_callback(self._publish_tasks.discard)
             self._persist()
-            if early_exit:  # ffmpeg stopped before a full segment → stream ended
+            if early_exit:  # capture stopped before a full segment → stream ended
                 break
         self.state = "draining"
 
     async def _skip_prelive(self) -> bool:
         """Sleep out the prelive window, aborting if the stream ends. Returns
         True to proceed to capture, False if we should stop this session."""
-        from clippyme.integrations.kick_client import is_live
         remaining = self.cfg["prelive_skip_seconds"]
         step = min(self.cfg["poll_interval"], 60)
         while remaining > 0 and not self._stop.is_set():
             await self._interruptible_sleep(min(step, remaining))
             remaining -= step
-            channel = await asyncio.to_thread(self._client.get_channel, self.cfg["slug"])
-            if not is_live(channel):
+            live, _ = await asyncio.to_thread(self._strategy.get_live_state)
+            if not live:
                 return False
         return not self._stop.is_set()
 
-    # -- capture ---------------------------------------------------------
-
     async def _capture_segment(self, url: str | None) -> str | None:
-        """Capture up to ``segment_seconds`` of the live stream to a file.
-
-        Prefers ffmpeg on the HLS playback URL; falls back to streamlink (if
-        installed) when no playback URL is available. Returns the path, or None
-        if nothing could be captured.
-        """
-        import shutil
+        """Capture up to ``segment_seconds`` of the live stream to a file."""
         os.makedirs(self._upload_dir, exist_ok=True)
         seg_path = os.path.join(
-            self._upload_dir, f"live_{self.cfg['slug']}_{int(time.time())}.mp4")
-        seconds = self.cfg["segment_seconds"]
-
-        if url:
-            args = ["ffmpeg", "-hide_banner", "-loglevel", "warning",
-                    "-i", url, "-c", "copy", "-t", str(seconds), "-y", seg_path]
-        elif shutil.which("streamlink"):
-            args = ["streamlink", "--hls-duration", _hhmmss(seconds),
-                    f"https://kick.com/{self.cfg['slug']}", "best", "-o", seg_path]
-        else:
-            logger.warning("LiveMonitor: no playback_url and streamlink not installed — skipping segment")
+            self._upload_dir, f"live_{self.platform}_{self.cfg['channel']}_{int(time.time())}.mp4")
+        args = self._strategy.capture_args(seg_path, self.cfg["segment_seconds"], url)
+        if args is None:
+            logger.warning("LiveMonitor %s: no capture method (streamlink not installed?)", self.id)
+            self.last_error = "no capture tool available (streamlink not installed?)"
             return None
 
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
         except FileNotFoundError:
-            logger.error("LiveMonitor: capture tool not found (%s)", args[0])
+            logger.error("LiveMonitor %s: capture tool not found (%s)", self.id, args[0])
             self.last_error = f"{args[0]} not installed"
             return None
         self._ffmpeg_proc = proc
@@ -365,28 +560,100 @@ class LiveMonitor:
             return None
         return seg_path
 
+    # -- vod mode --------------------------------------------------------
+
+    async def _run_vod(self) -> None:
+        """Poll a feed; process each item that appeared AFTER activation."""
+        if self.platform == "youtube":
+            try:
+                await asyncio.to_thread(self._strategy.resolve)
+            except Exception as exc:
+                logger.exception("LiveMonitor %s: channel resolve failed", self.id)
+                self.last_error = f"channel resolve failed: {exc}"
+                return
+
+        self.state = "watching"
+        baseline_done = bool(self._seen_ids)  # resumed monitor keeps its baseline
+        while not self._stop.is_set():
+            try:
+                items = await asyncio.to_thread(self._strategy.fetch_vods)
+            except Exception as exc:
+                logger.exception("LiveMonitor %s: vod fetch failed", self.id)
+                self.last_error = f"vod fetch failed: {exc}"
+                items = None
+
+            if items and not baseline_done:
+                # First successful poll: record existing items so only NEW ones
+                # (published after activation) get processed.
+                self._seen_ids = {it["id"] for it in items}
+                baseline_done = True
+                self._persist()
+            elif items:
+                for it in reversed(items):  # oldest-new first
+                    if self._stop.is_set():
+                        break
+                    if it["id"] in self._seen_ids:
+                        continue
+                    self._seen_ids.add(it["id"])
+                    await self._process_vod_item(it)
+
+            await self._interruptible_sleep(self._jittered_poll())
+        self.state = "idle"
+
+    async def _process_vod_item(self, item: dict) -> None:
+        self.segments_captured += 1
+        job_id = await self._submit_url_job(item["url"])
+        self.current_job_id = job_id
+        self._persist()
+        # vod jobs run one at a time (no overlapping live capture to keep up
+        # with), so await then publish inline. A failed download (e.g. a
+        # sub-only Twitch VOD 403) ends non-'completed' and just logs + moves on.
+        await self._await_and_publish(job_id, None)
+
     # -- job submission --------------------------------------------------
 
-    async def _submit_segment_job(self, seg_path: str) -> str:
-        from clippyme.domain.job_results import build_main_cmd
-        from clippyme.domain.job_submission import submit_job
-
+    def _new_job_dir(self) -> tuple[str, str, dict]:
         job_id = str(uuid.uuid4())
         job_dir = os.path.join(self._output_dir, job_id)
         os.makedirs(job_dir, exist_ok=True)
         env = os.environ.copy()
         env["GEMINI_API_KEY"] = self._gemini_key
-        cmd = build_main_cmd(input_path=os.path.abspath(seg_path), output_dir=job_dir)
+        return job_id, job_dir, env
+
+    async def _submit_segment_job(self, seg_path: str) -> str:
+        from clippyme.domain.job_results import build_main_cmd
+        from clippyme.domain.job_submission import submit_job
+
+        job_id, job_dir, env = self._new_job_dir()
+        # Letterbox (reframe disabled): the monitor recipe places a hook in the
+        # top bar, the attribution banner attached under the video band, and
+        # subtitles below it — all of which need the un-reframed 9:16 layout.
+        cmd = build_main_cmd(input_path=os.path.abspath(seg_path), output_dir=job_dir,
+                             reframe_mode="disabled")
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
             cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
-        logger.info("LiveMonitor submitted segment job %s", job_id)
+        logger.info("LiveMonitor %s submitted segment job %s", self.id, job_id)
+        return job_id
+
+    async def _submit_url_job(self, url: str) -> str:
+        from clippyme.domain.job_results import build_main_cmd
+        from clippyme.domain.job_submission import submit_job
+
+        job_id, job_dir, env = self._new_job_dir()
+        cookies_path = os.path.join("data", "cookies.txt")
+        cmd = build_main_cmd(url=url, output_dir=job_dir, cookies_path=cookies_path,
+                             reframe_mode="disabled")
+        await submit_job(
+            jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
+            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
+        logger.info("LiveMonitor %s submitted url job %s (%s)", self.id, job_id, url)
         return job_id
 
     # -- publish ---------------------------------------------------------
 
-    async def _await_and_publish(self, job_id: str, seg_path: str) -> None:
-        """Wait for a job to finish, publish its clips, then drop the segment."""
+    async def _await_and_publish(self, job_id: str, seg_path: str | None) -> None:
+        """Wait for a job to finish, publish its clips, then drop any segment."""
         try:
             while not self._stop.is_set():
                 await asyncio.sleep(5)
@@ -395,7 +662,8 @@ class LiveMonitor:
                     break
             status = self._jobs.get(job_id, {}).get("status")
             if status not in ("completed", "stopped"):
-                logger.warning("LiveMonitor: job %s ended '%s' — no clips published", job_id, status)
+                logger.warning("LiveMonitor %s: job %s ended '%s' — no clips published",
+                               self.id, job_id, status)
                 return
             clips = (self._jobs.get(job_id, {}).get("result") or {}).get("clips") or []
             for clip in clips:
@@ -403,31 +671,59 @@ class LiveMonitor:
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("LiveMonitor: publish flow failed for job %s", job_id)
+            logger.exception("LiveMonitor %s: publish flow failed for job %s", self.id, job_id)
         finally:
             _safe_remove(seg_path)
 
+    async def _compose_for_publish(self, job_id: str, clip: dict, base_path: str) -> str:
+        """Burn the monitor recipe (hook top → banner attached → subtitles
+        bottom-left) onto the clip and return the composed path. Falls back to
+        ``base_path`` (raw clip) on any resolution/compose failure so a publish
+        is never lost to a compose hiccup."""
+        from clippyme.domain.clip_resolve import resolve_clip
+        from clippyme.domain.compose import compose_layers
+
+        idx = clip.get("original_index")
+        if idx is None:
+            return base_path
+        try:
+            resolved = await asyncio.to_thread(
+                resolve_clip, job_id, idx, self._output_dir, require_file=True)
+            recipe = build_monitor_compose(
+                self.platform, self.cfg["channel"], clip, self.cfg.get("compose"))
+            composed = await compose_layers(
+                base_clip=resolved.clip_path, job_dir=resolved.job_dir, clip_index=idx,
+                metadata=resolved.metadata, clip_info=resolved.clip_info, **recipe)
+            return os.path.join(resolved.job_dir, composed)
+        except Exception:
+            logger.exception("LiveMonitor %s: compose-before-publish failed for %s/%s",
+                             self.id, job_id, idx)
+            return base_path
+
     async def _publish_one(self, job_id: str, clip: dict) -> None:
-        from clippyme.integrations.social_publisher import publish_clip, ZernioError
+        from clippyme.integrations.social_publisher import ZernioError, publish_clip
 
         video_url = clip.get("video_url") or ""
         clip_path = os.path.join(self._output_dir, job_id, os.path.basename(video_url))
         if not os.path.isfile(clip_path):
-            logger.warning("LiveMonitor: clip file missing, skipping: %s", clip_path)
+            logger.warning("LiveMonitor %s: clip file missing, skipping: %s", self.id, clip_path)
             return
+        # Dedupe on the BASE clip path (stable), then compose the publish recipe.
         if clip_path in self._published:
             return
+        upload_path = await self._compose_for_publish(job_id, clip, clip_path)
 
         title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
         caption = render_template(self.cfg["caption_template"], clip)
-        # Serialise publishes so the shared scheduler's picked_slots list (mutated
-        # inside publish_clip's worker thread) stays race-free.
+        # Serialise publishes GLOBALLY (shared lock) so the shared scheduler's
+        # picked_slots list (mutated inside publish_clip's worker thread) stays
+        # race-free across every monitor.
         async with self._publish_lock:
             try:
                 await asyncio.to_thread(
                     publish_clip,
                     api_key=self._zernio_key,
-                    clip_path=clip_path,
+                    clip_path=upload_path,
                     title=title[:100],
                     caption=caption,
                     platform_targets=self.cfg["platforms"],
@@ -436,7 +732,7 @@ class LiveMonitor:
                     scheduler=self._scheduler,
                 )
             except (ZernioError, ValueError) as exc:
-                logger.error("LiveMonitor: publish failed for %s: %s", clip_path, exc)
+                logger.error("LiveMonitor %s: publish failed for %s: %s", self.id, clip_path, exc)
                 self.last_error = f"publish failed: {exc}"
                 return
         self._published.add(clip_path)
@@ -456,39 +752,133 @@ class LiveMonitor:
         except asyncio.TimeoutError:
             pass
 
-    # -- persistence (atomic, restart double-publish guard) --------------
-
     def _persist(self) -> None:
+        if self._on_state_change is not None:
+            try:
+                self._on_state_change()
+            except Exception:
+                logger.warning("LiveMonitor %s: state persist failed", self.id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# LiveMonitorRegistry — owns every monitor + the GLOBAL publish spacing store
+# ---------------------------------------------------------------------------
+
+
+class LiveMonitorRegistry:
+    """Registry of concurrent monitors keyed by ``platform:channel``.
+
+    Owns the one shared ``picked_slots`` list + publish lock (global spacing) and
+    the single persisted state file (``data/live_monitor.json``).
+    """
+
+    def __init__(self, *, jobs: dict, job_queue, output_dir: str,
+                 upload_dir: str = "uploads", on_job_change=None,
+                 state_path: str = os.path.join("data", STATE_FILENAME)):
+        self._jobs = jobs
+        self._job_queue = job_queue
+        self._output_dir = output_dir
+        self._upload_dir = upload_dir
+        self._on_job_change = on_job_change
+        self._state_path = state_path
+
+        self._monitors: dict[str, LiveMonitor] = {}
+        self._picked_slots: list = []
+        self._publish_lock = asyncio.Lock()
+        self._snapshots: dict[str, dict] = {}  # restored, not-yet-started state
+        self._load_state()
+
+    # -- public API ------------------------------------------------------
+
+    def start(self, config: dict) -> dict:
+        from clippyme.storage.config_store import load_zernio_config
+        cfg = validate_monitor_config(config, default_timezone=load_zernio_config().get("timezone"))
+        mid = f"{cfg['platform']}:{cfg['channel']}"
+
+        existing = self._monitors.get(mid)
+        if existing is not None and existing.is_running():
+            raise ConflictError(f"monitor already running: {mid}")
+
+        mon = LiveMonitor(
+            id=mid, jobs=self._jobs, job_queue=self._job_queue,
+            output_dir=self._output_dir, upload_dir=self._upload_dir,
+            on_job_change=self._on_job_change, picked_slots=self._picked_slots,
+            publish_lock=self._publish_lock, on_state_change=self.persist)
+        mon.restore(self._snapshots.get(mid) or {})
+        self._monitors[mid] = mon
+        try:
+            status = mon.start(cfg)
+        except Exception:
+            self._monitors.pop(mid, None)
+            raise
+        self._snapshots.pop(mid, None)
+        self.persist()
+        return status
+
+    async def stop(self, monitor_id: str | None = None) -> dict:
+        if monitor_id:
+            mon = self._monitors.get(monitor_id)
+            if mon is None:
+                raise NotFoundError(f"no such monitor: {monitor_id}")
+            status = await mon.stop()
+            self.persist()
+            return status
+        for mon in list(self._monitors.values()):
+            try:
+                await mon.stop()
+            except Exception:
+                logger.exception("LiveMonitor %s failed to stop cleanly", mon.id)
+        self.persist()
+        return {"monitors": [m.status() for m in self._monitors.values()]}
+
+    def status(self, monitor_id: str | None = None) -> dict:
+        if monitor_id:
+            mon = self._monitors.get(monitor_id)
+            if mon is None:
+                raise NotFoundError(f"no such monitor: {monitor_id}")
+            return mon.status()
+        return {"monitors": [m.status() for m in self._monitors.values()]}
+
+    # -- persistence (atomic) --------------------------------------------
+
+    def persist(self) -> None:
         from clippyme.domain.job_artifacts import save_job_metadata
-        picked = [d.isoformat() for d in (self._scheduler.picked_slots if self._scheduler else [])]
+        snapshots = {mid: m.snapshot() for mid, m in self._monitors.items()}
+        # Keep restored-but-not-started monitors in the file so their guards
+        # survive a start of a *different* monitor.
+        for mid, snap in self._snapshots.items():
+            snapshots.setdefault(mid, snap)
         data = {
-            "slug": self.cfg.get("slug"),
-            "state": self.state,
-            "published": sorted(self._published),
-            "picked_slots": picked,
-            "segments_captured": self.segments_captured,
-            "clips_published": self.clips_published,
+            "monitors": snapshots,
+            "picked_slots": [d.isoformat() for d in self._picked_slots],
             "updated_at": datetime.now().isoformat(),
         }
         try:
             os.makedirs(os.path.dirname(self._state_path) or ".", exist_ok=True)
             save_job_metadata(self._state_path, data)  # tmp + os.replace, 0o600
         except Exception:
-            logger.warning("LiveMonitor: state persist failed", exc_info=True)
+            logger.warning("LiveMonitorRegistry: state persist failed", exc_info=True)
 
     def _load_state(self) -> None:
-        """Restore the published-guard + picked slots when resuming the SAME slug."""
         try:
             with open(self._state_path, encoding="utf-8") as f:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError):
             return
-        if data.get("slug") != self.cfg.get("slug"):
-            return
-        self._published = set(data.get("published") or [])
-        if self._scheduler is not None:
-            for iso in data.get("picked_slots") or []:
-                try:
-                    self._scheduler.picked_slots.append(datetime.fromisoformat(iso))
-                except (ValueError, TypeError):
-                    continue
+        monitors = data.get("monitors")
+        if not isinstance(monitors, dict):
+            # Migrate the legacy single-Kick-monitor shape (top-level slug/published).
+            monitors = {}
+            if data.get("slug"):
+                monitors[f"kick:{data['slug']}"] = {
+                    "platform": "kick", "mode": "live", "channel": data["slug"],
+                    "seen_ids": [], "published": data.get("published") or [],
+                    "segments_captured": data.get("segments_captured") or 0,
+                    "clips_published": data.get("clips_published") or 0,
+                }
+        self._snapshots = {k: v for k, v in monitors.items() if isinstance(v, dict)}
+        for iso in data.get("picked_slots") or []:
+            try:
+                self._picked_slots.append(datetime.fromisoformat(iso))
+            except (ValueError, TypeError):
+                continue
