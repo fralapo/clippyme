@@ -577,3 +577,48 @@ def test_collapse_passes_through_none_targets():
     strats = ['TRACK', 'GENERAL', 'TRACK']
     out = ro.collapse_scene_targets(targets, sids, strats, x_max=1000, y_max=1000)
     assert out[1] is None                       # GENERAL/None frame untouched
+
+
+# --- PanSmoother (subject/FrameShift per-frame jitter fix) -------------------
+
+def test_pan_smoother_first_target_snaps():
+    s = ro.PanSmoother()
+    assert s.smooth(400.0, 1920) == 400.0
+
+
+def test_pan_smoother_holds_inside_deadband():
+    # Detection noise of a few px must never move the crop.
+    s = ro.PanSmoother(deadband_frac=0.04)
+    s.smooth(400.0, 1920)
+    for noisy in (401.0, 398.5, 403.0, 396.0, 400.7):
+        assert s.smooth(noisy, 1920) == 400.0
+
+
+def test_pan_smoother_moves_after_deadband_breach_and_settles():
+    s = ro.PanSmoother(deadband_frac=0.04, settle_frac=0.005, alpha=0.2)
+    s.smooth(400.0, 1920)
+    target = 700.0  # 300px jump > 76.8px deadband
+    prev = 400.0
+    for _ in range(60):
+        prev = s.smooth(target, 1920)
+    assert abs(prev - target) <= 0.005 * 1920
+    assert s.moving is False
+    # Once settled, small noise holds again.
+    assert s.smooth(prev + 2.0, 1920) == prev
+
+
+def test_pan_smoother_none_target_returns_held_center():
+    s = ro.PanSmoother()
+    s.smooth(500.0, 1920)
+    assert s.smooth(None, 1920) == 500.0   # dropout bridged
+
+
+def test_pan_smoother_none_before_any_target_is_none():
+    assert ro.PanSmoother().smooth(None, 1920) is None
+
+
+def test_pan_smoother_reset_snaps_next_target():
+    s = ro.PanSmoother()
+    s.smooth(500.0, 1920)
+    s.reset()
+    assert s.smooth(900.0, 1920) == 900.0

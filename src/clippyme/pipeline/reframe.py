@@ -32,6 +32,7 @@ from clippyme.pipeline.media_probe import (
     reconcile_fps,
 )
 from clippyme.pipeline.reframe_ops import (
+    PanSmoother,
     build_smoothed_trajectory,
     centroid_span,
     collapse_scene_targets,
@@ -329,7 +330,7 @@ def _black_pad_to_output(frame, output_width, output_height):
     return canvas
 
 
-def create_frameshift_frame(frame, output_width, output_height):
+def create_frameshift_frame(frame, output_width, output_height, smoother=None):
     """FrameShift face-first 9:16 reframe — the ``object`` reframe mode.
 
     Computes a weighted-interest centroid over every detection in the frame —
@@ -381,12 +382,24 @@ def create_frameshift_frame(frame, output_width, output_height):
                 conf = float(box.conf[0]) if box.conf is not None else 1.0
                 boxes.append(((x1 + x2) / 2.0, (y1 + y2) / 2.0, w * area * conf))
 
-        center = weighted_interest_center(boxes)
-        if center is None or crop_w < 1 or crop_w >= orig_w:
-            # No subject, or source already at/under target width → black-pad.
+        if crop_w < 1 or crop_w >= orig_w:
+            # Source already at/under the target width → black-pad, always.
             return _black_pad_to_output(frame, output_width, output_height)
 
-        x1 = int(round(center[0] - crop_w / 2.0))
+        center = weighted_interest_center(boxes)
+        # Route the raw centroid through the caller's PanSmoother: detections
+        # jitter a few px per frame, and cropping straight off them shakes the
+        # whole scene. The smoother holds the centre inside a deadband and also
+        # bridges detection dropouts (None target → held centre), so a single
+        # missed frame doesn't flash the letterbox fallback mid-scene.
+        center_x = center[0] if center is not None else None
+        if smoother is not None:
+            center_x = smoother.smooth(center_x, orig_w)
+        if center_x is None:
+            # No subject (and no held position) → black-pad.
+            return _black_pad_to_output(frame, output_width, output_height)
+
+        x1 = int(round(center_x - crop_w / 2.0))
         x1 = max(0, min(orig_w - crop_w, x1))
         cropped = frame[:, x1:x1 + crop_w]
         if cropped.shape[0] < 1 or cropped.shape[1] < 1:
@@ -983,6 +996,9 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         # switching in WIDE multi-speaker scenes (interview/podcast botta-risposta).
         speaker_tracker = SpeakerTracker(cooldown_frames=45)
         detection_smoother = DetectionSmoother(window_size=5)
+        # OBJECT (subject/FrameShift) strategy: hysteresis smoother on the crop
+        # centre — without it the raw per-frame centroid shakes every scene.
+        frameshift_smoother = PanSmoother()
 
         # Opt-in two-stage global trajectory smoothing (REFRAME_GLOBAL_SMOOTH).
         # When on, a dedicated track-then-render pass handles all frames and the
@@ -1023,6 +1039,10 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                         # tracker state).
                         speaker_tracker.reset(frame_number)
                         detection_smoother.reset()
+                        # New shot: drop the held FrameShift pan centre so the
+                        # first detection of the scene snaps instead of easing
+                        # over from the previous shot's framing.
+                        frameshift_smoother.reset()
             
                 # Determine Strategy for current frame based on scene
                 current_strategy = scene_strategies[current_scene_index] if current_scene_index < len(scene_strategies) else 'TRACK'
@@ -1039,7 +1059,8 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                         # over faces (1.0) → persons (0.8) → objects (0.5), with a
                         # black-padded letterbox fallback when nothing is detected.
                         output_frame = create_frameshift_frame(
-                            frame, OUTPUT_WIDTH, OUTPUT_HEIGHT
+                            frame, OUTPUT_WIDTH, OUTPUT_HEIGHT,
+                            smoother=frameshift_smoother,
                         )
 
                     elif current_strategy == 'GENERAL':

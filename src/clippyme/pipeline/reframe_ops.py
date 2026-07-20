@@ -215,6 +215,60 @@ def weighted_interest_center(boxes):
     return (sx / total, sy / total)
 
 
+class PanSmoother:
+    """Hysteresis pan smoother for the per-frame FrameShift (``subject``) crop.
+
+    Raw detections jitter by a few pixels every frame even on a static shot,
+    and cropping straight off the weighted centroid turns that noise into a
+    visible per-frame shake. The smoother keeps the crop centre in float space
+    and only moves it when the target has genuinely drifted:
+
+      HOLD — while ``|target - centre| <= deadband_frac * frame_width`` the
+             held centre is returned unchanged, so detection noise never
+             reaches the crop.
+      MOVE — once the deadband is breached the centre eases exponentially
+             toward the target (``alpha`` per frame) until it lands within
+             ``settle_frac`` of it, then locks again.
+
+    ``smooth(None, w)`` returns the held centre, bridging single-frame
+    detection dropouts so the caller doesn't flash its letterbox fallback.
+    ``reset()`` on scene cuts: the first target of a new scene snaps.
+    Pure math (no cv2) — host-tested.
+    """
+
+    def __init__(self, deadband_frac=0.04, settle_frac=0.005, alpha=0.2):
+        self.deadband_frac = float(deadband_frac)
+        self.settle_frac = float(settle_frac)
+        self.alpha = float(alpha)
+        self.center = None
+        self.moving = False
+
+    def reset(self):
+        self.center = None
+        self.moving = False
+
+    def smooth(self, target_x, frame_width):
+        """Feed this frame's raw target centre; get the centre to crop at.
+
+        Returns ``None`` only when there is no target AND no held centre yet.
+        """
+        if target_x is None:
+            return self.center
+        if self.center is None or frame_width <= 0:
+            self.center = float(target_x)
+            self.moving = False
+            return self.center
+        err = float(target_x) - self.center
+        if not self.moving:
+            if abs(err) <= self.deadband_frac * frame_width:
+                return self.center
+            self.moving = True
+        self.center += self.alpha * err
+        if abs(float(target_x) - self.center) <= self.settle_frac * frame_width:
+            self.moving = False
+        return self.center
+
+
 # --- Savitzky-Golay (future two-stage global smoothing) ---------------------
 
 def savgol_1d(values, window: int, polyorder: int):
