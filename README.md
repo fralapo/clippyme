@@ -278,6 +278,9 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `POST` | `/api/config/zernio` | Save/update Zernio credentials. |
 | `GET` | `/api/zernio/accounts` | Discover accounts via Zernio. |
 | `POST` | `/api/publish/{job_id}/{clip_index}` | Upload + schedule a clip on TikTok/IG/YouTube. |
+| `POST` | `/api/live-monitor/start` | Start a channel monitor (kick/twitch/youtube, live/vod mode). |
+| `POST` | `/api/live-monitor/stop` | Stop one monitor (`{monitor_id}`) or all. |
+| `GET` | `/api/live-monitor/status` | All monitors: state, segments captured, backfill pending, clips published. |
 
 Static mounts: `/videos`, `/thumbnails`, `/fonts` (read-only).
 
@@ -341,6 +344,18 @@ After a job completes, every clip can be flipped between all three modes post-ho
 - `manual`: caller passes an ISO 8601 `scheduled_for`
 
 The dashboard's unified `PublishModal` publishes the selected clips concurrently in one click, each row showing live queued → uploading → live/error status. With `auto` it spreads one clip per day from a chosen start date (mirroring the original `tmp/programma_shorts.py` logic) to stay under per-platform daily caps; any residual Zernio daily-limit 429 is surfaced verbatim per clip instead of failing the whole batch.
+
+---
+
+## Live monitor (auto clip & publish)
+
+The **Live Monitor** tab watches a channel and turns its content into published shorts hands-free. Multiple monitors run in parallel (one per platform+channel), state survives restarts (`data/live_monitor.json`).
+
+- **Platforms & modes**: **Kick** and **Twitch** in `live` mode (real-time: capture the ongoing stream in 30-min segments, clip each segment, auto-publish) or `vod` mode (process each new VOD as it's uploaded); **YouTube** watches the channel's long-form uploads via RSS (Shorts structurally excluded) and clips every new video from activation onward.
+- **Prelive skip**: the first 30 minutes of every stream (configurable) are skipped — anchored to the *stream's* start time, so a monitor started mid-stream doesn't wait a redundant window.
+- **Backfill**: starting a monitor on a channel that's already been live for hours doesn't lose the past. On **Twitch** the missed span is range-downloaded from the in-progress archive VOD (matched by `stream_id`) in parallel with the forward capture. **Kick** publishes no VOD until the stream ends, so missed windows are recorded and recovered from the replay right after the live finishes. Requires the streamer to have past-broadcast storage enabled.
+- **Auto layout**: monitor clips default to reframe off (letterbox), full-clip hook on top, attribution banner attached under the video band, left-aligned subtitles below — all overridable per monitor.
+- **Publishing**: no daily cap, but a global ≥15-minute gap between posts across *all* monitors; `{title}`/`{hook}` placeholders in the title/caption templates; optional per-monitor AI instructions feed the Gemini prompt.
 
 ---
 
