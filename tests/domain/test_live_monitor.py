@@ -270,6 +270,32 @@ def test_registry_rejects_duplicate(tmp_path):
         reg.start(_base_cfg(platform="kick", mode="live", slug="foo"))
 
 
+def test_registry_stop_retires_monitor_but_keeps_snapshot(tmp_path):
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+
+    class _FakeMon:
+        id = "kick:foo"
+
+        async def stop(self):
+            return {"id": self.id, "running": False}
+
+        def status(self):
+            return {"id": self.id, "running": False}
+
+        def snapshot(self):
+            return {"platform": "kick", "channel": "foo", "seen_ids": ["v1"]}
+
+    reg._monitors["kick:foo"] = _FakeMon()
+    import asyncio
+    asyncio.run(reg.stop("kick:foo"))
+    # Gone from the visible list…
+    assert reg.status()["monitors"] == []
+    # …but the guard snapshot survives for a future restart of the channel.
+    assert reg._snapshots["kick:foo"]["seen_ids"] == ["v1"]
+
+
 def test_registry_migrates_legacy_state(tmp_path):
     import json
     state = tmp_path / "state.json"

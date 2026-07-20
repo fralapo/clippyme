@@ -1034,15 +1034,30 @@ class LiveMonitorRegistry:
             if mon is None:
                 raise NotFoundError(f"no such monitor: {monitor_id}")
             status = await mon.stop()
+            self._retire(monitor_id, mon)
             self.persist()
             return status
-        for mon in list(self._monitors.values()):
+        for mid, mon in list(self._monitors.items()):
             try:
                 await mon.stop()
             except Exception:
                 logger.exception("LiveMonitor %s failed to stop cleanly", mon.id)
+            self._retire(mid, mon)
         self.persist()
         return {"monitors": [m.status() for m in self._monitors.values()]}
+
+    def _retire(self, mid: str, mon) -> None:
+        """Drop an explicitly-stopped monitor from the visible list.
+
+        Its snapshot is kept in ``_snapshots`` (and thus on disk) so the
+        seen-VOD / published guards survive a later restart of the same
+        channel — only the status-list entry goes away.
+        """
+        try:
+            self._snapshots[mid] = mon.snapshot()
+        except Exception:
+            logger.warning("LiveMonitor %s: snapshot on retire failed", mid, exc_info=True)
+        self._monitors.pop(mid, None)
 
     def status(self, monitor_id: str | None = None) -> dict:
         if monitor_id:
