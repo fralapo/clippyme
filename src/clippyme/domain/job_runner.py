@@ -20,6 +20,27 @@ from clippyme.storage.config_store import load_persistent_config
 logger = logging.getLogger("clippyme")
 
 
+def merge_persistent_config(env: dict, persisted: dict | None) -> dict:
+    """Overlay Settings values onto a job env, in place.
+
+    Non-empty persisted values OVERRIDE the inherited process env: docker
+    compose exports empty-string defaults (DEEPGRAM_API_KEY=, …) and a pinned
+    TRANSCRIPTION_PROVIDER, which used to shadow the keys saved in Settings
+    and silently drop every job to the Whisper fallback. Empty persisted
+    values never clobber a real env value, so env-only deploys (no
+    config.json) keep working. GEMINI_API_KEY is the one exception: the
+    per-request X-Gemini-Key header (already in ``env``) wins, matching the
+    reframe-endpoint behaviour.
+    """
+    for k, v in (persisted or {}).items():
+        if v in (None, ""):
+            continue
+        if k == "GEMINI_API_KEY" and env.get(k):
+            continue
+        env[str(k)] = str(v)
+    return env
+
+
 def make_run_job(*, jobs: dict, output_root: str, on_change=None):
     """Build the ``run_job(job_id, job_data)`` coroutine bound to shared state.
 
@@ -44,13 +65,10 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
         # at enqueue time). Fixes a race where the user updates a key
         # (Deepgram / HF / Gemini model / transcription provider) in Settings
         # between submit and dispatch: without this, the worker would use the
-        # stale values captured at enqueue. Keys already present in `env`
-        # (e.g. GEMINI_API_KEY set from the X-Gemini-Key header) win over the
-        # persistent config, matching the reframe-endpoint behaviour.
+        # stale values captured at enqueue. Precedence rules live in
+        # merge_persistent_config.
         try:
-            for k, v in (load_persistent_config() or {}).items():
-                if v is not None and k not in env:
-                    env[str(k)] = str(v)
+            merge_persistent_config(env, load_persistent_config())
         except Exception as exc:
             logger.warning("Could not merge persistent config into job env for %s: %s", job_id, exc)
 
