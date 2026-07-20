@@ -57,6 +57,19 @@ def parse_vods(videos_json) -> list:
     return out
 
 
+def find_live_vod(videos_json, stream_id) -> Optional[str]:
+    """Return the url of the in-progress archive VOD whose ``stream_id`` matches
+    the current live stream's id (from GET /helix/streams), else None. Defensive
+    dict access like :func:`parse_vods`."""
+    if not stream_id:
+        return None
+    for v in (videos_json or {}).get("data") or []:
+        if str(v.get("stream_id") or "") == str(stream_id):
+            vid = v.get("id")
+            return v.get("url") or (f"https://www.twitch.tv/videos/{vid}" if vid else None)
+    return None
+
+
 class TwitchClient:
     """Minimal Helix client — app token + streams/users/videos."""
 

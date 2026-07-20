@@ -33,6 +33,7 @@ import os
 import random
 import re
 import shutil
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -239,6 +240,38 @@ def _safe_remove(path: str) -> None:
         pass
 
 
+def backfill_windows(elapsed_seconds, prelive_skip_seconds, segment_seconds,
+                     min_seconds: int = MIN_PROCESS_SECONDS) -> list:
+    """Chunk the missed span [prelive_skip, elapsed] into (start, end) second
+    pairs of length ``segment_seconds``. Drops a trailing chunk shorter than
+    ``min_seconds`` (matching the live-capture floor). Returns [] when there is
+    nothing to recover. Clamps hostile inputs (negative elapsed, zero/negative
+    segment)."""
+    try:
+        elapsed = int(elapsed_seconds)
+        start = max(0, int(prelive_skip_seconds))
+        seg = int(segment_seconds)
+    except (TypeError, ValueError):
+        return []
+    if seg <= 0 or elapsed <= start:
+        return []
+    windows = []
+    t = start
+    while t < elapsed:
+        end = min(t + seg, elapsed)
+        if end - t >= min_seconds:  # short trailing chunk dropped
+            windows.append((t, end))
+        t = end
+    return windows
+
+
+def build_backfill_cmd(vod_url: str, start_s: int, end_s: int, out_path: str) -> list:
+    """yt-dlp argv to download an exact [start, end] range of a VOD."""
+    return [sys.executable, "-m", "yt_dlp", vod_url,
+            "--download-sections", f"*{_hhmmss(start_s)}-{_hhmmss(end_s)}",
+            "-o", out_path, "--force-overwrites", "-q"]
+
+
 # ---------------------------------------------------------------------------
 # Per-platform strategies (network calls are sync → wrapped in to_thread)
 # ---------------------------------------------------------------------------
@@ -297,6 +330,20 @@ class TwitchStrategy:
             return []
         return parse_vods(self._client.get_videos(self._user_id))
 
+    def live_vod_url(self):
+        """URL of the in-progress archive VOD for the current live stream, or
+        None (offline, no user id, or 'store past broadcasts' disabled)."""
+        from clippyme.integrations.twitch_client import find_live_vod
+        data = (self._client.get_stream(self.channel) or {}).get("data") or []
+        stream_id = data[0].get("id") if data else None
+        if not stream_id:
+            return None
+        if self._user_id is None:
+            self._user_id = self._client.get_user_id(self.channel)
+        if not self._user_id:
+            return None
+        return find_live_vod(self._client.get_videos(self._user_id), stream_id)
+
 
 class YoutubeStrategy:
     def __init__(self, channel: str):
@@ -342,6 +389,7 @@ class LiveMonitor:
         self._stop = asyncio.Event()
         self._publish_tasks: set[asyncio.Task] = set()
         self._ffmpeg_proc = None
+        self._backfill_proc = None
         self._strategy = None
         self._scheduler: SharedGapScheduler | None = None
         self._published: set[str] = set()
@@ -357,6 +405,12 @@ class LiveMonitor:
         self.current_job_id: str | None = None
         self.segments_captured = 0   # live: segments; vod: items processed
         self.clips_published = 0
+        self.backfill_pending = 0    # missed-window recoveries still to process
+        # ponytail: missed windows live only in-process — a restart mid-session
+        # loses any pending backfill. Persist self._missed_windows if that ever
+        # needs to survive a crash.
+        self._missed_windows: list = []
+        self._vod_baseline_ids: set = set()
 
     # -- public API ------------------------------------------------------
 
@@ -376,6 +430,7 @@ class LiveMonitor:
             "segments_captured": self.segments_captured,
             "clips_published": self.clips_published,
             "current_job_id": self.current_job_id,
+            "backfill_pending": self.backfill_pending,
             "last_error": self.last_error,
         }
 
@@ -453,12 +508,12 @@ class LiveMonitor:
     async def stop(self) -> dict:
         """Signal the loop, kill any in-flight capture, and await teardown."""
         self._stop.set()
-        proc = self._ffmpeg_proc
-        if proc is not None and proc.returncode is None:
-            try:
-                proc.terminate()
-            except ProcessLookupError:
-                pass
+        for proc in (self._ffmpeg_proc, self._backfill_proc):
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass
         if self._task is not None:
             try:
                 await asyncio.wait_for(asyncio.shield(self._task), timeout=30)
@@ -514,6 +569,10 @@ class LiveMonitor:
         """
         from clippyme.pipeline.media_probe import probe_duration
 
+        # Everything between (stream_start + prelive_skip) and now was missed —
+        # schedule its recovery before we start capturing forward.
+        await self._schedule_backfill(started_at)
+
         self.state = "prelive"
         if not await self._skip_prelive(started_at):
             return  # stream ended (or stop requested) during prelive
@@ -541,6 +600,10 @@ class LiveMonitor:
             if early_exit:  # capture stopped before a full segment → stream ended
                 break
         self.state = "draining"
+        # Kick has no in-progress VOD — recover the missed window now that the
+        # session is over and the replay VOD can appear.
+        if self.platform == "kick" and self._missed_windows:
+            self._track_task(asyncio.create_task(self._recover_kick_backfill()))
 
     async def _skip_prelive(self, started_at=None) -> bool:
         """Sleep out the (remainder of the) prelive window, aborting if the
@@ -588,6 +651,123 @@ class LiveMonitor:
         finally:
             self._ffmpeg_proc = None
 
+        if not os.path.isfile(seg_path) or os.path.getsize(seg_path) == 0:
+            _safe_remove(seg_path)
+            return None
+        return seg_path
+
+    # -- backfill (recover the window missed before capture started) ------
+
+    def _track_task(self, task: asyncio.Task) -> None:
+        """Register a task so ``_run``'s finally drains it before teardown."""
+        self._publish_tasks.add(task)
+        task.add_done_callback(self._publish_tasks.discard)
+
+    async def _schedule_backfill(self, started_at) -> None:
+        """Compute the missed window(s) and arrange their recovery.
+
+        Twitch: an in-progress archive VOD exists → backfill in parallel now.
+        Kick: no live VOD → stash the windows + a pre-session VOD-id baseline and
+        recover after the session ends, from the newly-published replay."""
+        self._missed_windows = []
+        self._vod_baseline_ids = set()
+        if started_at is None:
+            return
+        elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+        windows = backfill_windows(
+            elapsed, self.cfg["prelive_skip_seconds"], self.cfg["segment_seconds"])
+        if not windows:
+            return
+        if self.platform == "twitch":
+            self.backfill_pending = len(windows)
+            self._track_task(asyncio.create_task(self._backfill_from_vod(windows)))
+        elif self.platform == "kick":
+            try:
+                baseline = await asyncio.to_thread(self._strategy.fetch_vods)
+                self._vod_baseline_ids = {v["id"] for v in baseline}
+            except Exception:
+                logger.warning("LiveMonitor %s: kick backfill baseline failed — "
+                               "skipping recovery", self.id, exc_info=True)
+                return
+            self.backfill_pending = len(windows)
+            self._missed_windows = windows
+
+    async def _backfill_from_vod(self, windows) -> None:
+        """Twitch: resolve the in-progress VOD url and process each missed window."""
+        if not hasattr(self._strategy, "live_vod_url"):
+            return
+        try:
+            vod_url = await asyncio.to_thread(self._strategy.live_vod_url)
+        except Exception:
+            logger.exception("LiveMonitor %s: live VOD lookup failed", self.id)
+            self.backfill_pending = 0
+            return
+        if not vod_url:
+            logger.warning("LiveMonitor %s: backfill unavailable (no in-progress "
+                           "VOD — past broadcasts disabled?)", self.id)
+            self.backfill_pending = 0
+            return
+        await self._backfill_windows(vod_url, windows)
+
+    async def _recover_kick_backfill(self) -> None:
+        """Kick: poll for the replay VOD that appears after the session ends
+        (an id not in the pre-session baseline), then process the missed windows."""
+        windows = self._missed_windows
+        for _ in range(30):  # ponytail: fixed cap; replay usually lands in minutes
+            if self._stop.is_set():
+                return
+            try:
+                vods = await asyncio.to_thread(self._strategy.fetch_vods)
+            except Exception:
+                logger.warning("LiveMonitor %s: kick backfill VOD poll failed",
+                               self.id, exc_info=True)
+                vods = []
+            for v in vods or []:
+                if v["id"] not in self._vod_baseline_ids:
+                    await self._backfill_windows(v["url"], windows)
+                    return
+            await self._interruptible_sleep(self.cfg["poll_interval"])
+        logger.warning("LiveMonitor %s: kick backfill gave up (no replay VOD)", self.id)
+
+    async def _backfill_windows(self, vod_url: str, windows) -> None:
+        """Sequentially download + submit + publish each missed window (kept
+        sequential so forward live capture keeps priority)."""
+        from clippyme.pipeline.media_probe import probe_duration
+
+        for t1, t2 in windows:
+            if self._stop.is_set():
+                break
+            seg_path = await self._download_vod_range(vod_url, t1, t2)
+            if seg_path is not None:
+                duration = await asyncio.to_thread(probe_duration, seg_path)
+                if should_process_segment(duration):
+                    self.segments_captured += 1
+                    job_id = await self._submit_segment_job(seg_path)
+                    self.current_job_id = job_id
+                    await self._await_and_publish(job_id, seg_path)
+                else:
+                    _safe_remove(seg_path)
+            self.backfill_pending = max(0, self.backfill_pending - 1)
+            self._persist()
+
+    async def _download_vod_range(self, vod_url: str, t1: int, t2: int) -> str | None:
+        """Download the [t1, t2] range of a VOD via yt-dlp. None on missing/empty."""
+        os.makedirs(self._upload_dir, exist_ok=True)
+        seg_path = os.path.join(
+            self._upload_dir,
+            f"backfill_{self.platform}_{self.cfg['channel']}_{t1}_{t2}_{int(time.time())}.mp4")
+        args = build_backfill_cmd(vod_url, t1, t2, seg_path)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        except FileNotFoundError:
+            logger.error("LiveMonitor %s: yt-dlp not found for backfill", self.id)
+            return None
+        self._backfill_proc = proc
+        try:
+            await proc.wait()
+        finally:
+            self._backfill_proc = None
         if not os.path.isfile(seg_path) or os.path.getsize(seg_path) == 0:
             _safe_remove(seg_path)
             return None

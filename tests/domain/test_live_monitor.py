@@ -11,6 +11,8 @@ from clippyme.domain.errors import ConflictError, ValidationError
 from clippyme.domain.live_monitor import (
     LiveMonitorRegistry,
     SharedGapScheduler,
+    backfill_windows,
+    build_backfill_cmd,
     build_monitor_compose,
     remaining_prelive,
     render_template,
@@ -18,6 +20,7 @@ from clippyme.domain.live_monitor import (
     validate_monitor_config,
     _hhmmss,
 )
+from clippyme.integrations.twitch_client import find_live_vod
 
 
 # --- build_monitor_compose (monitor auto-publish recipe) -------------------
@@ -287,3 +290,60 @@ def test_hhmmss():
     assert _hhmmss(1800) == "00:30:00"
     assert _hhmmss(3661) == "01:01:01"
     assert _hhmmss(0) == "00:00:00"
+
+
+# --- backfill_windows ------------------------------------------------------
+
+def test_backfill_windows_already_live_two_hours():
+    # 2h elapsed, skip first 30 min, 30-min segments → 3 full windows.
+    windows = backfill_windows(7200, 1800, 1800)
+    assert windows == [(1800, 3600), (3600, 5400), (5400, 7200)]
+
+
+def test_backfill_windows_drops_short_trailing_chunk():
+    # 5000s elapsed, skip 1800, 1800 segs → [1800-3600, 3600-5400→clamped 5000
+    # (1400s < 300? no, 1400>=300 keep)]. Use a genuinely short tail instead.
+    windows = backfill_windows(3700, 1800, 1800)  # tail 3600-3700 = 100s < 300
+    assert windows == [(1800, 3600)]
+
+
+def test_backfill_windows_nothing_to_recover():
+    assert backfill_windows(1800, 1800, 1800) == []   # elapsed == skip
+    assert backfill_windows(1000, 1800, 1800) == []   # elapsed < skip
+
+
+def test_backfill_windows_clamps_bad_input():
+    assert backfill_windows(-100, 1800, 1800) == []
+    assert backfill_windows(7200, 1800, 0) == []      # zero segment
+    assert backfill_windows("x", 1800, 1800) == []    # non-numeric
+
+
+# --- build_backfill_cmd ----------------------------------------------------
+
+def test_build_backfill_cmd_download_sections_format():
+    cmd = build_backfill_cmd("https://www.twitch.tv/videos/42", 1800, 3600, "/out.mp4")
+    assert "-m" in cmd and "yt_dlp" in cmd
+    i = cmd.index("--download-sections")
+    assert cmd[i + 1] == "*00:30:00-01:00:00"
+    assert cmd[cmd.index("-o") + 1] == "/out.mp4"
+    assert "--force-overwrites" in cmd and "-q" in cmd
+
+
+# --- find_live_vod (twitch in-progress archive VOD) ------------------------
+
+def test_find_live_vod_matches_stream_id():
+    videos = {"data": [
+        {"id": "v1", "stream_id": "999", "url": "https://twitch.tv/videos/v1"},
+        {"id": "v2", "stream_id": "111"},
+    ]}
+    assert find_live_vod(videos, "999") == "https://twitch.tv/videos/v1"
+    # falls back to a constructed url when the object omits it
+    assert find_live_vod(videos, "111") == "https://www.twitch.tv/videos/v2"
+
+
+def test_find_live_vod_no_match_or_malformed():
+    assert find_live_vod({"data": [{"id": "v1", "stream_id": "1"}]}, "2") is None
+    assert find_live_vod(None, "1") is None
+    assert find_live_vod({}, "1") is None
+    assert find_live_vod({"data": [{"id": "v1"}]}, "1") is None  # no stream_id
+    assert find_live_vod({"data": [{"stream_id": "1"}]}, None) is None  # no stream id
