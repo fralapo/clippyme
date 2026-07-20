@@ -24,3 +24,32 @@ def test_animate_custom_params():
     f = build_hook_overlay_filter(0, 0, animate=True, dur=0.6, slide_px=80)
     assert "d=0.6" in f
     assert "overlay=0:0+80*pow" in f
+
+
+# --- hook visibility window (first-4s hook, whole-clip when reframe disabled) --
+
+def test_static_enable_window_applied():
+    f = build_hook_overlay_filter(12, 340, enable_end=4)
+    assert f == "[0:v][1:v]overlay=12:340:enable='between(t,0,4)'"
+
+
+def test_static_no_enable_window_when_none():
+    f = build_hook_overlay_filter(12, 340, enable_end=None)
+    assert "enable" not in f
+
+
+def test_animate_enable_window_applied():
+    f = build_hook_overlay_filter(10, 200, animate=True, enable_end=4)
+    assert f.endswith(":enable='between(t,0,4)'")
+
+
+def test_logo_filter_enable_window_only_on_hook():
+    from clippyme.domain.hooks import build_hook_logo_filter
+
+    f = build_hook_logo_filter(10, 20, "scale=100:-1", "5", "7", enable_end=4)
+    assert f == (
+        "[0:v][1:v]overlay=10:20:enable='between(t,0,4)'[vh];"
+        "[2:v]scale=100:-1[lg];[vh][lg]overlay=5:7"
+    )
+    # logo overlay part must stay untouched (no enable clause)
+    assert "overlay=5:7" in f and "overlay=5:7:enable" not in f

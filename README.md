@@ -165,6 +165,7 @@ Runtime env overrides (rarely needed):
 | `REFRAME_SALIENT_GENERAL` | _(off)_ | Content-aware crop for faceless scenes instead of letterboxing. |
 | `REFRAME_OBJECT_WEIGHTS` | _(off)_ | Faceless scenes follow a weighted-object centroid (product/dog/car) by reusing the existing YOLO pass. `1` = curated defaults, or `dog:3,car:2` for custom weights. |
 | `REFRAME_FRAMESHIFT_WEIGHTS` | _(GUI defaults)_ | `object`-mode class weights. Defaults `face:1,person:0.8,default:0.5`; override any of those three or add a COCO class, e.g. `face:1,person:0.8,default:0.5,dog:3`. |
+| `YTDLP_PLAYER_CLIENTS` | `default,tv+tv_embedded,web_safari` | Comma-separated yt-dlp player-client fallback chain; each entry is `default` (no override) or a `+`-joined client list. On a 403 / format-negotiation failure the next entry is tried (5 s apart); page-level blocks (bot wall, private/removed, geo) stop the chain immediately. |
 | `CLIPPYME_X264_CRF` | `18` | Shared libx264 quality for every render/compose encode (near-visually-lossless; lower = higher quality + bigger files, 0–51). Stops the stacked re-encodes from compounding into soft output. |
 | `CLIPPYME_X264_PRESET` | `medium` | Shared libx264 preset; a faster preset (e.g. `fast`) trades a little quality/size for render speed. |
 | `ZERNIO_DEFAULT_TZ` | `Europe/Rome` | |

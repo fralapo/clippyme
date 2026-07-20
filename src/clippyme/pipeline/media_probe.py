@@ -134,6 +134,27 @@ def probe_stream_start_time(video_path: str, stream: str = "v:0") -> float:
     return 0.0
 
 
+def probe_duration(media_path: str) -> float:
+    """ffprobe a media file's container duration in seconds (0.0 if unavailable).
+
+    Never raises — a missing ffprobe, unreadable file, or odd output returns
+    0.0, so callers can treat "unknown" as "too short to process".
+    """
+    if not media_path:
+        return 0.0
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", media_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0:
+            return parse_start_time(result.stdout)  # reuse the graceful float parser
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        pass
+    return 0.0
+
+
 def probe_is_variable_frame_rate(video_path: str, threshold: float = 0.5) -> bool:
     """ffprobe whether the first video stream is VFR.
 

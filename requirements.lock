@@ -19,12 +19,14 @@ av==17.1.0
     # via faster-whisper
 certifi==2026.6.17
     # via
+    #   curl-cffi
     #   httpcore
     #   httpx
     #   requests
 cffi==2.0.0
     # via
     #   cryptography
+    #   curl-cffi
     #   sounddevice
 charset-normalizer==3.4.7
     # via requests
@@ -38,6 +40,8 @@ cryptography==49.0.0
     # via google-auth
 ctranslate2==4.8.0
     # via faster-whisper
+curl-cffi==0.15.0
+    # via -r requirements.txt
 cuda-bindings==13.3.1
     # via torch
 cuda-pathfinder==1.5.5
@@ -321,5 +325,5 @@ uvicorn==0.42.0
     # via -r requirements.txt
 websockets==16.0
     # via google-genai
-yt-dlp==2026.6.9
+yt-dlp==2026.7.4
     # via -r requirements.txt

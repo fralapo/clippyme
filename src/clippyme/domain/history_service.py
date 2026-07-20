@@ -68,10 +68,20 @@ def scan_history(output_dir: str) -> List[dict]:
                                 "title": clip.get("video_title_for_youtube_short", ""),
                                 "start": clip.get("start", 0),
                                 "end": clip.get("end", 0),
+                                "published": clip.get("published", []),
                             }
                         )
                 dir_mtime = os.path.getmtime(job_dir)
                 cost_analysis = data.get("cost_analysis") or {}
+                # No top-level source-video title lives in metadata today, so
+                # derive one from the filename the same way `source` already
+                # does — additive alias for the frontend, not new data.
+                source = (
+                    os.path.basename(meta_files[0])
+                    .replace("_metadata.json", "")
+                    .replace("_", " ")
+                )
+                published_count = sum(1 for c in clip_files if c["published"])
                 results.append(
                     {
                         "jobId": entry,
@@ -79,9 +89,9 @@ def scan_history(output_dir: str) -> List[dict]:
                         "clipCount": len(clip_files),
                         "clips": clip_files,
                         "cost": cost_analysis.get("total_cost"),
-                        "source": os.path.basename(meta_files[0])
-                        .replace("_metadata.json", "")
-                        .replace("_", " "),
+                        "source": source,
+                        "title": source,
+                        "publishedCount": published_count,
                     }
                 )
             except Exception:

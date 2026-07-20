@@ -189,6 +189,32 @@ def _validate_drop_ranges(v):
     return v
 
 
+def validate_publish_platforms(v: List[dict]) -> List[dict]:
+    """Validate a list of Zernio platform targets.
+
+    Each entry is forwarded verbatim into Zernio's create-post payload, so it
+    must be a small flat object with a known platform + an accountId (no
+    smuggled control keys like publishNow / webhookUrl). Shared by
+    PublishRequest and LiveMonitorStartRequest.
+    """
+    allowed = {"tiktok", "instagram", "youtube"}
+    for item in v:
+        if not isinstance(item, dict):
+            raise ValueError("each platform must be an object")
+        platform = item.get("platform")
+        if platform not in allowed:
+            raise ValueError(f"platform must be one of {sorted(allowed)}")
+        acct = item.get("accountId")
+        if not isinstance(acct, str) or not acct or len(acct) > 256:
+            raise ValueError("accountId must be a non-empty string (max 256)")
+        extra = set(item) - {"platform", "accountId", "platformSpecificData"}
+        if extra:
+            raise ValueError(f"unexpected platform keys: {sorted(extra)}")
+        if "platformSpecificData" in item:
+            _validate_overlay_params(item["platformSpecificData"])
+    return v
+
+
 class ComposeRequest(BaseModel):
     toggles: dict = {}
     hook_params: dict = {}
@@ -289,28 +315,7 @@ class PublishRequest(BaseModel):
     @field_validator("platforms")
     @classmethod
     def _validate_platforms(cls, v: List[dict]) -> List[dict]:
-        # Each entry is forwarded verbatim into Zernio's create-post payload.
-        # Require it to be a small, flat object with a known platform + an
-        # accountId, so an attacker can't smuggle arbitrary control keys
-        # (publishNow, scheduledFor, webhookUrl, …) into the upstream request.
-        allowed = {"tiktok", "instagram", "youtube"}
-        for item in v:
-            if not isinstance(item, dict):
-                raise ValueError("each platform must be an object")
-            platform = item.get("platform")
-            if platform not in allowed:
-                raise ValueError(f"platform must be one of {sorted(allowed)}")
-            acct = item.get("accountId")
-            if not isinstance(acct, str) or not acct or len(acct) > 256:
-                raise ValueError("accountId must be a non-empty string (max 256)")
-            extra = set(item) - {"platform", "accountId", "platformSpecificData"}
-            if extra:
-                raise ValueError(f"unexpected platform keys: {sorted(extra)}")
-            # Bound the free-form per-platform payload too — it is forwarded
-            # verbatim to Zernio, so cap size/depth like the overlay params.
-            if "platformSpecificData" in item:
-                _validate_overlay_params(item["platformSpecificData"])
-        return v
+        return validate_publish_platforms(v)
 
     @field_validator("tiktok_settings")
     @classmethod
@@ -318,6 +323,30 @@ class PublishRequest(BaseModel):
         # Forwarded verbatim into Zernio's create-post body; bound it so an
         # authenticated client can't smuggle a huge/nested object through.
         return _validate_overlay_params(v)
+
+
+class LiveMonitorStartRequest(BaseModel):
+    """Start the Kick live-marathon monitor for a channel.
+
+    All runtime config is body-supplied (no env). ``platforms`` reuses the same
+    Zernio target validation as PublishRequest; every produced clip is published
+    with schedule_mode='auto' and a shared >=min_gap_seconds spacing.
+    """
+    slug: str = Field(..., pattern=r"^[a-z0-9_-]+$", max_length=64)
+    platforms: List[dict] = Field(..., min_length=1, max_length=14)
+    segment_seconds: int = Field(1800, ge=60, le=3600)
+    prelive_skip_seconds: int = Field(1800, ge=0, le=7200)
+    min_gap_seconds: int = Field(900, ge=0, le=86400)
+    poll_interval: int = Field(60, ge=30, le=600)
+    loop: bool = False
+    caption_template: str = Field("", max_length=2200)
+    title_template: str = Field("", max_length=500)
+    timezone: Optional[str] = Field(None, max_length=64)
+
+    @field_validator("platforms")
+    @classmethod
+    def _validate_platforms(cls, v: List[dict]) -> List[dict]:
+        return validate_publish_platforms(v)
 
 
 class ZernioConfigRequest(BaseModel):

@@ -172,11 +172,17 @@ async def _apply_hook(
     hook_params: dict,
     intermediate_files: list,
     logo_params: dict = None,
+    reframe_mode: str = None,
 ) -> str:
     """Hook overlay pass. When ``logo_params`` is given the brand logo is
     composited in the SAME encode (hook below, logo topmost — identical
-    z-order to the sequential Hook → Logo passes, one generation cheaper)."""
+    z-order to the sequential Hook → Logo passes, one generation cheaper).
+
+    The hook is visible for the first 4s of the clip only, EXCEPT when
+    ``reframe_mode`` is the literal 'disabled' (letterbox) — full clip then."""
     from clippyme.domain.hooks import add_hook_to_video
+
+    hook_duration = None if reframe_mode == "disabled" else 4
 
     hook_output = os.path.join(job_dir, f"composed_hook_{clip_index}.mp4")
     intermediate_files.append(hook_output)
@@ -211,6 +217,7 @@ async def _apply_hook(
         offset_y,
         style or None,
         logo,
+        hook_duration,
     )
     return hook_output
 
@@ -504,13 +511,15 @@ async def _compose_layers_impl(
             current_input = await _apply_hook(
                 current_input, job_dir, clip_index, hp_clean, intermediate_files,
                 logo_params=logo_params or {},
+                reframe_mode=(clip_info or {}).get("reframe_mode"),
             )
             layers_applied += ["hook", "logo"]
             logger.info("compose_layers: ✓ hook+logo → %s", os.path.basename(current_input))
         elif hook_active:
             hp_clean = {**hook_params, "text": hook_text}
             current_input = await _apply_hook(
-                current_input, job_dir, clip_index, hp_clean, intermediate_files
+                current_input, job_dir, clip_index, hp_clean, intermediate_files,
+                reframe_mode=(clip_info or {}).get("reframe_mode"),
             )
             layers_applied.append("hook")
             logger.info("compose_layers: ✓ hook → %s", os.path.basename(current_input))

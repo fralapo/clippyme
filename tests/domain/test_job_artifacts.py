@@ -99,3 +99,29 @@ def test_relocate_root_job_artifacts_moves_metadata_into_job_dir(tmp_path):
 def test_relocate_root_job_artifacts_no_match_returns_false(tmp_path):
     out = str(tmp_path)
     assert ja.relocate_root_job_artifacts("ghost", os.path.join(out, "ghost"), out) is False
+
+
+def test_record_clip_publish_appends_to_clip_entry(tmp_path):
+    out = str(tmp_path)
+    _write_meta(os.path.join(out, "job1"), "vid", {"shorts": [{"start": 0}, {"start": 10}]})
+    ja.record_clip_publish("job1", 1, out, {"platforms": ["tiktok"], "post_id": "p1"})
+    _, data = ja.load_job_metadata("job1", out)
+    assert data["shorts"][0].get("published", []) == []
+    assert data["shorts"][1]["published"] == [{"platforms": ["tiktok"], "post_id": "p1"}]
+
+
+def test_record_clip_publish_appends_multiple_records(tmp_path):
+    out = str(tmp_path)
+    _write_meta(os.path.join(out, "job1"), "vid", {"shorts": [{"start": 0}]})
+    ja.record_clip_publish("job1", 0, out, {"post_id": "p1"})
+    ja.record_clip_publish("job1", 0, out, {"post_id": "p2"})
+    _, data = ja.load_job_metadata("job1", out)
+    assert [r["post_id"] for r in data["shorts"][0]["published"]] == ["p1", "p2"]
+
+
+def test_record_clip_publish_out_of_range_index_is_noop(tmp_path):
+    out = str(tmp_path)
+    _write_meta(os.path.join(out, "job1"), "vid", {"shorts": [{"start": 0}]})
+    ja.record_clip_publish("job1", 5, out, {"post_id": "p1"})
+    _, data = ja.load_job_metadata("job1", out)
+    assert data["shorts"][0].get("published", []) == []

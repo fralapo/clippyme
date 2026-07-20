@@ -51,7 +51,7 @@ def _install_recording_stubs(monkeypatch, order):
         return out
 
     async def fake_hook(current_input, job_dir, clip_index, hook_params,
-                        intermediate_files):
+                        intermediate_files, logo_params=None, reframe_mode=None):
         order.append("hook")
         out = os.path.join(job_dir, f"composed_hook_{clip_index}.mp4")
         _touch(out)

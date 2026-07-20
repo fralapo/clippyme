@@ -64,14 +64,14 @@ export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }
           return (
             <div className="hrow" key={h.jobId}
               role={ok ? 'button' : undefined} tabIndex={ok ? 0 : undefined}
-              aria-label={ok ? `Open job ${h.source || h.jobId}` : undefined}
+              aria-label={ok ? `Open job ${h.title || h.source || h.jobId}` : undefined}
               onClick={() => ok && onOpen(h)}
               onKeyDown={(e) => { if (ok && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(h); } }}
               style={{ cursor: ok ? 'pointer' : 'default', opacity: removed ? 0.55 : 1 }}>
               <div className="hthumb" style={{ background: removed ? 'var(--bg-4)' : 'var(--grad-viral)' }}>{h.clipCount ?? 0}</div>
               <div style={{ minWidth: 0 }}>
-                <div className="ht" title={h.source || h.jobId}
-                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.source || h.jobId}</div>
+                <div className="ht" title={h.title || h.source || h.jobId}
+                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.title || h.source || h.jobId}</div>
                 <div className="hm">
                   <Icon n={h.sourceType === 'url' ? 'globe' : 'file-video'} style={{ width: 11, height: 11, verticalAlign: '-1px', marginRight: 5 }} />
                   {removed ? 'Files removed (rebuild/cleanup) · delete to dismiss'
@@ -79,6 +79,9 @@ export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }
                 </div>
               </div>
               <div className="hr">
+                {!removed && h.publishedCount > 0 && (
+                  <Badge tone="teal" icon="send">{h.publishedCount} pubblicate</Badge>
+                )}
                 {removed ? <Badge tone="out" icon="triangle-alert">unavailable</Badge>
                   : h.status === 'complete' ? <Badge tone="teal" icon="check">complete</Badge>
                     : h.status === 'error' ? <Badge tone="danger" icon="triangle-alert">error</Badge>
@@ -94,7 +97,7 @@ export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }
   );
 }
 
-function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, present }) {
+function KeyRow({ icon, name, desc, value, onChange, onSave, onClear, placeholder, present }) {
   const [reveal, setReveal] = useState(false);
   // Only persist (and toast) when the field actually changed during this focus
   // session — tabbing past an already-set key shouldn't spam saves/toasts.
@@ -113,7 +116,12 @@ function KeyRow({ icon, name, desc, value, onChange, onSave, placeholder, presen
           onFocus={() => { focusVal.current = value; }}
           onBlur={() => { if (value !== focusVal.current) onSave(); }} />
         <button type="button" className="mini" title={reveal ? 'Hide' : 'Show'} aria-label={reveal ? 'Hide key' : 'Show key'} onClick={() => setReveal(!reveal)}><Icon n={reveal ? 'eye-off' : 'eye'} /></button>
-        {value || present ? <Badge tone="teal" icon="check">set</Badge> : <Badge tone="out">empty</Badge>}
+        {/* Backend-confirmed state only — raw input text (typed but not yet
+            saved) must never flip this badge. */}
+        {present ? <Badge tone="teal" icon="check">set</Badge> : <Badge tone="out">empty</Badge>}
+        {present && onClear && (
+          <button type="button" className="mini" title="Clear saved key" aria-label={`Clear ${name} key`} onClick={onClear}><Icon n="x" /></button>
+        )}
       </div>
     </div>
   );
@@ -155,13 +163,19 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
     finally { setLoadingModels(false); }
   };
 
+  // Source of truth for "is this key set" is always the backend's response,
+  // never the (optimistic) input text — refetched after every save/clear so
+  // the badge can't drift from what's actually persisted.
+  const refreshConfig = async () => {
+    const c = await getConfig();
+    if (!c) { pushToast?.('warn', 'Could not refresh key status'); return; }
+    setPresent({ gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY });
+    if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
+    if (c.GEMINI_MODEL) setModel(c.GEMINI_MODEL);
+  };
+
   useEffect(() => {
-    getConfig().then((c) => {
-      setPresent({ gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY });
-      if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
-      if (c.GEMINI_MODEL) setModel(c.GEMINI_MODEL);
-      loadModels();
-    }).catch(() => {});
+    refreshConfig().then(loadModels);
     getZernio().then((z) => { setZernioState(z); if (z.accounts) setAccts({ tiktok: '', instagram: '', youtube: '', ...z.accounts }); }).catch(() => {});
     cookiesStatus().then((s) => setCookies(!!s.configured)).catch(() => {});
     logoStatus().then((s) => setLogoOn(!!s.configured)).catch(() => {});
@@ -171,7 +185,8 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
   }, []);
 
   const saveKeys = async (patch) => {
-    try { await saveConfig(patch); pushToast?.('success', 'Saved'); } catch { pushToast?.('error', 'Save failed'); }
+    try { await saveConfig(patch); pushToast?.('success', 'Saved'); await refreshConfig(); }
+    catch { pushToast?.('error', 'Save failed'); }
   };
 
   const saveZernioCfg = async () => {
@@ -244,13 +259,17 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
 
       <Panel title="API keys" sub="Required for transcription & moment detection" icon="key-round" style={{ marginBottom: 18 }}>
         <KeyRow icon="sparkles" name="Gemini" desc="Viral-moment detection" value={gemini} present={present.gemini}
-          onChange={(v) => { setGemini(v); onApiKey?.(v); }} onSave={() => gemini && saveKeys({ GEMINI_API_KEY: gemini })} placeholder="AIza…" />
+          onChange={(v) => { setGemini(v); onApiKey?.(v); }} onSave={() => saveKeys({ GEMINI_API_KEY: gemini })}
+          onClear={() => { setGemini(''); onApiKey?.(''); saveKeys({ GEMINI_API_KEY: '' }); }} placeholder="AIza…" />
         <KeyRow icon="audio-lines" name="Deepgram" desc="Nova-3 transcription" value={deepgram} present={present.deepgram}
-          onChange={setDeepgram} onSave={() => deepgram && saveKeys({ DEEPGRAM_API_KEY: deepgram })} placeholder="dg_…" />
+          onChange={setDeepgram} onSave={() => saveKeys({ DEEPGRAM_API_KEY: deepgram })}
+          onClear={() => { setDeepgram(''); saveKeys({ DEEPGRAM_API_KEY: '' }); }} placeholder="dg_…" />
         <KeyRow icon="audio-lines" name="ElevenLabs" desc="Scribe transcription · audio-event tags" value={elevenlabs} present={present.elevenlabs}
-          onChange={setElevenlabs} onSave={() => elevenlabs && saveKeys({ ELEVENLABS_API_KEY: elevenlabs })} placeholder="sk_…" />
+          onChange={setElevenlabs} onSave={() => saveKeys({ ELEVENLABS_API_KEY: elevenlabs })}
+          onClear={() => { setElevenlabs(''); saveKeys({ ELEVENLABS_API_KEY: '' }); }} placeholder="sk_…" />
         <KeyRow icon="scan-face" name="Hugging Face token" desc="Speaker diarization models" value={hf} present={present.hf}
-          onChange={setHf} onSave={() => hf && saveKeys({ HF_TOKEN: hf })} placeholder="hf_…" />
+          onChange={setHf} onSave={() => saveKeys({ HF_TOKEN: hf })}
+          onClear={() => { setHf(''); saveKeys({ HF_TOKEN: '' }); }} placeholder="hf_…" />
         <KeyRow icon="key-round" name="API token" desc="Only for LAN deploys with CLIPPYME_API_TOKEN set — stored in this browser, sent as X-API-Token" value={apiToken} present={!!getApiToken()}
           onChange={setApiTokenState} onSave={() => { setApiToken(apiToken); pushToast?.('success', apiToken.trim() ? 'API token saved' : 'API token cleared'); }} placeholder="Shared secret (leave empty + Save to clear)" />
         <div className="opt" style={{ borderBottom: 0 }}>

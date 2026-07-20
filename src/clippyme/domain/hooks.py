@@ -283,7 +283,18 @@ def create_hook_image(text, target_width, output_image_path="hook_overlay.png",
     return output_image_path, canvas_w, canvas_h
 
 
-def build_hook_overlay_filter(x, y0, animate=False, dur=0.4, slide_px=40):
+def _enable_suffix(enable_end):
+    """`:enable='between(t,0,{enable_end})'` clause, or "" when unset.
+
+    Shared by both overlay builders so the hook-visibility window (first N
+    seconds) is expressed once. Never applied to the logo overlay.
+    """
+    if enable_end is None:
+        return ""
+    return f":enable='between(t,0,{enable_end})'"
+
+
+def build_hook_overlay_filter(x, y0, animate=False, dur=0.4, slide_px=40, enable_end=None):
     """Build the ffmpeg `-filter_complex` graph that overlays the hook PNG
     (input [1:v]) onto the video ([0:v]) at (x, y0).
 
@@ -295,42 +306,49 @@ def build_hook_overlay_filter(x, y0, animate=False, dur=0.4, slide_px=40):
       ease-out-cubic curve (`pow(1-p, 3)` — never linear, video-use rule). The
       hold frame is the final placed position, so the hook stays visible for
       the rest of the clip.
+    - enable_end: when set, the hook is only composited for t in [0, enable_end]
+      (ffmpeg overlay `enable` expression) instead of the whole clip.
     """
     x = int(x)
     y0 = int(y0)
+    suffix = _enable_suffix(enable_end)
     if not animate:
-        return f"[0:v][1:v]overlay={x}:{y0}"
+        return f"[0:v][1:v]overlay={x}:{y0}{suffix}"
     # offset = slide_px * (1-eased) = slide_px * pow(1-p, 3); commas inside the
     # expression must be escaped so ffmpeg doesn't read them as filter splits.
     y_expr = f"{y0}+{int(slide_px)}*pow(1-min(t/{dur}\\,1)\\,3)"
     return (
         f"[1:v]format=yuva420p,fade=t=in:st=0:d={dur}:alpha=1[hk];"
-        f"[0:v][hk]overlay={x}:{y_expr}"
+        f"[0:v][hk]overlay={x}:{y_expr}{suffix}"
     )
 
 
 def build_hook_logo_filter(hook_x, hook_y, logo_chain, logo_x, logo_y,
-                           animate=False, dur=0.4, slide_px=40):
+                           animate=False, dur=0.4, slide_px=40, enable_end=None):
     """Single -filter_complex overlaying the hook PNG ([1:v]) and THEN the
     brand logo PNG ([2:v]) onto the video ([0:v]) — one encode instead of two.
 
     Z-order is preserved exactly: the hook composites first, the logo last
     (topmost), matching the sequential Hook → Logo compose order. Pure string
     math → host-unit-testable.
+
+    enable_end restricts ONLY the hook overlay to t in [0, enable_end] — the
+    logo overlay always stays whole-clip.
     """
+    suffix = _enable_suffix(enable_end)
     if not animate:
-        hook_part = f"[0:v][1:v]overlay={int(hook_x)}:{int(hook_y)}[vh]"
+        hook_part = f"[0:v][1:v]overlay={int(hook_x)}:{int(hook_y)}{suffix}[vh]"
     else:
         y_expr = f"{int(hook_y)}+{int(slide_px)}*pow(1-min(t/{dur}\\,1)\\,3)"
         hook_part = (
             f"[1:v]format=yuva420p,fade=t=in:st=0:d={dur}:alpha=1[hk];"
-            f"[0:v][hk]overlay={int(hook_x)}:{y_expr}[vh]"
+            f"[0:v][hk]overlay={int(hook_x)}:{y_expr}{suffix}[vh]"
         )
     return f"{hook_part};[2:v]{logo_chain}[lg];[vh][lg]overlay={logo_x}:{logo_y}"
 
 
 def add_hook_to_video(video_path, text, output_path, position="top", font_scale=1.0,
-                      offset_y=0, style=None, logo=None):
+                      offset_y=0, style=None, logo=None, hook_duration=None):
     """
     Overlays a text hook box onto a video.
     position: 'top', 'center', 'bottom'
@@ -342,6 +360,8 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
       the brand logo is composited in the SAME encode pass (logo on top of the
       hook, identical z-order to the old sequential Hook → Logo passes) so a
       fully-composed clip pays one generation fewer.
+    hook_duration: optional seconds the hook stays visible (None = whole clip).
+      Never applied to the logo overlay.
     """
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video {video_path} not found")
@@ -387,10 +407,12 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
                 position=logo.get("position", DEFAULT_POSITION),
             )
             filter_complex = build_hook_logo_filter(
-                overlay_x, overlay_y, logo_chain, lx, ly, animate=animate)
+                overlay_x, overlay_y, logo_chain, lx, ly, animate=animate,
+                enable_end=hook_duration)
             extra_inputs = ["-i", logo["path"]]
         else:
-            filter_complex = build_hook_overlay_filter(overlay_x, overlay_y, animate=animate)
+            filter_complex = build_hook_overlay_filter(
+                overlay_x, overlay_y, animate=animate, enable_end=hook_duration)
 
         ffmpeg_cmd = [
             "ffmpeg", "-y",

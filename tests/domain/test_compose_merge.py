@@ -99,7 +99,7 @@ def _run_compose(tmp_path, monkeypatch, toggles, **kwargs):
         return out
 
     async def fake_hook(current_input, job_dir, clip_index, hook_params, files,
-                        logo_params=None):
+                        logo_params=None, reframe_mode=None):
         calls["hook_logo_params"] = logo_params
         out = os.path.join(job_dir, "hooked.mp4")
         with open(out, "wb") as f:
@@ -199,3 +199,35 @@ def test_hook_without_text_still_applies_logo_standalone(tmp_path, monkeypatch):
     )
     assert calls["hook_logo_params"] == "unset", "hook layer must be skipped"
     assert calls["logo"] == 1
+
+
+# --- _apply_hook duration: first-4s window, except letterbox reframe -------
+
+def test_apply_hook_duration_by_reframe_mode(tmp_path, monkeypatch):
+    captured = []
+
+    def fake_add_hook_to_video(video_path, text, output_path, position,
+                               font_scale, offset_y, style, logo, hook_duration):
+        captured.append(hook_duration)
+        with open(output_path, "wb") as f:
+            f.write(b"h")
+        return True
+
+    monkeypatch.setattr(
+        "clippyme.domain.hooks.add_hook_to_video", fake_add_hook_to_video,
+    )
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"in")
+
+    for reframe_mode, expected in (
+        ("disabled", None),
+        ("auto", 4),
+        ("subject", 4),
+        ("object", 4),
+        (None, 4),
+    ):
+        asyncio.run(compose._apply_hook(
+            str(clip), str(tmp_path), 0, {"text": "hi"}, [],
+            reframe_mode=reframe_mode,
+        ))
+    assert captured == [None, 4, 4, 4, 4]

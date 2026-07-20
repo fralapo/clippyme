@@ -12,6 +12,7 @@ import { ProcessingView } from './processing';
 import { ResultsView } from './results';
 import { PublishModal } from './publish';
 import { HistoryView, SettingsView, ApiKeyModal } from './views';
+import { LiveMonitorView } from './live';
 import { EditClipModal } from './captions';
 import { optsToPreselections, restoreJob, listBackendJobIds, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from './realApi';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from './presets';
@@ -406,6 +407,8 @@ export default function RedesignApp() {
           onApplyToAll={applyClipToAll} onEditSelected={(targets) => setBulkEdit({ targets })}
           pushToast={pushToast} />
       )}
+
+      {tab === 'live' && <LiveMonitorView pushToast={pushToast} />}
 
       {tab === 'history' && !viewingHistory && (
         <HistoryView history={history} availableIds={availableJobIds}

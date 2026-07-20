@@ -59,6 +59,19 @@ def save_job_metadata(metadata_path: str, data: dict) -> None:
         raise
 
 
+def record_clip_publish(job_id: str, clip_index: int, output_dir: str, record: dict) -> None:
+    """Append a publish record onto a clip's metadata entry (atomic).
+
+    Best-effort by design: callers should treat a failure here as non-fatal
+    (the publish itself already succeeded) and just log it.
+    """
+    metadata_path, data = load_job_metadata(job_id, output_dir)
+    shorts = data.get("shorts", [])
+    if 0 <= clip_index < len(shorts):
+        shorts[clip_index].setdefault("published", []).append(record)
+        save_job_metadata(metadata_path, data)
+
+
 def relocate_root_job_artifacts(job_id: str, job_output_dir: str, output_dir: str) -> bool:
     """Backward-compat rescue.
 

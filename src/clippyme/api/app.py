@@ -47,6 +47,7 @@ from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
     EditAIRequest,
+    LiveMonitorStartRequest,
     ProcessRequest,
     PublishRequest,
     ReframeRequest,
@@ -108,6 +109,15 @@ persist_jobs = make_journal_writer(jobs=jobs, path=JOURNAL_PATH)
 # rule: the body lives in clippyme.domain.job_runner).
 run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs)
 
+# Kick live-marathon monitor: one asyncio task that captures live segments,
+# submits them as normal jobs, and auto-publishes clips. Bound to the same
+# shared job state (thin-handler rule: logic lives in domain.live_monitor).
+from clippyme.domain.live_monitor import LiveMonitor
+live_monitor = LiveMonitor(
+    jobs=jobs, job_queue=job_queue, output_dir=OUTPUT_DIR,
+    upload_dir=UPLOAD_DIR, on_job_change=persist_jobs,
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -140,6 +150,12 @@ async def lifespan(app: FastAPI):
     from clippyme.integrations.auto_editor_updater import background_updater_loop
     ae_updater_task = asyncio.create_task(background_updater_loop())
     yield
+    # Stop the live monitor first so its in-flight capture/publish tasks unwind
+    # cleanly before we tear down the worker loops they depend on.
+    try:
+        await live_monitor.stop()
+    except Exception:
+        logger.exception("live monitor failed to stop cleanly")
     # Cancel ALL background tasks on shutdown — not just the updater. Leaving
     # the worker/cleanup loops pending blocks uvicorn's graceful exit and logs
     # "Task was destroyed but it is pending!" tracebacks.
@@ -763,6 +779,33 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
         job_id=job_id, clip_index=clip_index, resolved=resolved,
         req=req.model_dump(), zernio_cfg=load_zernio_config(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Kick live-monitor endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/live-monitor/start")
+async def live_monitor_start(req: LiveMonitorStartRequest, request: Request):
+    """Start monitoring a Kick channel: poll → capture segments → publish clips."""
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "livemonitor", capacity=10, refill_per_sec=10 / 60)
+    # start() raises ValidationError/ConflictError (ClippyMeError) → mapped to HTTP.
+    return live_monitor.start(req.model_dump())
+
+
+@app.post("/api/live-monitor/stop")
+async def live_monitor_stop(request: Request):
+    """Stop the live monitor and let in-flight publishes drain."""
+    require_trusted_config_request(request)
+    return await live_monitor.stop()
+
+
+@app.get("/api/live-monitor/status")
+async def live_monitor_status(request: Request):
+    """Current monitor state (running/state/counters/last error)."""
+    require_trusted_config_request(request)
+    return live_monitor.status()
 
 
 @app.post("/api/history/{job_id}/restore")

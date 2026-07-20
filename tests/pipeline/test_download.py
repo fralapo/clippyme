@@ -96,3 +96,73 @@ def test_resolve_cookies_none_when_nothing_available(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
     assert dl._resolve_cookies_path(None) is None
+
+
+# ── player-client fallback chain ──────────────────────────────────────────
+
+def test_player_client_chain_default(monkeypatch):
+    monkeypatch.delenv("YTDLP_PLAYER_CLIENTS", raising=False)
+    assert dl._player_client_chain() == ["default", "tv+tv_embedded", "web_safari"]
+
+
+def test_player_client_chain_env_override(monkeypatch):
+    monkeypatch.setenv("YTDLP_PLAYER_CLIENTS", " web_safari , tv , default ")
+    assert dl._player_client_chain() == ["web_safari", "tv", "default"]
+
+
+def test_player_client_chain_blank_env_falls_back(monkeypatch):
+    monkeypatch.setenv("YTDLP_PLAYER_CLIENTS", "   ")
+    assert dl._player_client_chain() == ["default", "tv+tv_embedded", "web_safari"]
+
+
+def test_extractor_args_default_is_none():
+    assert dl._extractor_args_for("default") is None
+    assert dl._extractor_args_for("") is None
+
+
+def test_extractor_args_single_client():
+    assert dl._extractor_args_for("web_safari") == {
+        "youtube": {"player_client": ["web_safari"]}
+    }
+
+
+def test_extractor_args_joined_clients():
+    assert dl._extractor_args_for("tv+tv_embedded") == {
+        "youtube": {"player_client": ["tv", "tv_embedded"]}
+    }
+
+
+# ── classify_download_error (retry vs fatal) ──────────────────────────────
+
+@pytest.mark.parametrize("msg", [
+    "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+    "Requested format is not available",
+    "requested format not available. Use --list-formats",
+    "No video formats found!; please report this issue",
+    "empty formats returned by extractor",
+    "403 Forbidden",
+])
+def test_classify_retry(msg):
+    assert dl.classify_download_error(msg) == "retry"
+
+
+@pytest.mark.parametrize("msg", [
+    "ERROR: Sign in to confirm you're not a bot. Use --cookies",
+    "ERROR: Private video. Sign in if you've been granted access",
+    "This video is private",
+    "Video unavailable. This video has been removed by the user",
+    "Video unavailable",
+    "The uploader has not made this video available in your country",
+    "The uploader has blocked it in your country on copyright grounds",
+    "This video is no longer available because the account was terminated",
+    "some totally unrecognised failure mode",
+    "",
+])
+def test_classify_fatal(msg):
+    assert dl.classify_download_error(msg) == "fatal"
+
+
+def test_classify_bot_wall_beats_any_incidental_403():
+    # Page-level bot wall is fatal even if a 403 substring is nearby.
+    msg = "Sign in to confirm you're not a bot (HTTP Error 403)"
+    assert dl.classify_download_error(msg) == "fatal"

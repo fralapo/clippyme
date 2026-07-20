@@ -10,8 +10,9 @@ import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams } from 
 import { localDatePlus } from '../lib/scheduleDates';
 import { useModalA11y } from './useModalA11y';
 
-// redesign plat id → backend platform + account key
-const PLAT = {
+// redesign plat id → backend platform + account key. Exported so other
+// surfaces publishing to Zernio (live.jsx) don't re-derive this mapping.
+export const PLAT = {
   tiktok: { platform: 'tiktok', acct: 'tiktok', icon: 'tiktok', label: 'TikTok' },
   ig: { platform: 'instagram', acct: 'instagram', icon: 'instagram', label: 'Reels' },
   yt: { platform: 'youtube', acct: 'youtube', icon: 'youtube', label: 'Shorts' },

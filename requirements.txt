@@ -44,6 +44,12 @@ psutil==7.0.0
 # Python 3.11+, released Oct 2025) is a drop-in faster alternative —
 # swap only if profiling shows the parse step is >5% of request time.
 json-repair>=0.30
+# Kick live-monitor (kick_client.py): Cloudflare-gated Kick API needs browser
+# TLS/JA3 impersonation; plain requests gets 403. Imported lazily so host tests
+# and upload-only setups don't require the wheel. Reuses cffi/certifi (already
+# pinned above). Also enables yt-dlp's curl_cffi impersonation (auto-detected
+# when installed — defense-in-depth against YouTube bot detection).
+curl-cffi>=0.15,<1.0
 # Optional: speaker diarization via pyannote.audio. main.py:_diarize_with_pyannote
 # imports it lazily and skips with a soft warning if absent, so it is intentionally
 # NOT installed by default (it pulls torchaudio + a gated HF model download).

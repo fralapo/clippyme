@@ -198,7 +198,9 @@ export async function listBackendJobIds() {
 
 export async function getConfig() {
   const res = await apiFetch(getApiUrl('/api/config'));
-  if (!res.ok) return {};
+  // null (not {}) on failure — callers must not mistake "couldn't reach the
+  // backend" for "no keys configured" and wipe already-known present state.
+  if (!res.ok) return null;
   return res.json();
 }
 
@@ -299,6 +301,36 @@ export async function saveZernio(payload) {
 export async function discoverZernioAccounts() {
   const res = await apiFetch(getApiUrl('/api/zernio/accounts'));
   if (!res.ok) throw new Error('Discover failed');
+  return res.json();
+}
+
+// --- Kick live-channel monitor ---------------------------------------------
+
+export async function startLiveMonitor(config) {
+  const res = await apiFetch(getApiUrl('/api/live-monitor/start'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function stopLiveMonitor() {
+  const res = await apiFetch(getApiUrl('/api/live-monitor/stop'), { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json().catch(() => ({}));
+}
+
+export async function getLiveMonitorStatus() {
+  const res = await apiFetch(getApiUrl('/api/live-monitor/status'));
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
