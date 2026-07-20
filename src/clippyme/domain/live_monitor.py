@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
+from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
 from clippyme.integrations.social_publisher import SmartScheduler
 
 logger = logging.getLogger("clippyme")
@@ -213,9 +214,9 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
         "poll_interval": _clamp_int(config.get("poll_interval"), default_poll, 30, 3600),
         "loop": bool(config.get("loop", False)),
         # Optional AI instructions steering Gemini viral-clip selection —
-        # mirrors ProcessRequest.instructions (same 2000-char cap, enforced
+        # mirrors ProcessRequest.instructions (same MAX_INSTRUCTIONS_LEN cap,
         # again downstream by build_main_cmd/gemini_request).
-        "instructions": str(config.get("instructions") or "").strip()[:2000],
+        "instructions": str(config.get("instructions") or "").strip()[:MAX_INSTRUCTIONS_LEN],
         "caption_template": str(config.get("caption_template") or "")[:2200],
         "title_template": str(config.get("title_template") or "")[:500],
         "timezone": str(config.get("timezone") or default_timezone or "Europe/Rome")[:64],

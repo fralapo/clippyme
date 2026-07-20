@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 # the pipeline no longer imports from clippyme.api. Re-exported here for
 # backward compatibility (existing imports from clippyme.api.schemas keep working).
 from clippyme.schemas import ViralClip, ViralClipsResponse  # noqa: F401
+from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
 
 
 def _reject_internal_host(host: str) -> None:
@@ -63,7 +64,7 @@ class ProcessRequest(BaseModel):
     # validated downstream (reframe_mode by argparse choices, language by
     # ALLOWED_LANGUAGES in job_results.build_main_cmd, instructions by
     # length cap).
-    instructions: Optional[str] = Field(None, max_length=2000)
+    instructions: Optional[str] = Field(None, max_length=MAX_INSTRUCTIONS_LEN)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
     aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
     language: Optional[str] = Field(None, max_length=16)
@@ -78,7 +79,7 @@ class ProcessRequest(BaseModel):
 
 class BatchRequest(BaseModel):
     urls: List[str] = Field(..., min_length=1, max_length=20)
-    instructions: Optional[str] = Field(None, max_length=2000)
+    instructions: Optional[str] = Field(None, max_length=MAX_INSTRUCTIONS_LEN)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
     aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
 
@@ -360,7 +361,7 @@ class LiveMonitorStartRequest(BaseModel):
     title_template: str = Field("", max_length=500)
     # AI instructions steering Gemini viral-clip selection — mirrors
     # ProcessRequest.instructions (same cap; domain layer trims/re-caps).
-    instructions: Optional[str] = Field(None, max_length=2000)
+    instructions: Optional[str] = Field(None, max_length=MAX_INSTRUCTIONS_LEN)
     timezone: Optional[str] = Field(None, max_length=64)
     # Attribution-banner override for auto-published clips. None → auto from the
     # monitor's own platform + channel; {"enabled": false} disables it; a dict

@@ -192,8 +192,9 @@ def test_validate_config_custom_timezone_passthrough():
 def test_validate_config_instructions_trimmed_and_capped():
     cfg = validate_monitor_config(_base_cfg(instructions="  find the funniest bits  "))
     assert cfg["instructions"] == "find the funniest bits"
-    cfg = validate_monitor_config(_base_cfg(instructions="x" * 3000))
-    assert len(cfg["instructions"]) == 2000
+    from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
+    cfg = validate_monitor_config(_base_cfg(instructions="x" * (MAX_INSTRUCTIONS_LEN + 1000)))
+    assert len(cfg["instructions"]) == MAX_INSTRUCTIONS_LEN
 
 
 def test_validate_config_instructions_defaults_empty():

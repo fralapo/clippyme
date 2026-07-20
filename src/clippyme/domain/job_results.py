@@ -15,7 +15,7 @@ logger = logging.getLogger("clippyme")
 # normalized to 'subject' internally via canonical_reframe_mode().
 ALLOWED_REFRAME_MODES = frozenset({"auto", "disabled", "subject", "object"})
 REFRAME_MODE_ALIASES = {"object": "subject"}
-MAX_INSTRUCTIONS_LEN = 2000
+MAX_INSTRUCTIONS_LEN = 5000
 
 
 def canonical_reframe_mode(mode):
