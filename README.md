@@ -171,6 +171,7 @@ Runtime env overrides (rarely needed):
 | `ZERNIO_DEFAULT_TZ` | `Europe/Rome` | |
 | `ZERNIO_MIN_GAP_SECONDS` | `5400` | SmartScheduler min spacing between posts. |
 | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | _(unset)_ | Helix app creds ([dev.twitch.tv](https://dev.twitch.tv/console/apps)) for the Twitch content monitor. Also settable in Settings. Fallback only if not stored in `data/config.json`. |
+| `MAX_FILE_SIZE_MB` | `16384` | Max local-video upload size in MB (16 GB default — long stream VODs easily exceed the old 2 GB). Raising past 16 GB behind the prod nginx frontend also requires raising `client_max_body_size` in `dashboard/nginx.conf`. |
 | `REFRAME_SMOOTHER` | _(blank)_ | `euro` switches the speaker camera to the 1€ adaptive filter; blank keeps the two-speed EMA. |
 | `REFRAME_LOST_HOLD` | `90` | Frames a lost subject is held before the camera drifts back to center (~3 s @ 30 fps). |
 | `REFRAME_LOST_DRIFT` | `0.05` | Per-frame ease rate of the drift-to-center recovery. |

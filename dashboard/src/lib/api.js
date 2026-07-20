@@ -67,8 +67,8 @@ export async function submitProcessJob(data, apiKey) {
     if (model) jsonBody.model = model;
     body = JSON.stringify(jsonBody);
   } else {
-    if (data.payload?.size > 2048 * 1024 * 1024) {
-      throw new Error('File too large. Max size 2048MB');
+    if (data.payload?.size > 16384 * 1024 * 1024) {
+      throw new Error('File too large. Max size 16384MB');
     }
     const formData = new FormData();
     formData.append('file', data.payload);

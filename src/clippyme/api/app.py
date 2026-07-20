@@ -84,7 +84,7 @@ save_persistent_config(load_persistent_config())
 # Configuration
 # Default to 1 if not set, but user can set higher for powerful servers
 MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
-MAX_FILE_SIZE_MB = int(os.environ.get("MAX_FILE_SIZE_MB", "2048"))
+MAX_FILE_SIZE_MB = int(os.environ.get("MAX_FILE_SIZE_MB", "16384"))
 # Default retention is 30 days — the frontend History tab is the
 # authoritative source of truth for what the user considers "done".
 # Aggressive auto-purge was destroying clips behind the user's back
