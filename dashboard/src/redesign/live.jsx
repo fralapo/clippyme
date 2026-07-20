@@ -7,7 +7,7 @@ import { Hero } from './chrome';
 import { Icon, Panel, Btn, Badge, Switch, Segmented, PlatPill, PLATFORMS } from './primitives';
 import { getZernio, startLiveMonitor, stopLiveMonitor } from './realApi';
 import { PLAT } from './publish';
-import { validateSlug, buildPlatformTargets, classifyStartError } from '../lib/liveMonitorForm';
+import { validateSlug, buildPlatformTargets, classifyStartError, clampMonitorTimings } from '../lib/liveMonitorForm';
 import { buildMonitorBannerPayload } from '../lib/liveMonitorBanner';
 import { BannerControls } from './bannerControls';
 import { useLiveMonitorStatus } from '../hooks/useLiveMonitorStatus';
@@ -111,9 +111,7 @@ export function LiveMonitorView({ pushToast }) {
         platform,
         mode,
         platforms: targets,
-        segment_seconds: Math.round(segmentMin * 60),
-        prelive_skip_seconds: Math.round(preliveMin * 60),
-        min_gap_seconds: Math.round(minGapMin * 60),
+        ...clampMonitorTimings(segmentMin, preliveMin, minGapMin),
         loop,
         caption_template: captionTemplate,
         title_template: titleTemplate,

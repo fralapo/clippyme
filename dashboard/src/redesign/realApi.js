@@ -316,7 +316,12 @@ export async function startLiveMonitor(config) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || `HTTP ${res.status}`);
+    // FastAPI 422 detail is an array of {loc, msg} objects — flatten it to
+    // "field: message" text or the toast reads "[object Object]".
+    const detail = Array.isArray(err.detail)
+      ? err.detail.map((d) => `${(d.loc || []).slice(1).join('.')}: ${d.msg}`).join('; ')
+      : err.detail;
+    throw new Error(detail || `HTTP ${res.status}`);
   }
   return res.json();
 }

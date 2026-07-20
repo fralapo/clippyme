@@ -34,6 +34,24 @@ export function buildPlatformTargets(plats, accounts, platMap) {
     .map((k) => ({ platform: platMap[k].platform, accountId: accounts[platMap[k].acct] }));
 }
 
+// Convert the form's minute fields into the seconds payload, clamped to the
+// backend schema bounds (segment 60–3600s, prelive 0–7200s, gap 0–86400s).
+// A cleared/garbage number input yields NaN (Number('') === 0, Number('x') is
+// NaN) which used to reach the API as 0/null and 422 — clamp instead so Start
+// always sends a valid request.
+export function clampMonitorTimings(segmentMin, preliveMin, minGapMin) {
+  const secs = (v, fallback) => {
+    const n = Math.round(Number(v) * 60);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+  return {
+    segment_seconds: clamp(secs(segmentMin, 1800), 60, 3600),
+    prelive_skip_seconds: clamp(secs(preliveMin, 1800), 0, 7200),
+    min_gap_seconds: clamp(secs(minGapMin, 900), 0, 86400),
+  };
+}
+
 // Classify a failed /api/live-monitor/start error message so the UI can show
 // a targeted toast instead of a generic failure banner.
 export function classifyStartError(message) {

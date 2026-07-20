@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 
-import { validateSlug, buildPlatformTargets, classifyStartError } from './liveMonitorForm.js';
+import { validateSlug, buildPlatformTargets, classifyStartError, clampMonitorTimings } from './liveMonitorForm.js';
 
 test('validateSlug: kick/twitch required, charset, length', () => {
   assert.equal(validateSlug(''), 'Channel is required');
@@ -52,4 +52,29 @@ test('classifyStartError: duplicate / twitch creds / other', () => {
   );
   assert.equal(classifyStartError('Gemini API key not configured'), 'other');
   assert.equal(classifyStartError(''), 'other');
+});
+
+test('clampMonitorTimings: defaults pass through in seconds', () => {
+  assert.deepEqual(clampMonitorTimings(30, 30, 15), {
+    segment_seconds: 1800, prelive_skip_seconds: 1800, min_gap_seconds: 900,
+  });
+});
+
+test('clampMonitorTimings: cleared input (0/NaN) never 422s', () => {
+  // Number('') === 0 → segment would be 0 (< schema min 60) without clamping.
+  const zeroed = clampMonitorTimings(0, 0, 0);
+  assert.equal(zeroed.segment_seconds, 60);
+  assert.equal(zeroed.prelive_skip_seconds, 0);
+  assert.equal(zeroed.min_gap_seconds, 0);
+  // NaN (garbage input) falls back to the schema defaults.
+  assert.deepEqual(clampMonitorTimings(NaN, NaN, NaN), {
+    segment_seconds: 1800, prelive_skip_seconds: 1800, min_gap_seconds: 900,
+  });
+});
+
+test('clampMonitorTimings: values above schema caps are clamped', () => {
+  const big = clampMonitorTimings(90, 999, 99999);
+  assert.equal(big.segment_seconds, 3600);       // 90min → cap 60min
+  assert.equal(big.prelive_skip_seconds, 7200);  // cap 120min
+  assert.equal(big.min_gap_seconds, 86400);      // cap 24h
 });
