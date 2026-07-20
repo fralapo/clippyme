@@ -36,7 +36,7 @@ import shutil
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
 from clippyme.integrations.social_publisher import SmartScheduler
@@ -62,6 +62,19 @@ STATE_FILENAME = "live_monitor.json"
 def should_process_segment(duration: float, min_seconds: float = MIN_PROCESS_SECONDS) -> bool:
     """True when a captured segment is long enough to bother processing."""
     return duration is not None and duration >= min_seconds
+
+
+def remaining_prelive(prelive_skip_seconds: int, started_at, now) -> int:
+    """Seconds still to skip in the prelive window, anchored to the STREAM's
+    actual start time rather than whenever the monitor happened to start
+    polling. If the stream is already older than the window, returns 0 (skip
+    is bypassed and capture starts immediately). Falls back to the full
+    window when ``started_at`` is unknown (None)."""
+    prelive_skip_seconds = max(0, int(prelive_skip_seconds))
+    if started_at is None:
+        return prelive_skip_seconds
+    elapsed = (now - started_at).total_seconds()
+    return max(0, int(prelive_skip_seconds - elapsed))
 
 
 def render_template(template: str, clip: dict) -> str:
@@ -198,6 +211,10 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
         "min_gap_seconds": _clamp_int(config.get("min_gap_seconds"), 900, 0, 86400),
         "poll_interval": _clamp_int(config.get("poll_interval"), default_poll, 30, 3600),
         "loop": bool(config.get("loop", False)),
+        # Optional AI instructions steering Gemini viral-clip selection —
+        # mirrors ProcessRequest.instructions (same 2000-char cap, enforced
+        # again downstream by build_main_cmd/gemini_request).
+        "instructions": str(config.get("instructions") or "").strip()[:2000],
         "caption_template": str(config.get("caption_template") or "")[:2200],
         "title_template": str(config.get("title_template") or "")[:500],
         "timezone": str(config.get("timezone") or default_timezone or "Europe/Rome")[:64],
@@ -234,9 +251,9 @@ class KickStrategy:
         self._client = KickClient()
 
     def get_live_state(self):
-        from clippyme.integrations.kick_client import is_live, playback_url
+        from clippyme.integrations.kick_client import is_live, playback_url, stream_started_at
         ch = self._client.get_channel(self.channel)
-        return is_live(ch), playback_url(ch)
+        return is_live(ch), playback_url(ch), stream_started_at(ch)
 
     def capture_args(self, seg_path: str, seconds: int, url):
         if url:
@@ -262,8 +279,9 @@ class TwitchStrategy:
         self._user_id = None
 
     def get_live_state(self):
-        from clippyme.integrations.twitch_client import stream_is_live
-        return stream_is_live(self._client.get_stream(self.channel)), None
+        from clippyme.integrations.twitch_client import stream_is_live, stream_started_at
+        streams = self._client.get_stream(self.channel)
+        return stream_is_live(streams), None, stream_started_at(streams)
 
     def capture_args(self, seg_path: str, seconds: int, url):
         if not shutil.which("streamlink"):
@@ -478,25 +496,31 @@ class LiveMonitor:
     async def _run_live(self) -> None:
         self.state = "waiting_live"
         while not self._stop.is_set():
-            live, _ = await asyncio.to_thread(self._strategy.get_live_state)
+            live, _, started_at = await asyncio.to_thread(self._strategy.get_live_state)
             if live:
-                await self._marathon()
+                await self._marathon(started_at)
                 if not self.cfg["loop"]:
                     break
             self.state = "waiting_live"
             await self._interruptible_sleep(self._jittered_poll())
 
-    async def _marathon(self) -> None:
-        """Handle one live session: prelive skip, then the capture loop."""
+    async def _marathon(self, started_at=None) -> None:
+        """Handle one live session: prelive skip, then the capture loop.
+
+        ``started_at`` is the stream's own start time (from the
+        ``get_live_state`` call that discovered it live), used to skip only
+        the REMAINDER of the prelive window if the stream was already
+        running before this monitor noticed it.
+        """
         from clippyme.pipeline.media_probe import probe_duration
 
         self.state = "prelive"
-        if not await self._skip_prelive():
+        if not await self._skip_prelive(started_at):
             return  # stream ended (or stop requested) during prelive
 
         self.state = "capturing"
         while not self._stop.is_set():
-            live, url = await asyncio.to_thread(self._strategy.get_live_state)
+            live, url, _ = await asyncio.to_thread(self._strategy.get_live_state)
             if not live:
                 break
             seg_path = await self._capture_segment(url)
@@ -518,15 +542,24 @@ class LiveMonitor:
                 break
         self.state = "draining"
 
-    async def _skip_prelive(self) -> bool:
-        """Sleep out the prelive window, aborting if the stream ends. Returns
-        True to proceed to capture, False if we should stop this session."""
-        remaining = self.cfg["prelive_skip_seconds"]
+    async def _skip_prelive(self, started_at=None) -> bool:
+        """Sleep out the (remainder of the) prelive window, aborting if the
+        stream ends. Skips the first N minutes of the STREAM, not N minutes
+        from monitor start — if the stream was already older than the window
+        when detected, ``remaining`` collapses to 0 and capture starts
+        immediately. Returns True to proceed to capture, False if we should
+        stop this session."""
+        remaining = remaining_prelive(
+            self.cfg["prelive_skip_seconds"], started_at, datetime.now(timezone.utc))
+        if remaining < self.cfg["prelive_skip_seconds"]:
+            logger.info(
+                "LiveMonitor %s: stream already live (started_at=%s) — "
+                "prelive skip shortened to %ss", self.id, started_at, remaining)
         step = min(self.cfg["poll_interval"], 60)
         while remaining > 0 and not self._stop.is_set():
             await self._interruptible_sleep(min(step, remaining))
             remaining -= step
-            live, _ = await asyncio.to_thread(self._strategy.get_live_state)
+            live, _, _ = await asyncio.to_thread(self._strategy.get_live_state)
             if not live:
                 return False
         return not self._stop.is_set()
@@ -629,7 +662,7 @@ class LiveMonitor:
         # top bar, the attribution banner attached under the video band, and
         # subtitles below it — all of which need the un-reframed 9:16 layout.
         cmd = build_main_cmd(input_path=os.path.abspath(seg_path), output_dir=job_dir,
-                             reframe_mode="disabled")
+                             reframe_mode="disabled", instructions=self.cfg.get("instructions") or None)
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
             cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
@@ -643,7 +676,7 @@ class LiveMonitor:
         job_id, job_dir, env = self._new_job_dir()
         cookies_path = os.path.join("data", "cookies.txt")
         cmd = build_main_cmd(url=url, output_dir=job_dir, cookies_path=cookies_path,
-                             reframe_mode="disabled")
+                             reframe_mode="disabled", instructions=self.cfg.get("instructions") or None)
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
             cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)

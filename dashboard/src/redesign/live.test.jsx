@@ -106,6 +106,17 @@ test('banner defaults to Auto and sends null', async () => {
   expect(startLiveMonitor.mock.calls[0][0].banner).toBeNull();
 });
 
+test('AI instructions field is included in the start payload', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  fireEvent.change(screen.getByLabelText('AI instructions'), { target: { value: 'find the funniest bits' } });
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  expect(startLiveMonitor.mock.calls[0][0].instructions).toBe('find the funniest bits');
+});
+
 test('banner Off sends {enabled:false}', async () => {
   const { startLiveMonitor } = await import('./realApi');
   render(<LiveMonitorView />);

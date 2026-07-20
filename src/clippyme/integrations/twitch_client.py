@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger("clippyme")
@@ -23,6 +24,22 @@ HELIX_URL = "https://api.twitch.tv/helix"
 def stream_is_live(streams_json) -> bool:
     """True when GET /helix/streams returned a non-empty ``data`` array."""
     return bool((streams_json or {}).get("data"))
+
+
+def stream_started_at(streams_json) -> Optional[datetime]:
+    """Parse the live stream's ``started_at`` (ISO 8601 Z) from GET
+    /helix/streams, UTC-aware. None when offline/missing/unparseable."""
+    data = (streams_json or {}).get("data") or []
+    if not data:
+        return None
+    raw = data[0].get("started_at")
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def parse_vods(videos_json) -> list:

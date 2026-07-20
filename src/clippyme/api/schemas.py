@@ -358,6 +358,9 @@ class LiveMonitorStartRequest(BaseModel):
     loop: bool = False
     caption_template: str = Field("", max_length=2200)
     title_template: str = Field("", max_length=500)
+    # AI instructions steering Gemini viral-clip selection — mirrors
+    # ProcessRequest.instructions (same cap; domain layer trims/re-caps).
+    instructions: Optional[str] = Field(None, max_length=2000)
     timezone: Optional[str] = Field(None, max_length=64)
     # Attribution-banner override for auto-published clips. None → auto from the
     # monitor's own platform + channel; {"enabled": false} disables it; a dict

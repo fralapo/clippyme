@@ -4,7 +4,7 @@
 // from publish.jsx (same PLAT map + accounts source).
 import { useState, useEffect } from 'react';
 import { Hero } from './chrome';
-import { Panel, Btn, Badge, Switch, Segmented, PlatPill, PLATFORMS } from './primitives';
+import { Icon, Panel, Btn, Badge, Switch, Segmented, PlatPill, PLATFORMS } from './primitives';
 import { getZernio, startLiveMonitor, stopLiveMonitor } from './realApi';
 import { PLAT } from './publish';
 import { validateSlug, buildPlatformTargets, classifyStartError } from '../lib/liveMonitorForm';
@@ -75,6 +75,7 @@ export function LiveMonitorView({ pushToast }) {
   const [plats, setPlats] = useState({ tiktok: true, ig: true, yt: false });
   const [captionTemplate, setCaptionTemplate] = useState('');
   const [titleTemplate, setTitleTemplate] = useState('');
+  const [instructions, setInstructions] = useState('');
   const [loop, setLoop] = useState(false);
   const [bannerMode, setBannerMode] = useState('auto'); // auto | off | custom
   const [bannerPlatform, setBannerPlatform] = useState('kick');
@@ -116,6 +117,7 @@ export function LiveMonitorView({ pushToast }) {
         loop,
         caption_template: captionTemplate,
         title_template: titleTemplate,
+        instructions,
         banner: buildMonitorBannerPayload(bannerMode, { platform: bannerPlatform, handle: bannerHandle, y_pct: bannerYPct }),
       });
       pushToast?.('success', `Monitoring ${slug.trim()}…`);
@@ -201,6 +203,12 @@ export function LiveMonitorView({ pushToast }) {
           <span className="field-label">Caption template (optional)</span>
           <textarea className="ta" rows="2" aria-label="Caption template" placeholder="{hook}"
             value={captionTemplate} onChange={(e) => setCaptionTemplate(e.target.value)}></textarea>
+        </div>
+        <div className="field">
+          <span className="field-label"><Icon n="sparkles" style={{ color: 'var(--brand-blue)' }} /> AI instructions · optional</span>
+          <textarea className="ta" rows="2" aria-label="AI instructions" value={instructions}
+            placeholder="e.g. “Find the funniest moments” or “Skip the intro, focus on the demo”"
+            onChange={(e) => setInstructions(e.target.value)}></textarea>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: isVod ? '1fr' : 'repeat(3,1fr)', gap: 8, marginBottom: 14 }}>

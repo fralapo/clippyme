@@ -3,8 +3,16 @@
 Pure readers (is_live / playback_url) plus get_channel with a fake curl_cffi
 module injected — no network, no curl_cffi wheel required on the host.
 """
+from datetime import timezone
+
 from clippyme.integrations import kick_client
-from clippyme.integrations.kick_client import KickClient, extract_vods, is_live, playback_url
+from clippyme.integrations.kick_client import (
+    KickClient,
+    extract_vods,
+    is_live,
+    playback_url,
+    stream_started_at,
+)
 
 
 # --- extract_vods (defensive field fallbacks) ------------------------------
@@ -55,6 +63,28 @@ def test_playback_url_extraction():
     assert playback_url({"playback_url": "http://top"}) == "http://top"
     assert playback_url({"livestream": {}}) is None
     assert playback_url(None) is None
+
+
+# --- stream_started_at (pure, tolerant) -------------------------------------
+
+def test_stream_started_at_iso_z():
+    dt = stream_started_at({"livestream": {"created_at": "2026-07-21T12:00:00.000000Z"}})
+    assert dt == dt.replace(hour=12, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+    assert dt.tzinfo is not None
+
+
+def test_stream_started_at_space_separated():
+    dt = stream_started_at({"livestream": {"start_time": "2026-07-21 09:30:00"}})
+    assert dt.tzinfo is not None
+    assert (dt.hour, dt.minute) == (9, 30)
+
+
+def test_stream_started_at_missing_or_bad():
+    assert stream_started_at(None) is None
+    assert stream_started_at({}) is None
+    assert stream_started_at({"livestream": None}) is None
+    assert stream_started_at({"livestream": {"created_at": "not a date"}}) is None
+    assert stream_started_at({"livestream": {"created_at": 12345}}) is None
 
 
 # --- get_channel (fake curl_cffi) ------------------------------------------

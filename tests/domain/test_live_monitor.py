@@ -3,7 +3,7 @@
 No curl_cffi / ffmpeg / event loop needed — LiveMonitor.__init__ is cheap and
 the helpers under test are pure.
 """
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -12,6 +12,7 @@ from clippyme.domain.live_monitor import (
     LiveMonitorRegistry,
     SharedGapScheduler,
     build_monitor_compose,
+    remaining_prelive,
     render_template,
     should_process_segment,
     validate_monitor_config,
@@ -73,6 +74,31 @@ def test_should_process_segment_floor():
     assert should_process_segment(299) is False     # just under → drop
     assert should_process_segment(0) is False
     assert should_process_segment(None) is False
+
+
+# --- remaining_prelive -------------------------------------------------------
+
+def test_remaining_prelive_none_started_at_falls_back_to_full_window():
+    now = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    assert remaining_prelive(1800, None, now) == 1800
+
+
+def test_remaining_prelive_fresh_stream_returns_partial():
+    now = datetime(2026, 7, 21, 12, 10, tzinfo=timezone.utc)  # 10 min in
+    started = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    assert remaining_prelive(1800, started, now) == 1200  # 30 - 10 min left
+
+
+def test_remaining_prelive_already_old_stream_returns_zero():
+    now = datetime(2026, 7, 21, 14, 0, tzinfo=timezone.utc)  # 2h in
+    started = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    assert remaining_prelive(1800, started, now) == 0
+
+
+def test_remaining_prelive_exactly_at_boundary():
+    now = datetime(2026, 7, 21, 12, 30, tzinfo=timezone.utc)
+    started = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    assert remaining_prelive(1800, started, now) == 0
 
 
 # --- render_template -------------------------------------------------------
@@ -158,6 +184,18 @@ def test_validate_config_rejects_incomplete_platform():
 def test_validate_config_custom_timezone_passthrough():
     cfg = validate_monitor_config(_base_cfg(timezone="America/New_York"))
     assert cfg["timezone"] == "America/New_York"
+
+
+def test_validate_config_instructions_trimmed_and_capped():
+    cfg = validate_monitor_config(_base_cfg(instructions="  find the funniest bits  "))
+    assert cfg["instructions"] == "find the funniest bits"
+    cfg = validate_monitor_config(_base_cfg(instructions="x" * 3000))
+    assert len(cfg["instructions"]) == 2000
+
+
+def test_validate_config_instructions_defaults_empty():
+    cfg = validate_monitor_config(_base_cfg())
+    assert cfg["instructions"] == ""
 
 
 # --- multi-platform config -------------------------------------------------

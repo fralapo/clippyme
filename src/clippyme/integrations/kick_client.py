@@ -12,6 +12,7 @@ any network or curl_cffi import.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger("clippyme")
@@ -66,6 +67,29 @@ def is_live(channel: Optional[dict]) -> bool:
     if not livestream:
         return False
     return bool(livestream.get("is_live", True))
+
+
+def stream_started_at(channel: Optional[dict]) -> Optional[datetime]:
+    """Parse the livestream's start time from Kick channel JSON, UTC-aware.
+
+    Kick's ``livestream.created_at`` (also seen as ``start_time``) has been
+    observed both as ISO 8601 ("2024-01-01T12:00:00.000000Z") and a plain
+    space-separated UTC string ("2024-01-01 12:00:00") — tolerant of either.
+    Returns None on a missing/unparseable value; callers fall back to the
+    full prelive-skip window in that case.
+    """
+    if not channel:
+        return None
+    livestream = channel.get("livestream") or {}
+    raw = livestream.get("created_at") or livestream.get("start_time")
+    if not raw or not isinstance(raw, str):
+        return None
+    text = raw.strip().replace("Z", "+00:00").replace(" ", "T", 1)
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def playback_url(channel: Optional[dict]) -> Optional[str]:

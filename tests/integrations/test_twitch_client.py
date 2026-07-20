@@ -3,10 +3,13 @@
 Pure parsers (stream_is_live / parse_vods) plus TwitchClient with requests
 monkeypatched — no network, no creds.
 """
+from datetime import timezone
+
 from clippyme.integrations.twitch_client import (
     TwitchClient,
     parse_vods,
     stream_is_live,
+    stream_started_at,
 )
 
 
@@ -36,6 +39,22 @@ def test_parse_vods_builds_url_when_missing():
 def test_parse_vods_empty():
     assert parse_vods(None) == []
     assert parse_vods({"data": []}) == []
+
+
+# --- stream_started_at (pure) -----------------------------------------------
+
+def test_stream_started_at_parses_iso_z():
+    dt = stream_started_at({"data": [{"id": "1", "started_at": "2026-07-21T10:15:00Z"}]})
+    assert dt.tzinfo is not None
+    assert (dt.hour, dt.minute) == (10, 15)
+    assert dt.tzinfo == timezone.utc
+
+
+def test_stream_started_at_missing_or_bad():
+    assert stream_started_at(None) is None
+    assert stream_started_at({"data": []}) is None
+    assert stream_started_at({"data": [{"id": "1"}]}) is None
+    assert stream_started_at({"data": [{"id": "1", "started_at": "not a date"}]}) is None
 
 
 # --- client with fake requests ---------------------------------------------
