@@ -450,6 +450,46 @@ def test_publish_one_retries_on_429_then_succeeds(tmp_path, monkeypatch):
     assert mon.clips_published == 1
 
 
+def test_publish_one_rolls_start_date_on_daily_limit(tmp_path, monkeypatch):
+    """A 'Daily limit reached' 429 must reschedule on the next day, not sleep-retry."""
+    import asyncio
+    from datetime import date, timedelta
+
+    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.integrations import social_publisher as sp
+    from clippyme.integrations.social_publisher import ZernioError
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+
+    calls = []
+
+    def fake_publish_clip(**kwargs):
+        calls.append(kwargs.get("start_date"))
+        if len(calls) < 3:
+            raise ZernioError(
+                "Zernio POST /posts → HTTP 429", status_code=429,
+                body='{"error":"Daily limit reached for this account: 5/5 posts today."}')
+
+    monkeypatch.setattr(sp, "publish_clip", fake_publish_clip)
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path))
+    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
+               "platforms": [{"platform": "tiktok", "accountId": "a"}],
+               "timezone": "Europe/Rome"}
+    mon._zernio_key = "sk_test"
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
+
+    asyncio.run(mon._publish_one("job1", clip))
+
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    day_after = (date.today() + timedelta(days=2)).isoformat()
+    assert calls == [None, tomorrow, day_after]
+    assert mon.clips_published == 1
+
+
 def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
     import asyncio
 

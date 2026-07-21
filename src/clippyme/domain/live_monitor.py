@@ -37,7 +37,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
 from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
@@ -60,6 +60,10 @@ STATE_FILENAME = "live_monitor.json"
 PUBLISH_SPACING_SECONDS = 30
 PUBLISH_429_RETRIES = 3
 PUBLISH_429_BACKOFF_SECONDS = 90
+# Zernio also enforces a per-account posts/day cap counted on the SCHEDULED
+# day ("Daily limit reached ..."). Rolling start_date forward finds the next
+# day with a free slot; these rolls are free (no sleep) and capped separately.
+PUBLISH_MAX_DAY_ROLLS = 7
 
 
 # ---------------------------------------------------------------------------
@@ -981,7 +985,10 @@ class LiveMonitor:
         # Held across the 429 backoff on purpose: while Zernio is rate-limiting
         # us, no other monitor should burn attempts against the same limit.
         async with self._publish_lock:
-            for attempt in range(1, PUBLISH_429_RETRIES + 1):
+            attempt = 0
+            day_rolls = 0
+            start_date = None  # None → scheduler picks today/tomorrow
+            while True:
                 try:
                     await asyncio.to_thread(
                         publish_clip,
@@ -993,14 +1000,25 @@ class LiveMonitor:
                         schedule_mode="auto",
                         timezone=self.cfg["timezone"],
                         scheduler=self._scheduler,
+                        start_date=start_date,
                     )
                     break
                 except (ZernioError, ValueError) as exc:
-                    body = getattr(exc, "body", None)
-                    if getattr(exc, "status_code", None) == 429 and attempt < PUBLISH_429_RETRIES:
+                    body = getattr(exc, "body", None) or ""
+                    is_429 = getattr(exc, "status_code", None) == 429
+                    if is_429 and "Daily limit" in body and day_rolls < PUBLISH_MAX_DAY_ROLLS:
+                        base = date.fromisoformat(start_date) if start_date else date.today()
+                        start_date = (base + timedelta(days=1)).isoformat()
+                        day_rolls += 1
+                        logger.warning(
+                            "LiveMonitor %s: Zernio daily limit for %s — rolling to %s",
+                            self.id, clip_path, start_date)
+                        continue
+                    if is_429 and attempt < PUBLISH_429_RETRIES - 1:
+                        attempt += 1
                         logger.warning(
                             "LiveMonitor %s: Zernio 429 for %s (body=%r) — retry %d/%d in %ds",
-                            self.id, clip_path, body, attempt, PUBLISH_429_RETRIES,
+                            self.id, clip_path, body, attempt, PUBLISH_429_RETRIES - 1,
                             PUBLISH_429_BACKOFF_SECONDS)
                         await asyncio.sleep(PUBLISH_429_BACKOFF_SECONDS)
                         continue
