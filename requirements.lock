@@ -198,7 +198,7 @@ packaging==26.2
     #   huggingface-hub
     #   matplotlib
     #   onnxruntime
-pillow==12.2.0
+pillow==12.3.0
     # via
     #   -r requirements.txt
     #   matplotlib
