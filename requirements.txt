@@ -31,7 +31,8 @@ uvicorn==0.42.0
 python-multipart==0.0.31
 # Fonts/emoji rendering in subtitles.py + hooks.py assume the Pillow 12.x
 # FreeType/OTF API. Allow patch/minor security updates, block the next major.
-Pillow>=12.2.0,<13
+# 12.3.0 floor: PYSEC-2026-2254 (FontFile.compile decompression bomb).
+Pillow>=12.3.0,<13
 # Used by social_publisher.py for the Zernio REST client (presign upload,
 # scheduled-post lookup, post creation). Standard library `urllib` would
 # work but `requests` gives us session reuse + better error messages.

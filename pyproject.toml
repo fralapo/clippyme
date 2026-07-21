@@ -29,7 +29,7 @@ host-tests = [
     "yt-dlp>=2026.6.9,<2027",  # CVE-2026-50023 / CVE-2026-50574 fixed in 2026.6.9
     "google-genai>=1.70.0,<2.0.0",
     "python-dotenv==1.2.2",
-    "Pillow>=12.2.0,<13",
+    "Pillow>=12.3.0,<13",
     "requests>=2.32,<3",
     "json-repair>=0.30",
     "psutil==7.0.0",
