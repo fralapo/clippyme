@@ -61,3 +61,6 @@ fonts/NotoColorEmoji.ttf
 
 # pytest coverage data (report-only in CI)
 .coverage
+
+# Isolated feature worktrees
+.worktrees/
