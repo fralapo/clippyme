@@ -65,6 +65,15 @@ PUBLISH_429_BACKOFF_SECONDS = 90
 # day with a free slot; these rolls are free (no sleep) and capped separately.
 PUBLISH_MAX_DAY_ROLLS = 7
 
+# Persist only validated, non-secret start fields.  Snapshotting ``self.cfg``
+# directly would make a future config addition capable of leaking a credential.
+_SNAPSHOT_CONFIG_FIELDS = (
+    "platform", "mode", "channel", "slug", "publisher_mode", "platforms",
+    "segment_seconds", "prelive_skip_seconds", "min_gap_seconds", "poll_interval",
+    "loop", "instructions", "caption_template", "title_template", "timezone",
+    "banner", "compose",
+)
+
 
 # ---------------------------------------------------------------------------
 # Pure helpers (host-testable, no I/O)
@@ -426,6 +435,7 @@ class LiveMonitor:
         self._scheduler: SharedGapScheduler | None = None
         self._published: set[str] = set()
         self._manual_queued: dict[str, str] = {}
+        self._manual_in_flight: set[str] = set()
         self._seen_ids: set[str] = set()
         self._gemini_key = None
         self._zernio_key = None
@@ -476,12 +486,18 @@ class LiveMonitor:
 
     def snapshot(self) -> dict:
         """Persistable per-monitor state (never secrets / Popen / logs)."""
+        config = {
+            key: self.cfg[key] for key in _SNAPSHOT_CONFIG_FIELDS if key in self.cfg
+        }
         return {
             "platform": self.platform,
             "mode": self.mode,
             "channel": self.cfg.get("channel"),
+            "publisher_mode": config.get("publisher_mode", "manual_queue"),
+            "config": config,
             "seen_ids": sorted(self._seen_ids),
             "published": sorted(self._published),
+            "manual_queued": dict(self._manual_queued),
             "segments_captured": self.segments_captured,
             "clips_published": self.clips_published,
             "covered_elapsed": int(self._covered_elapsed),
@@ -494,8 +510,21 @@ class LiveMonitor:
         """Rehydrate the double-publish / already-seen guards from disk."""
         if not snap:
             return
+        saved_config = snap.get("config")
+        if isinstance(saved_config, dict):
+            self.cfg = {
+                key: saved_config[key] for key in _SNAPSHOT_CONFIG_FIELDS if key in saved_config
+            }
+            self.platform = self.cfg.get("platform") or self.platform
+            self.mode = self.cfg.get("mode") or self.mode
         self._seen_ids = set(snap.get("seen_ids") or [])
         self._published = set(snap.get("published") or [])
+        manual_queued = snap.get("manual_queued")
+        if isinstance(manual_queued, dict):
+            self._manual_queued = {
+                path: entry_id for path, entry_id in manual_queued.items()
+                if isinstance(path, str) and isinstance(entry_id, str)
+            }
         self.segments_captured = int(snap.get("segments_captured") or 0)
         self.clips_published = int(snap.get("clips_published") or 0)
         self._covered_elapsed = int(snap.get("covered_elapsed") or 0)
@@ -981,20 +1010,21 @@ class LiveMonitor:
             logger.warning("LiveMonitor %s: clip file missing, skipping: %s", self.id, clip_path)
             return
         # Dedupe on the BASE clip path (stable), then compose the publish recipe.
-        publisher_mode = self.cfg.get("publisher_mode", "zernio")
-        if publisher_mode == "manual_queue" and clip_path in self._manual_queued:
-            return
-        if publisher_mode == "zernio" and clip_path in self._published:
-            return
-        upload_path = await self._compose_for_publish(job_id, clip, clip_path)
-
-        title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
-        caption = render_template(self.cfg["caption_template"], clip)
+        publisher_mode = self.cfg.get("publisher_mode", "manual_queue")
         if publisher_mode == "manual_queue":
+            if (clip_path in self._manual_queued or
+                    clip_path in self._manual_in_flight):
+                return
             if self._manual_publish_queue is None:
                 self.last_error = "manual publish queue not configured"
                 return
+            # Claim before the compose await so duplicate callbacks cannot both
+            # enqueue the same final MP4.  A failed attempt releases the claim.
+            self._manual_in_flight.add(clip_path)
             try:
+                upload_path = await self._compose_for_publish(job_id, clip, clip_path)
+                title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
+                caption = render_template(self.cfg["caption_template"], clip)
                 entry = await asyncio.to_thread(
                     self._manual_publish_queue.enqueue,
                     job_id=job_id,
@@ -1012,9 +1042,17 @@ class LiveMonitor:
                 logger.exception("LiveMonitor %s: manual enqueue failed for %s", self.id, clip_path)
                 self.last_error = f"manual enqueue failed: {exc}"
                 return
+            finally:
+                self._manual_in_flight.discard(clip_path)
             self._manual_queued[clip_path] = entry["id"]
             self._persist()
             return
+        if publisher_mode == "zernio" and clip_path in self._published:
+            return
+        upload_path = await self._compose_for_publish(job_id, clip, clip_path)
+
+        title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
+        caption = render_template(self.cfg["caption_template"], clip)
 
         from clippyme.integrations.social_publisher import ZernioError, publish_clip
         # Serialise publishes GLOBALLY (shared lock) so the shared scheduler's

@@ -415,6 +415,54 @@ def test_snapshot_restore_roundtrips_coverage(tmp_path):
     assert mon2._covered_stream_start == "2026-07-20T10:00:00+00:00"
 
 
+def test_snapshot_roundtrips_allowlisted_start_config_and_manual_guards(tmp_path):
+    from clippyme.domain.live_monitor import LiveMonitor, validate_monitor_config
+
+    cfg = validate_monitor_config({
+        "slug": "grenbaud", "platform": "kick", "mode": "live",
+        "publisher_mode": "manual_queue", "platforms": [],
+        "segment_seconds": 120, "prelive_skip_seconds": 30,
+        "min_gap_seconds": 60, "poll_interval": 45, "loop": True,
+        "instructions": "Find gaming clips", "caption_template": "{hook}",
+        "title_template": "{title}", "timezone": "UTC",
+        "banner": {"handle": "@grenbaud"},
+        "compose": {"toggles": {"subtitles": False}},
+    })
+    cfg["api_key"] = "must-not-persist"
+    cfg["GEMINI_API_KEY"] = "must-not-persist"
+    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path))
+    mon.cfg = cfg
+    mon.platform = cfg["platform"]
+    mon.mode = cfg["mode"]
+    mon._manual_queued["/clips/one.mp4"] = "manual-entry-1"
+
+    snap = mon.snapshot()
+
+    assert snap["publisher_mode"] == "manual_queue"
+    assert snap["config"] == {
+        key: cfg[key] for key in (
+            "platform", "mode", "channel", "slug", "publisher_mode", "platforms",
+            "segment_seconds", "prelive_skip_seconds", "min_gap_seconds", "poll_interval",
+            "loop", "instructions", "caption_template", "title_template", "timezone",
+            "banner", "compose",
+        )
+    }
+    assert snap["manual_queued"] == {"/clips/one.mp4": "manual-entry-1"}
+    assert "must-not-persist" not in __import__("json").dumps(snap)
+
+    restored = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
+                           output_dir=str(tmp_path))
+    restored.restore(snap)
+
+    assert restored.cfg == snap["config"]
+    assert restored.platform == "kick"
+    assert restored.mode == "live"
+    assert restored._manual_queued == {"/clips/one.mp4": "manual-entry-1"}
+    assert restored._gemini_key is None
+    assert restored._zernio_key is None
+
+
 # --- _publish_one: 429 backoff + retry -------------------------------------
 
 def test_publish_one_retries_on_429_then_succeeds(tmp_path, monkeypatch):
@@ -443,7 +491,7 @@ def test_publish_one_retries_on_429_then_succeeds(tmp_path, monkeypatch):
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
                       output_dir=str(tmp_path))
-    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
+    mon.cfg = {"publisher_mode": "zernio", "title_template": "{title}", "caption_template": "{hook}",
                "platforms": [{"platform": "tiktok", "accountId": "a"}],
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
@@ -482,7 +530,7 @@ def test_publish_one_rolls_start_date_on_daily_limit(tmp_path, monkeypatch):
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
                       output_dir=str(tmp_path))
-    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
+    mon.cfg = {"publisher_mode": "zernio", "title_template": "{title}", "caption_template": "{hook}",
                "platforms": [{"platform": "tiktok", "accountId": "a"}],
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
@@ -517,7 +565,7 @@ def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
                       output_dir=str(tmp_path))
-    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
+    mon.cfg = {"publisher_mode": "zernio", "title_template": "{title}", "caption_template": "{hook}",
                "platforms": [{"platform": "tiktok", "accountId": "a"}],
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
@@ -618,6 +666,39 @@ def test_manual_enqueue_failure_is_retryable_and_duplicate_callback_is_not(tmp_p
     asyncio.run(mon._publish_one(job_id, clip))
     assert len(queue.calls) == 2
     assert mon._manual_queued[str(job_dir / "clip.mp4")] == "entry-2"
+
+
+def test_concurrent_manual_callbacks_claim_before_await_and_enqueue_once(tmp_path):
+    import asyncio
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    job_id = "11111111-1111-4111-8111-111111111111"
+    job_dir = tmp_path / job_id
+    job_dir.mkdir()
+    clip_path = job_dir / "clip.mp4"
+    clip_path.write_bytes(b"base")
+    queue = _RecordingManualQueue()
+    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path), manual_publish_queue=queue)
+    mon.cfg = {
+        "publisher_mode": "manual_queue", "title_template": "", "caption_template": "",
+        "platforms": [], "timezone": "Europe/Rome", "channel": "grenbaud", "mode": "live",
+    }
+
+    async def compose(*_args):
+        await asyncio.sleep(0)
+        return str(clip_path)
+
+    mon._compose_for_publish = compose
+    clip = {"video_url": f"/videos/{job_id}/clip.mp4", "original_index": 0, "title": "T"}
+
+    async def publish_duplicates():
+        await asyncio.gather(mon._publish_one(job_id, clip), mon._publish_one(job_id, clip))
+
+    asyncio.run(publish_duplicates())
+
+    assert len(queue.calls) == 1
+    assert mon._manual_queued[str(clip_path)] == "entry-1"
 
 
 def test_delivery_uses_publisher_mode_current_at_callback_time(tmp_path, monkeypatch):
