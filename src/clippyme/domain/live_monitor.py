@@ -196,8 +196,13 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
 
     channel = _validate_channel(platform, config.get("channel") or config.get("slug"))
 
+    publisher_mode = str(config.get("publisher_mode") or "manual_queue").strip().lower()
+    if publisher_mode not in ("manual_queue", "zernio"):
+        raise ValidationError("publisher_mode must be 'manual_queue' or 'zernio'")
     platforms = config.get("platforms") or []
-    if not isinstance(platforms, list) or not platforms:
+    if not isinstance(platforms, list):
+        raise ValidationError("platforms must be a list")
+    if publisher_mode == "zernio" and not platforms:
         raise ValidationError("at least one platform target is required")
     for entry in platforms:
         if not isinstance(entry, dict) or not entry.get("platform") or not entry.get("accountId"):
@@ -217,6 +222,7 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
         "mode": mode,
         "channel": channel,
         "slug": channel,  # back-compat alias
+        "publisher_mode": publisher_mode,
         "platforms": platforms,
         "segment_seconds": _clamp_int(config.get("segment_seconds"), 1800, 60, 3600),
         "prelive_skip_seconds": _clamp_int(config.get("prelive_skip_seconds"), 1800, 0, 7200),
@@ -398,6 +404,7 @@ class LiveMonitor:
                  upload_dir: str = "uploads", on_job_change=None,
                  picked_slots: list | None = None,
                  publish_lock: asyncio.Lock | None = None,
+                 manual_publish_queue=None,
                  on_state_change=None):
         self.id = id
         self._jobs = jobs
@@ -407,6 +414,7 @@ class LiveMonitor:
         self._on_job_change = on_job_change
         self._picked_slots = picked_slots if picked_slots is not None else []
         self._publish_lock = publish_lock or asyncio.Lock()
+        self._manual_publish_queue = manual_publish_queue
         self._on_state_change = on_state_change
 
         self._task: asyncio.Task | None = None
@@ -417,6 +425,7 @@ class LiveMonitor:
         self._strategy = None
         self._scheduler: SharedGapScheduler | None = None
         self._published: set[str] = set()
+        self._manual_queued: dict[str, str] = {}
         self._seen_ids: set[str] = set()
         self._gemini_key = None
         self._zernio_key = None
@@ -505,9 +514,10 @@ class LiveMonitor:
         self._gemini_key = pc.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not self._gemini_key:
             raise ValidationError("Gemini API key not configured")
-        self._zernio_key = load_zernio_config().get("api_key")
-        if not self._zernio_key:
-            raise ValidationError("Zernio API key not configured")
+        if cfg["publisher_mode"] == "zernio":
+            self._zernio_key = load_zernio_config().get("api_key")
+            if not self._zernio_key:
+                raise ValidationError("Zernio API key not configured")
 
         self.cfg = cfg
         self.platform = cfg["platform"]
@@ -965,20 +975,48 @@ class LiveMonitor:
             return base_path
 
     async def _publish_one(self, job_id: str, clip: dict) -> None:
-        from clippyme.integrations.social_publisher import ZernioError, publish_clip
-
         video_url = clip.get("video_url") or ""
         clip_path = os.path.join(self._output_dir, job_id, os.path.basename(video_url))
         if not os.path.isfile(clip_path):
             logger.warning("LiveMonitor %s: clip file missing, skipping: %s", self.id, clip_path)
             return
         # Dedupe on the BASE clip path (stable), then compose the publish recipe.
-        if clip_path in self._published:
+        publisher_mode = self.cfg.get("publisher_mode", "zernio")
+        if publisher_mode == "manual_queue" and clip_path in self._manual_queued:
+            return
+        if publisher_mode == "zernio" and clip_path in self._published:
             return
         upload_path = await self._compose_for_publish(job_id, clip, clip_path)
 
         title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
         caption = render_template(self.cfg["caption_template"], clip)
+        if publisher_mode == "manual_queue":
+            if self._manual_publish_queue is None:
+                self.last_error = "manual publish queue not configured"
+                return
+            try:
+                entry = await asyncio.to_thread(
+                    self._manual_publish_queue.enqueue,
+                    job_id=job_id,
+                    clip_index=int(clip.get("original_index") or 0),
+                    source_path=upload_path,
+                    title=title,
+                    caption=caption,
+                    source_platform=self.platform,
+                    source_channel=self.cfg["channel"],
+                    source_kind=self.mode,
+                    project_title=clip.get("project_title") or "",
+                    monitor_id=self.id,
+                )
+            except Exception as exc:
+                logger.exception("LiveMonitor %s: manual enqueue failed for %s", self.id, clip_path)
+                self.last_error = f"manual enqueue failed: {exc}"
+                return
+            self._manual_queued[clip_path] = entry["id"]
+            self._persist()
+            return
+
+        from clippyme.integrations.social_publisher import ZernioError, publish_clip
         # Serialise publishes GLOBALLY (shared lock) so the shared scheduler's
         # picked_slots list (mutated inside publish_clip's worker thread) stays
         # race-free across every monitor.
@@ -1065,12 +1103,14 @@ class LiveMonitorRegistry:
 
     def __init__(self, *, jobs: dict, job_queue, output_dir: str,
                  upload_dir: str = "uploads", on_job_change=None,
+                 manual_publish_queue=None,
                  state_path: str = os.path.join("data", STATE_FILENAME)):
         self._jobs = jobs
         self._job_queue = job_queue
         self._output_dir = output_dir
         self._upload_dir = upload_dir
         self._on_job_change = on_job_change
+        self._manual_publish_queue = manual_publish_queue
         self._state_path = state_path
 
         self._monitors: dict[str, LiveMonitor] = {}
@@ -1094,7 +1134,9 @@ class LiveMonitorRegistry:
             id=mid, jobs=self._jobs, job_queue=self._job_queue,
             output_dir=self._output_dir, upload_dir=self._upload_dir,
             on_job_change=self._on_job_change, picked_slots=self._picked_slots,
-            publish_lock=self._publish_lock, on_state_change=self.persist)
+            publish_lock=self._publish_lock,
+            manual_publish_queue=self._manual_publish_queue,
+            on_state_change=self.persist)
         mon.restore(self._snapshots.get(mid) or {})
         self._monitors[mid] = mon
         try:

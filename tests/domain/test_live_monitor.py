@@ -174,9 +174,15 @@ def test_validate_config_rejects_bad_slug(bad):
         validate_monitor_config(_base_cfg(slug=bad))
 
 
-def test_validate_config_requires_platforms():
+def test_validate_config_manual_queue_allows_no_platforms_by_default():
+    cfg = validate_monitor_config({"slug": "chan", "platforms": []})
+    assert cfg["publisher_mode"] == "manual_queue"
+    assert cfg["platforms"] == []
+
+
+def test_validate_config_zernio_requires_platforms():
     with pytest.raises(ValidationError):
-        validate_monitor_config({"slug": "chan", "platforms": []})
+        validate_monitor_config({"slug": "chan", "publisher_mode": "zernio", "platforms": []})
 
 
 def test_validate_config_rejects_incomplete_platform():
@@ -522,3 +528,120 @@ def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
     assert len(calls) == 1
     assert mon.clips_published == 0
     assert "HTTP 500" in (mon.last_error or "")
+
+
+# --- manual-queue dispatch -------------------------------------------------
+
+class _RecordingManualQueue:
+    def __init__(self, *, fail_first=False):
+        self.calls = []
+        self.fail_first = fail_first
+
+    def enqueue(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.fail_first and len(self.calls) == 1:
+            raise OSError("disk full")
+        return {"id": f"entry-{len(self.calls)}"}
+
+
+def test_manual_dispatch_composes_renders_templates_and_enqueues_without_zernio(tmp_path, monkeypatch):
+    import asyncio
+    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.integrations import social_publisher as sp
+
+    job_id = "11111111-1111-4111-8111-111111111111"
+    job_dir = tmp_path / job_id
+    job_dir.mkdir()
+    base = job_dir / "clip.mp4"
+    composed = job_dir / "composed.mp4"
+    base.write_bytes(b"base")
+    composed.write_bytes(b"composed")
+    queue = _RecordingManualQueue()
+    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path), manual_publish_queue=queue)
+    mon.cfg = {
+        "publisher_mode": "manual_queue", "title_template": "Title: {title}",
+        "caption_template": "Hook: {hook}", "platforms": [],
+        "timezone": "Europe/Rome", "channel": "grenbaud", "mode": "live",
+    }
+
+    async def compose(*_args):
+        return str(composed)
+
+    def no_zernio(*_args, **_kwargs):
+        pytest.fail("manual delivery must never call Zernio")
+
+    monkeypatch.setattr(mon, "_compose_for_publish", compose)
+    monkeypatch.setattr(sp, "publish_clip", no_zernio)
+
+    asyncio.run(mon._publish_one(job_id, {
+        "video_url": f"/videos/{job_id}/clip.mp4", "original_index": 2,
+        "title": "A title", "viral_hook_text": "A hook", "project_title": "Live 42",
+    }))
+
+    assert queue.calls == [{
+        "job_id": job_id, "clip_index": 2, "source_path": str(composed),
+        "title": "Title: A title", "caption": "Hook: A hook",
+        "source_platform": "kick", "source_channel": "grenbaud", "source_kind": "live",
+        "project_title": "Live 42", "monitor_id": "kick:grenbaud",
+    }]
+    assert mon._published == set()
+    assert mon._manual_queued[str(base)] == "entry-1"
+
+
+def test_manual_enqueue_failure_is_retryable_and_duplicate_callback_is_not(tmp_path, monkeypatch):
+    import asyncio
+    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.integrations import social_publisher as sp
+
+    job_id = "11111111-1111-4111-8111-111111111111"
+    job_dir = tmp_path / job_id
+    job_dir.mkdir()
+    (job_dir / "clip.mp4").write_bytes(b"base")
+    queue = _RecordingManualQueue(fail_first=True)
+    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path), manual_publish_queue=queue)
+    mon.cfg = {
+        "publisher_mode": "manual_queue", "title_template": "", "caption_template": "",
+        "platforms": [], "timezone": "Europe/Rome", "channel": "grenbaud", "mode": "live",
+    }
+
+    def no_zernio(*_args, **_kwargs):
+        pytest.fail("manual delivery must never call Zernio")
+
+    monkeypatch.setattr(sp, "publish_clip", no_zernio)
+    clip = {"video_url": f"/videos/{job_id}/clip.mp4", "original_index": 0, "title": "T"}
+    asyncio.run(mon._publish_one(job_id, clip))
+    assert str(job_dir / "clip.mp4") not in mon._manual_queued
+
+    asyncio.run(mon._publish_one(job_id, clip))
+    asyncio.run(mon._publish_one(job_id, clip))
+    assert len(queue.calls) == 2
+    assert mon._manual_queued[str(job_dir / "clip.mp4")] == "entry-2"
+
+
+def test_delivery_uses_publisher_mode_current_at_callback_time(tmp_path, monkeypatch):
+    import asyncio
+    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.integrations import social_publisher as sp
+
+    job_id = "11111111-1111-4111-8111-111111111111"
+    job_dir = tmp_path / job_id
+    job_dir.mkdir()
+    (job_dir / "clip.mp4").write_bytes(b"base")
+    queue = _RecordingManualQueue()
+    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path), manual_publish_queue=queue)
+    mon.cfg = {
+        "publisher_mode": "zernio", "title_template": "", "caption_template": "",
+        "platforms": [{"platform": "tiktok", "accountId": "account"}],
+        "timezone": "Europe/Rome", "channel": "grenbaud", "mode": "live",
+    }
+    mon.cfg["publisher_mode"] = "manual_queue"
+
+    monkeypatch.setattr(sp, "publish_clip", lambda **_kwargs: pytest.fail("must queue manually"))
+    asyncio.run(mon._publish_one(job_id, {
+        "video_url": f"/videos/{job_id}/clip.mp4", "original_index": 0, "title": "T",
+    }))
+
+    assert len(queue.calls) == 1

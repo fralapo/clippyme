@@ -129,6 +129,7 @@ from clippyme.domain.live_monitor import LiveMonitorRegistry
 live_monitor = LiveMonitorRegistry(
     jobs=jobs, job_queue=job_queue, output_dir=OUTPUT_DIR,
     upload_dir=UPLOAD_DIR, on_job_change=persist_jobs,
+    manual_publish_queue=manual_publish_queue,
 )
 
 
