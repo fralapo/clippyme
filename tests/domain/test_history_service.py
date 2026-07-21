@@ -7,7 +7,12 @@ output dir is read.
 import json
 import os
 
+import pytest
+
 from clippyme.domain import history_service as hs
+from clippyme.domain.clip_resolve import resolve_clip
+from clippyme.domain.errors import NotFoundError, ValidationError
+from clippyme.domain.manual_publish_queue import ManualPublishQueue
 
 VALID_UUID = "12345678-1234-4123-8123-1234567890ab"
 VALID_UUID_2 = "abcdef01-2345-4678-9abc-def012345678"
@@ -100,3 +105,93 @@ def test_scan_history_surfaces_published_records(tmp_path):
     assert out[0]["clips"][0]["published"] == [{"platforms": ["tiktok"], "post_id": "p1"}]
     assert out[0]["clips"][1]["published"] == []
     assert out[0]["publishedCount"] == 1
+
+
+def test_delete_history_clip_removes_artifacts_and_keeps_survivor_addressable(tmp_path):
+    output = tmp_path / "output"
+    job_dir = output / VALID_UUID
+    job_dir.mkdir(parents=True)
+    metadata_path = job_dir / "video_metadata.json"
+    metadata_path.write_text(json.dumps({"shorts": [
+        {"video_url": f"/videos/{VALID_UUID}/video_clip_1.mp4", "title": "gone"},
+        {"video_url": f"/videos/{VALID_UUID}/video_clip_2.mp4", "title": "kept"},
+    ]}), encoding="utf-8")
+    deleted = [
+        job_dir / "video_clip_1.mp4",
+        job_dir / "source_video_clip_1.mp4",
+        job_dir / "video_clip_1_cover.jpg",
+        job_dir / "composed_clip_0.mp4",
+        job_dir / "subtitle_clip_0.ass",
+    ]
+    for path in deleted:
+        path.write_bytes(b"x")
+    survivor = job_dir / "video_clip_2.mp4"
+    survivor.write_bytes(b"kept")
+    queue = ManualPublishQueue(output, tmp_path / "data" / "manual_publish_queue.json")
+    queued = queue.enqueue(
+        job_id=VALID_UUID, clip_index=0, source_path=deleted[0], title="gone",
+        caption="caption", source_platform="kick", source_channel="channel",
+        source_kind="live", project_title="project",
+    )
+
+    result = hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+
+    assert result == {"project_deleted": False, "remaining": 1}
+    assert all(not path.exists() for path in deleted)
+    assert not (output.parent / queued["artifact"]).exists()
+    assert queue.list_entries("all") == []
+    assert not metadata_path.with_suffix(metadata_path.suffix + ".tmp").exists()
+    assert json.loads(metadata_path.read_text(encoding="utf-8"))["shorts"] == [
+        {"video_url": f"/videos/{VALID_UUID}/video_clip_2.mp4", "title": "kept"}
+    ]
+    assert resolve_clip(VALID_UUID, 0, str(output)).clip_path == str(survivor)
+
+
+def test_delete_last_history_clip_removes_only_exact_project_and_all_job_queue_records(tmp_path):
+    output = tmp_path / "output"
+    job_dir = output / VALID_UUID
+    other_dir = output / VALID_UUID_2
+    job_dir.mkdir(parents=True)
+    other_dir.mkdir(parents=True)
+    (job_dir / "video_metadata.json").write_text(
+        json.dumps({"shorts": [{"video_url": f"/videos/{VALID_UUID}/video_clip_1.mp4"}]}),
+        encoding="utf-8",
+    )
+    clip = job_dir / "video_clip_1.mp4"
+    clip.write_bytes(b"x")
+    (other_dir / "sentinel").write_text("safe", encoding="utf-8")
+    queue = ManualPublishQueue(output, tmp_path / "data" / "manual_publish_queue.json")
+    queue.enqueue(
+        job_id=VALID_UUID, clip_index=0, source_path=clip, title="one", caption="caption",
+        source_platform="kick", source_channel="channel", source_kind="live",
+        project_title="project",
+    )
+
+    assert hs.delete_history_clip(str(output), VALID_UUID, 0, queue) == {
+        "project_deleted": True, "remaining": 0,
+    }
+    assert not job_dir.exists()
+    assert (other_dir / "sentinel").read_text(encoding="utf-8") == "safe"
+    assert queue.list_entries("all") == []
+
+
+@pytest.mark.parametrize("job_id", ["../escape", VALID_UUID.upper(), None])
+def test_delete_history_clip_rejects_invalid_job_id(tmp_path, job_id):
+    queue = ManualPublishQueue(tmp_path / "output", tmp_path / "queue.json")
+    with pytest.raises(ValidationError):
+        hs.delete_history_clip(str(tmp_path / "output"), job_id, 0, queue)
+
+
+@pytest.mark.parametrize("clip_index", [-1, True, "0"])
+def test_delete_history_clip_rejects_invalid_clip_index(tmp_path, clip_index):
+    queue = ManualPublishQueue(tmp_path / "output", tmp_path / "queue.json")
+    with pytest.raises(ValidationError):
+        hs.delete_history_clip(str(tmp_path / "output"), VALID_UUID, clip_index, queue)
+
+
+def test_delete_history_clip_rejects_missing_clip(tmp_path):
+    output = tmp_path / "output"
+    _make_job(str(output), VALID_UUID, clips=[])
+    queue = ManualPublishQueue(output, tmp_path / "queue.json")
+    with pytest.raises(NotFoundError):
+        hs.delete_history_clip(str(output), VALID_UUID, 0, queue)

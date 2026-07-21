@@ -4,7 +4,13 @@ import json
 import logging
 import os
 import re
+import shutil
+from pathlib import Path
 from typing import List
+
+from clippyme.domain.clip_resolve import clip_filename_for
+from clippyme.domain.errors import NotFoundError, ValidationError
+from clippyme.domain.job_artifacts import load_job_metadata, save_job_metadata
 
 logger = logging.getLogger("clippyme")
 
@@ -29,6 +35,76 @@ def is_valid_job_id(job_id) -> bool:
     if not isinstance(job_id, str) or not job_id:
         return False
     return bool(_JOB_ID_RE.match(job_id))
+
+
+def _project_path(output_dir: str, job_id: str) -> Path:
+    if not is_valid_job_id(job_id):
+        raise ValidationError("Invalid job ID")
+    output_root = Path(output_dir).resolve()
+    project = (output_root / job_id).resolve()
+    if project.parent != output_root:
+        raise ValidationError("Project path is outside output directory")
+    if not project.is_dir():
+        raise NotFoundError("Job not found")
+    return project
+
+
+def _clip_artifacts(project: Path, clip_filename: str, clip_index: int):
+    stem = Path(clip_filename).stem
+    names = {
+        clip_filename,
+        f"source_{clip_filename}",
+        f"{stem}_cover.jpg",
+        f"source_{stem}_cover.jpg",
+        f"composed_clip_{clip_index}.mp4",
+    }
+    patterns = (
+        f"subtitle_clip_{clip_index}.*",
+        f"subtitles_clip_{clip_index}.*",
+        f"clip_{clip_index}_subtitle*",
+        f"{stem}_smartcut_*",
+    )
+    paths = {project / name for name in names}
+    for pattern in patterns:
+        paths.update(project.glob(pattern))
+    for path in paths:
+        try:
+            if path.resolve().parent != project:
+                raise ValidationError("Clip artifact path is outside project directory")
+        except OSError as exc:
+            raise ValidationError("Invalid clip artifact path") from exc
+    return paths
+
+
+def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queue) -> dict:
+    """Delete one History clip and its manual-publish queue artifact."""
+    if not isinstance(clip_index, int) or isinstance(clip_index, bool) or clip_index < 0:
+        raise ValidationError("Invalid clip index")
+    project = _project_path(output_dir, job_id)
+    try:
+        metadata_path, metadata = load_job_metadata(job_id, output_dir)
+    except FileNotFoundError as exc:
+        raise NotFoundError("No metadata found") from exc
+    clips = metadata.get("shorts")
+    if not isinstance(clips, list) or clip_index >= len(clips):
+        raise NotFoundError("Clip not found")
+
+    clip_filename = clip_filename_for(metadata_path, clips[clip_index], clip_index)
+    artifacts = _clip_artifacts(project, clip_filename, clip_index)
+    manual_publish_queue.remove_clip(job_id, clip_index)
+    remaining = len(clips) - 1
+    if remaining == 0:
+        manual_publish_queue.remove_job(job_id)
+        shutil.rmtree(project)
+        return {"project_deleted": True, "remaining": 0}
+
+    for path in artifacts:
+        if path.is_dir():
+            raise ValidationError("Clip artifact is not a file")
+        path.unlink(missing_ok=True)
+    metadata["shorts"] = clips[:clip_index] + clips[clip_index + 1:]
+    save_job_metadata(metadata_path, metadata)
+    return {"project_deleted": False, "remaining": remaining}
 
 
 def scan_history(output_dir: str) -> List[dict]:

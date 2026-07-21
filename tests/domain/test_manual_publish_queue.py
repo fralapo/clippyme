@@ -81,6 +81,10 @@ def test_complete_and_restore_are_reversible_without_deleting_artifact(queue):
     assert completed["status"] == "completed"
     assert completed["completed_at"] is not None
     assert artifact.exists()
+
+    history_file = queue.output_dir / JOB_ID / "history_clip.mp4"
+    history_file.write_bytes(b"history")
+    assert history_file.read_bytes() == b"history"
     assert queue.list_entries("pending") == []
     assert [item["id"] for item in queue.list_entries("completed")] == [entry["id"]]
 

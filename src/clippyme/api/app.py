@@ -67,7 +67,7 @@ from clippyme.storage.config_store import (
     load_zernio_config,
 )
 from clippyme.domain.job_worker import make_workers
-from clippyme.domain.history_service import scan_history, is_valid_job_id
+from clippyme.domain.history_service import delete_history_clip, scan_history, is_valid_job_id
 from clippyme.api.config_routes import router as config_router
 
 load_dotenv()
@@ -755,12 +755,27 @@ async def delete_history(job_id: str, request: Request):
     job_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(job_dir):
         raise HTTPException(status_code=404, detail="Job not found on disk")
+    await asyncio.to_thread(manual_publish_queue.remove_job, job_id)
     await asyncio.to_thread(shutil.rmtree, job_dir, True)
     if job_id in jobs:
         del jobs[job_id]
         persist_jobs()
     logger.info("Deleted job %s and all files", job_id)
     return {"success": True}
+
+
+@app.delete("/api/history/{job_id}/clips/{clip_index}")
+async def delete_history_clip_endpoint(job_id: str, clip_index: int, request: Request):
+    """Delete one History clip and its manual-publish queue record."""
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "history-delete", capacity=30, refill_per_sec=0.5)
+    result = await asyncio.to_thread(
+        delete_history_clip, OUTPUT_DIR, job_id, clip_index, manual_publish_queue,
+    )
+    if result["project_deleted"] and job_id in jobs:
+        del jobs[job_id]
+        persist_jobs()
+    return result
 
 @app.post("/api/compose/{job_id}/{clip_index}")
 async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, request: Request):
