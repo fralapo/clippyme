@@ -255,6 +255,50 @@ def test_remove_is_idempotent_after_success(queue):
     assert queue.remove_job(JOB_ID) == 0
 
 
+def test_remove_clip_and_reindex_compacts_surviving_job_entries_atomically(queue):
+    first = _enqueue(queue, _source(queue, "first.mp4"), clip_index=0)
+    second = _enqueue(queue, _source(queue, "second.mp4"), clip_index=1)
+    third = _enqueue(queue, _source(queue, "third.mp4"), clip_index=2)
+
+    assert queue.remove_clip_and_reindex(JOB_ID, 1) == 1
+
+    entries = queue.list_entries("all")
+    assert [(entry["id"], entry["clip_index"]) for entry in entries] == [
+        (first["id"], 0),
+        (third["id"], 1),
+    ]
+    assert not (queue.output_dir.parent / second["artifact"]).exists()
+    assert (queue.output_dir.parent / first["artifact"]).exists()
+    assert (queue.output_dir.parent / third["artifact"]).exists()
+
+
+def test_remove_clip_and_reindex_save_failure_preserves_state_and_artifact(queue, monkeypatch):
+    removed = _enqueue(queue, _source(queue, "removed.mp4"), clip_index=0)
+    survivor = _enqueue(queue, _source(queue, "survivor.mp4"), clip_index=1)
+    before = queue.state_path.read_bytes()
+
+    monkeypatch.setattr(queue, "_save", lambda _entries: (_ for _ in ()).throw(OSError("save")))
+    with pytest.raises(OSError, match="save"):
+        queue.remove_clip_and_reindex(JOB_ID, 0)
+
+    assert queue.state_path.read_bytes() == before
+    assert (queue.output_dir.parent / removed["artifact"]).exists()
+    assert (queue.output_dir.parent / survivor["artifact"]).exists()
+
+
+def test_remove_clip_and_reindex_artifact_cleanup_is_idempotent_after_state_commit(queue):
+    removed = _enqueue(queue, _source(queue, "removed.mp4"), clip_index=0)
+    survivor = _enqueue(queue, _source(queue, "survivor.mp4"), clip_index=1)
+    artifact = queue.output_dir.parent / removed["artifact"]
+    artifact.unlink()
+
+    assert queue.remove_clip_and_reindex(JOB_ID, 0) == 1
+    assert [(entry["id"], entry["clip_index"]) for entry in queue.list_entries("all")] == [
+        (survivor["id"], 0)
+    ]
+    assert not artifact.exists()
+
+
 def test_unlink_failure_keeps_state_retriable(queue, monkeypatch):
     entry = _enqueue(queue)
     artifact = queue.output_dir.parent / entry["artifact"]

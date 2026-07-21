@@ -124,6 +124,45 @@ class ManualPublishQueue:
             and entry.get("clip_index") == clip_index
         )
 
+    def remove_clip_and_reindex(self, job_id, deleted_index):
+        """Atomically remove one clip's records and compact later indices."""
+        self._job_dir(job_id)
+        if (
+            not isinstance(deleted_index, int)
+            or isinstance(deleted_index, bool)
+            or deleted_index < 0
+        ):
+            raise ValidationError("Invalid clip index")
+        with self._lock:
+            entries = self._load()
+            removed = [
+                entry for entry in entries
+                if entry.get("job_id") == job_id
+                and entry.get("clip_index") == deleted_index
+            ]
+            updated = []
+            for entry in entries:
+                if entry in removed:
+                    continue
+                item = dict(entry)
+                if (
+                    item.get("job_id") == job_id
+                    and item.get("clip_index", -1) > deleted_index
+                ):
+                    item["clip_index"] -= 1
+                updated.append(item)
+            if not removed and updated == entries:
+                return 0
+            self._save(updated)
+            for entry in removed:
+                artifact = self._artifact_path(entry, require_file=False)
+                if artifact is not None:
+                    try:
+                        artifact.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            return len(removed)
+
     def resolve_video(self, entry_id) -> Path:
         """Validate an entry and return its artifact path for compatibility."""
         entry_id = self._entry_id(entry_id)

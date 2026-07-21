@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+import uuid
 from pathlib import Path
 from typing import List
 
@@ -76,6 +77,40 @@ def _clip_artifacts(project: Path, clip_filename: str, clip_index: int):
     return paths
 
 
+def _indexed_artifacts(project: Path, clip_index: int) -> set[Path]:
+    paths = {project / f"composed_clip_{clip_index}.mp4"}
+    for pattern in (
+        f"subtitle_clip_{clip_index}.*",
+        f"subtitles_clip_{clip_index}.*",
+        f"clip_{clip_index}_subtitle*",
+    ):
+        paths.update(project.glob(pattern))
+    return {path for path in paths if path.exists()}
+
+
+def _reindexed_path(path: Path, old_index: int, new_index: int) -> Path:
+    name = path.name
+    replacements = (
+        (f"composed_clip_{old_index}", f"composed_clip_{new_index}"),
+        (f"subtitle_clip_{old_index}", f"subtitle_clip_{new_index}"),
+        (f"subtitles_clip_{old_index}", f"subtitles_clip_{new_index}"),
+        (f"clip_{old_index}_subtitle", f"clip_{new_index}_subtitle"),
+    )
+    for old, new in replacements:
+        if old in name:
+            return path.with_name(name.replace(old, new, 1))
+    raise ValidationError("Unsupported indexed clip artifact")
+
+
+def _rollback_staged(staged: dict[Path, Path], installed: dict[Path, Path]) -> None:
+    for destination, tomb_path in reversed(list(installed.items())):
+        if destination.exists():
+            os.replace(destination, tomb_path)
+    for original, tomb_path in reversed(list(staged.items())):
+        if tomb_path.exists():
+            os.replace(tomb_path, original)
+
+
 def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queue) -> dict:
     """Delete one History clip and its manual-publish queue artifact."""
     if not isinstance(clip_index, int) or isinstance(clip_index, bool) or clip_index < 0:
@@ -90,21 +125,75 @@ def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queu
         raise NotFoundError("Clip not found")
 
     clip_filename = clip_filename_for(metadata_path, clips[clip_index], clip_index)
-    artifacts = _clip_artifacts(project, clip_filename, clip_index)
-    manual_publish_queue.remove_clip(job_id, clip_index)
-    remaining = len(clips) - 1
-    if remaining == 0:
-        manual_publish_queue.remove_job(job_id)
-        shutil.rmtree(project)
-        return {"project_deleted": True, "remaining": 0}
+    deleted_artifacts = {
+        path for path in _clip_artifacts(project, clip_filename, clip_index)
+        if path.exists()
+    }
+    reindex = {}
+    for old_index in range(clip_index + 1, len(clips)):
+        for path in _indexed_artifacts(project, old_index):
+            reindex[path] = _reindexed_path(path, old_index, old_index - 1)
+    mutation_paths = deleted_artifacts | set(reindex)
+    for path in mutation_paths | set(reindex.values()):
+        if path.parent.resolve() != project or (path.exists() and not path.is_file()):
+            raise ValidationError("Invalid clip artifact target")
 
-    for path in artifacts:
-        if path.is_dir():
-            raise ValidationError("Clip artifact is not a file")
-        path.unlink(missing_ok=True)
-    metadata["shorts"] = clips[:clip_index] + clips[clip_index + 1:]
-    save_job_metadata(metadata_path, metadata)
-    return {"project_deleted": False, "remaining": remaining}
+    tombstone = project / f".delete-clip-{clip_index}-{uuid.uuid4()}"
+    tombstone.mkdir(mode=0o700)
+    staged = {}
+    installed = {}
+    old_metadata = dict(metadata)
+    old_metadata["shorts"] = list(clips)
+    remaining = len(clips) - 1
+    compacted = dict(metadata)
+    compacted["shorts"] = clips[:clip_index] + clips[clip_index + 1:]
+    project_tombstone = project.parent / f".{job_id}.deleted-{uuid.uuid4()}"
+    project_moved = False
+    metadata_saved = False
+    try:
+        for number, path in enumerate(sorted(mutation_paths)):
+            tomb_path = tombstone / f"{number}-{path.name}"
+            os.replace(path, tomb_path)
+            staged[path] = tomb_path
+        for source, destination in reindex.items():
+            tomb_path = staged[source]
+            os.replace(tomb_path, destination)
+            installed[destination] = tomb_path
+
+        save_job_metadata(metadata_path, compacted)
+        metadata_saved = True
+        if remaining == 0:
+            os.replace(project, project_tombstone)
+            project_moved = True
+            manual_publish_queue.remove_job(job_id)
+        else:
+            manual_publish_queue.remove_clip_and_reindex(job_id, clip_index)
+    except Exception:
+        try:
+            if project_moved and project_tombstone.exists():
+                os.replace(project_tombstone, project)
+                project_moved = False
+        except OSError as exc:
+            logger.error("Failed to restore History project %s: %s", job_id, exc)
+        try:
+            if metadata_saved and project.exists():
+                save_job_metadata(metadata_path, old_metadata)
+        except Exception as exc:
+            logger.error("Failed to restore History metadata %s: %s", job_id, exc)
+        try:
+            if project.exists():
+                _rollback_staged(staged, installed)
+        except OSError as exc:
+            logger.error("Failed to restore History artifacts %s: %s", job_id, exc)
+        shutil.rmtree(tombstone, ignore_errors=True)
+        raise
+
+    cleanup_root = project_tombstone if project_moved else tombstone
+    try:
+        shutil.rmtree(cleanup_root)
+    except OSError as exc:
+        logger.warning("History tombstone cleanup failed for %s: %s", job_id, exc)
+    return {"project_deleted": remaining == 0, "remaining": remaining}
 
 
 def scan_history(output_dir: str) -> List[dict]:

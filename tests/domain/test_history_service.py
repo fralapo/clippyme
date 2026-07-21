@@ -195,3 +195,127 @@ def test_delete_history_clip_rejects_missing_clip(tmp_path):
     queue = ManualPublishQueue(output, tmp_path / "queue.json")
     with pytest.raises(NotFoundError):
         hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+
+
+def _transaction_job(tmp_path):
+    output = tmp_path / "output"
+    job_dir = output / VALID_UUID
+    job_dir.mkdir(parents=True)
+    metadata_path = job_dir / "video_metadata.json"
+    metadata = {"shorts": [
+        {"video_url": f"/videos/{VALID_UUID}/video_clip_1.mp4", "title": "gone"},
+        {"video_url": f"/videos/{VALID_UUID}/video_clip_2.mp4", "title": "kept"},
+    ]}
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    for name in (
+        "video_clip_1.mp4", "source_video_clip_1.mp4", "composed_clip_0.mp4",
+        "video_clip_2.mp4", "source_video_clip_2.mp4", "composed_clip_1.mp4",
+        "subtitle_clip_1.ass",
+    ):
+        (job_dir / name).write_bytes(name.encode())
+    queue = ManualPublishQueue(output, tmp_path / "data" / "manual_publish_queue.json")
+    first = queue.enqueue(
+        job_id=VALID_UUID, clip_index=0, source_path=job_dir / "video_clip_1.mp4",
+        title="gone", caption="caption", source_platform="kick", source_channel="channel",
+        source_kind="live", project_title="project",
+    )
+    second = queue.enqueue(
+        job_id=VALID_UUID, clip_index=1, source_path=job_dir / "video_clip_2.mp4",
+        title="kept", caption="caption", source_platform="kick", source_channel="channel",
+        source_kind="live", project_title="project",
+    )
+    return output, job_dir, metadata_path, metadata, queue, first, second
+
+
+def test_delete_history_clip_reindexes_queue_and_positional_survivor_artifacts(tmp_path):
+    output, job_dir, _metadata_path, _metadata, queue, _first, second = _transaction_job(tmp_path)
+
+    hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+
+    assert [(entry["id"], entry["clip_index"]) for entry in queue.list_entries("all")] == [
+        (second["id"], 0)
+    ]
+    assert (job_dir / "composed_clip_0.mp4").read_bytes() == b"composed_clip_1.mp4"
+    assert (job_dir / "subtitle_clip_0.ass").read_bytes() == b"subtitle_clip_1.ass"
+    assert not (job_dir / "composed_clip_1.mp4").exists()
+
+
+def test_delete_history_clip_metadata_failure_rolls_back_files_and_state(tmp_path, monkeypatch):
+    output, job_dir, metadata_path, metadata, queue, first, second = _transaction_job(tmp_path)
+    before_state = queue.state_path.read_bytes()
+    monkeypatch.setattr(hs, "save_job_metadata", lambda *_args: (_ for _ in ()).throw(OSError("metadata")))
+
+    with pytest.raises(OSError, match="metadata"):
+        hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == metadata
+    assert (job_dir / "video_clip_1.mp4").exists()
+    assert (job_dir / "composed_clip_0.mp4").read_bytes() == b"composed_clip_0.mp4"
+    assert (job_dir / "composed_clip_1.mp4").read_bytes() == b"composed_clip_1.mp4"
+    assert queue.state_path.read_bytes() == before_state
+    assert {entry["id"] for entry in queue.list_entries("all")} == {first["id"], second["id"]}
+
+
+def test_delete_history_clip_queue_failure_rolls_back_metadata_files_and_state(tmp_path, monkeypatch):
+    output, job_dir, metadata_path, metadata, queue, first, second = _transaction_job(tmp_path)
+    before_state = queue.state_path.read_bytes()
+    monkeypatch.setattr(
+        queue, "remove_clip_and_reindex",
+        lambda *_args: (_ for _ in ()).throw(OSError("queue")),
+    )
+
+    with pytest.raises(OSError, match="queue"):
+        hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == metadata
+    assert (job_dir / "video_clip_1.mp4").exists()
+    assert (job_dir / "composed_clip_0.mp4").read_bytes() == b"composed_clip_0.mp4"
+    assert (job_dir / "composed_clip_1.mp4").read_bytes() == b"composed_clip_1.mp4"
+    assert queue.state_path.read_bytes() == before_state
+    assert {entry["id"] for entry in queue.list_entries("all")} == {first["id"], second["id"]}
+
+
+def test_delete_last_history_clip_remove_job_failure_restores_project(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    job_dir = output / VALID_UUID
+    job_dir.mkdir(parents=True)
+    metadata_path = job_dir / "video_metadata.json"
+    metadata = {"shorts": [{"video_url": f"/videos/{VALID_UUID}/video_clip_1.mp4"}]}
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    clip = job_dir / "video_clip_1.mp4"
+    clip.write_bytes(b"clip")
+    queue = ManualPublishQueue(output, tmp_path / "data" / "manual_publish_queue.json")
+    entry = queue.enqueue(
+        job_id=VALID_UUID, clip_index=0, source_path=clip, title="one", caption="caption",
+        source_platform="kick", source_channel="channel", source_kind="live",
+        project_title="project",
+    )
+    before_state = queue.state_path.read_bytes()
+    monkeypatch.setattr(queue, "remove_job", lambda *_args: (_ for _ in ()).throw(OSError("queue")))
+
+    with pytest.raises(OSError, match="queue"):
+        hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+
+    assert job_dir.is_dir()
+    assert clip.read_bytes() == b"clip"
+    assert json.loads(metadata_path.read_text(encoding="utf-8")) == metadata
+    assert queue.state_path.read_bytes() == before_state
+    assert queue.list_entries("all")[0]["id"] == entry["id"]
+
+
+def test_delete_history_clip_tombstone_cleanup_failure_does_not_reverse_success(tmp_path, monkeypatch):
+    output, job_dir, metadata_path, _metadata, queue, _first, second = _transaction_job(tmp_path)
+    real_rmtree = hs.shutil.rmtree
+
+    def fail_tombstone(path, *args, **kwargs):
+        if ".delete-clip-" in str(path):
+            raise OSError("busy tombstone")
+        return real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(hs.shutil, "rmtree", fail_tombstone)
+    result = hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+
+    assert result == {"project_deleted": False, "remaining": 1}
+    assert len(json.loads(metadata_path.read_text(encoding="utf-8"))["shorts"]) == 1
+    assert queue.list_entries("all")[0]["id"] == second["id"]
+    assert any(path.name.startswith(".delete-clip-") for path in job_dir.iterdir())
