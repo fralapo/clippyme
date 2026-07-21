@@ -54,6 +54,12 @@ _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "stopped"}
 # processing if it still holds enough content — matches the spec's 5-minute floor.
 MIN_PROCESS_SECONDS = 300
 STATE_FILENAME = "live_monitor.json"
+# Zernio rate-limits the API-call burst (each publish = upload-URL + PUT +
+# POST /posts), NOT the scheduled slots. Space consecutive publishes and
+# back off + retry on 429 instead of dropping the clip.
+PUBLISH_SPACING_SECONDS = 30
+PUBLISH_429_RETRIES = 3
+PUBLISH_429_BACKOFF_SECONDS = 90
 
 
 # ---------------------------------------------------------------------------
@@ -880,7 +886,9 @@ class LiveMonitor:
                                self.id, job_id, status)
                 return
             clips = (self._jobs.get(job_id, {}).get("result") or {}).get("clips") or []
-            for clip in clips:
+            for i, clip in enumerate(clips):
+                if i:
+                    await asyncio.sleep(PUBLISH_SPACING_SECONDS)
                 await self._publish_one(job_id, clip)
         except asyncio.CancelledError:
             raise
@@ -932,23 +940,36 @@ class LiveMonitor:
         # Serialise publishes GLOBALLY (shared lock) so the shared scheduler's
         # picked_slots list (mutated inside publish_clip's worker thread) stays
         # race-free across every monitor.
+        # Held across the 429 backoff on purpose: while Zernio is rate-limiting
+        # us, no other monitor should burn attempts against the same limit.
         async with self._publish_lock:
-            try:
-                await asyncio.to_thread(
-                    publish_clip,
-                    api_key=self._zernio_key,
-                    clip_path=upload_path,
-                    title=title[:100],
-                    caption=caption,
-                    platform_targets=self.cfg["platforms"],
-                    schedule_mode="auto",
-                    timezone=self.cfg["timezone"],
-                    scheduler=self._scheduler,
-                )
-            except (ZernioError, ValueError) as exc:
-                logger.error("LiveMonitor %s: publish failed for %s: %s", self.id, clip_path, exc)
-                self.last_error = f"publish failed: {exc}"
-                return
+            for attempt in range(1, PUBLISH_429_RETRIES + 1):
+                try:
+                    await asyncio.to_thread(
+                        publish_clip,
+                        api_key=self._zernio_key,
+                        clip_path=upload_path,
+                        title=title[:100],
+                        caption=caption,
+                        platform_targets=self.cfg["platforms"],
+                        schedule_mode="auto",
+                        timezone=self.cfg["timezone"],
+                        scheduler=self._scheduler,
+                    )
+                    break
+                except (ZernioError, ValueError) as exc:
+                    body = getattr(exc, "body", None)
+                    if getattr(exc, "status_code", None) == 429 and attempt < PUBLISH_429_RETRIES:
+                        logger.warning(
+                            "LiveMonitor %s: Zernio 429 for %s (body=%r) — retry %d/%d in %ds",
+                            self.id, clip_path, body, attempt, PUBLISH_429_RETRIES,
+                            PUBLISH_429_BACKOFF_SECONDS)
+                        await asyncio.sleep(PUBLISH_429_BACKOFF_SECONDS)
+                        continue
+                    logger.error("LiveMonitor %s: publish failed for %s: %s (body=%r)",
+                                 self.id, clip_path, exc, body)
+                    self.last_error = f"publish failed: {exc}"
+                    return
         self._published.add(clip_path)
         self.clips_published += 1
         self._persist()

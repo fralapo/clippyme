@@ -374,3 +374,78 @@ def test_find_live_vod_no_match_or_malformed():
     assert find_live_vod({}, "1") is None
     assert find_live_vod({"data": [{"id": "v1"}]}, "1") is None  # no stream_id
     assert find_live_vod({"data": [{"stream_id": "1"}]}, None) is None  # no stream id
+
+
+# --- _publish_one: 429 backoff + retry -------------------------------------
+
+def test_publish_one_retries_on_429_then_succeeds(tmp_path, monkeypatch):
+    """A Zernio 429 must be retried after backoff, not drop the clip."""
+    import asyncio
+
+    from clippyme.domain import live_monitor as lm
+    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.integrations import social_publisher as sp
+    from clippyme.integrations.social_publisher import ZernioError
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+
+    monkeypatch.setattr(lm, "PUBLISH_429_BACKOFF_SECONDS", 0)
+    calls = []
+
+    def fake_publish_clip(**kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            raise ZernioError("Zernio POST /posts → HTTP 429",
+                              status_code=429, body="rate limited")
+
+    monkeypatch.setattr(sp, "publish_clip", fake_publish_clip)
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path))
+    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
+               "platforms": [{"platform": "tiktok", "accountId": "a"}],
+               "timezone": "Europe/Rome"}
+    mon._zernio_key = "sk_test"
+    # original_index missing → _compose_for_publish returns the raw path.
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
+
+    asyncio.run(mon._publish_one("job1", clip))
+
+    assert len(calls) == 3
+    assert mon.clips_published == 1
+
+
+def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.integrations import social_publisher as sp
+    from clippyme.integrations.social_publisher import ZernioError
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+
+    calls = []
+
+    def fake_publish_clip(**kwargs):
+        calls.append(kwargs)
+        raise ZernioError("Zernio POST /posts → HTTP 500", status_code=500, body="boom")
+
+    monkeypatch.setattr(sp, "publish_clip", fake_publish_clip)
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path))
+    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
+               "platforms": [{"platform": "tiktok", "accountId": "a"}],
+               "timezone": "Europe/Rome"}
+    mon._zernio_key = "sk_test"
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
+
+    asyncio.run(mon._publish_one("job1", clip))
+
+    assert len(calls) == 1
+    assert mon.clips_published == 0
+    assert "HTTP 500" in (mon.last_error or "")
