@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import stat
@@ -19,6 +20,7 @@ from clippyme.domain.history_service import is_valid_job_id
 _LOCKS: dict[Path, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 _STATUSES = {"pending", "completed"}
+logger = logging.getLogger("clippyme")
 
 
 def _utc_now() -> str:
@@ -153,14 +155,33 @@ class ManualPublishQueue:
                 updated.append(item)
             if not removed and updated == entries:
                 return 0
-            self._save(updated)
-            for entry in removed:
+            trash = self.output_dir / ".trash" / f"queue-{job_id}-clip-{deleted_index}"
+            if trash.exists():
+                try:
+                    shutil.rmtree(trash)
+                except OSError as exc:
+                    raise ConflictError("Manual publish cleanup is pending; retry removal") from exc
+            staged = {}
+            for number, entry in enumerate(removed):
                 artifact = self._artifact_path(entry, require_file=False)
-                if artifact is not None:
-                    try:
-                        artifact.unlink(missing_ok=True)
-                    except OSError:
-                        pass
+                if artifact is not None and artifact.exists():
+                    trash.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    staged[artifact] = trash / f"{number}-{artifact.name}"
+                    os.replace(artifact, staged[artifact])
+            try:
+                self._save(updated)
+            except Exception:
+                for artifact, staged_path in reversed(list(staged.items())):
+                    if staged_path.exists():
+                        os.replace(staged_path, artifact)
+                if trash.exists():
+                    shutil.rmtree(trash, ignore_errors=True)
+                raise
+            if trash.exists():
+                try:
+                    shutil.rmtree(trash)
+                except OSError as exc:
+                    logger.warning("Manual queue tombstone cleanup failed: %s", exc)
             return len(removed)
 
     def resolve_video(self, entry_id) -> Path:
@@ -349,9 +370,15 @@ class ManualPublishQueue:
                 os.fsync(handle.fileno())
             os.chmod(tmp, 0o600)
             os.replace(tmp, self.state_path)
-            os.chmod(self.state_path, 0o600)
+            try:
+                os.chmod(self.state_path, 0o600)
+            except OSError as exc:
+                logger.warning("Queue state committed but final chmod failed: %s", exc)
         finally:
-            tmp.unlink(missing_ok=True)
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Queue temporary-state cleanup failed: %s", exc)
 
     def _job_dir(self, job_id):
         if not isinstance(job_id, str) or not is_valid_job_id(job_id):

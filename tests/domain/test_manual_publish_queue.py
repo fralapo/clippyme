@@ -299,6 +299,23 @@ def test_remove_clip_and_reindex_artifact_cleanup_is_idempotent_after_state_comm
     assert not artifact.exists()
 
 
+def test_save_final_chmod_failure_is_committed_and_does_not_raise(queue, monkeypatch):
+    entry = _enqueue(queue)
+    real_chmod = os.chmod
+
+    def fail_final_chmod(path, mode):
+        if Path(path) == queue.state_path:
+            raise PermissionError("post-commit chmod")
+        return real_chmod(path, mode)
+
+    monkeypatch.setattr(os, "chmod", fail_final_chmod)
+    completed = queue.complete(entry["id"])
+
+    assert completed["status"] == "completed"
+    persisted = json.loads(queue.state_path.read_text(encoding="utf-8"))["entries"]
+    assert persisted[0]["status"] == "completed"
+
+
 def test_unlink_failure_keeps_state_retriable(queue, monkeypatch):
     entry = _enqueue(queue)
     artifact = queue.output_dir.parent / entry["artifact"]

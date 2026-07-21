@@ -67,7 +67,12 @@ from clippyme.storage.config_store import (
     load_zernio_config,
 )
 from clippyme.domain.job_worker import make_workers
-from clippyme.domain.history_service import delete_history_clip, scan_history, is_valid_job_id
+from clippyme.domain.history_service import (
+    cleanup_history_tombstones,
+    delete_history_clip,
+    is_valid_job_id,
+    scan_history,
+)
 from clippyme.api.config_routes import router as config_router
 
 load_dotenv()
@@ -128,6 +133,7 @@ live_monitor = LiveMonitorRegistry(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    cleanup_history_tombstones(OUTPUT_DIR)
     # Recover journalled jobs from the previous server life BEFORE the
     # dispatcher starts: queued jobs are re-enqueued, interrupted ones are
     # marked failed (or restored as completed when their result is on disk).

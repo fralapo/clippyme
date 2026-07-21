@@ -5,12 +5,11 @@ import logging
 import os
 import re
 import shutil
-import uuid
 from pathlib import Path
 from typing import List
 
 from clippyme.domain.clip_resolve import clip_filename_for
-from clippyme.domain.errors import NotFoundError, ValidationError
+from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
 from clippyme.domain.job_artifacts import load_job_metadata, save_job_metadata
 
 logger = logging.getLogger("clippyme")
@@ -23,6 +22,10 @@ logger = logging.getLogger("clippyme")
 # case-insensitive filesystems (macOS/Windows) and referencing another job.
 _JOB_ID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+)
+_TOMBSTONE_RE = re.compile(
+    rf"^(?:history-{_JOB_ID_RE.pattern[1:-1]}-clip-[0-9]+|"
+    rf"queue-{_JOB_ID_RE.pattern[1:-1]}-clip-[0-9]+)$"
 )
 
 
@@ -48,6 +51,31 @@ def _project_path(output_dir: str, job_id: str) -> Path:
     if not project.is_dir():
         raise NotFoundError("Job not found")
     return project
+
+
+def cleanup_history_tombstones(output_dir: str) -> None:
+    """Best-effort retry of known deletion records under ``output/.trash``."""
+    output_root = Path(output_dir).resolve()
+    trash = output_root / ".trash"
+    if not trash.is_dir() or trash.is_symlink():
+        return
+    try:
+        entries = list(trash.iterdir())
+    except OSError as exc:
+        logger.warning("Unable to scan History tombstones: %s", exc)
+        return
+    for entry in entries:
+        try:
+            if (
+                not _TOMBSTONE_RE.fullmatch(entry.name)
+                or entry.is_symlink()
+                or not entry.is_dir()
+                or entry.resolve().parent != trash
+            ):
+                continue
+            shutil.rmtree(entry)
+        except OSError as exc:
+            logger.warning("History tombstone cleanup failed for %s: %s", entry, exc)
 
 
 def _clip_artifacts(project: Path, clip_filename: str, clip_index: int):
@@ -115,6 +143,7 @@ def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queu
     """Delete one History clip and its manual-publish queue artifact."""
     if not isinstance(clip_index, int) or isinstance(clip_index, bool) or clip_index < 0:
         raise ValidationError("Invalid clip index")
+    cleanup_history_tombstones(output_dir)
     project = _project_path(output_dir, job_id)
     try:
         metadata_path, metadata = load_job_metadata(job_id, output_dir)
@@ -138,16 +167,28 @@ def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queu
         if path.parent.resolve() != project or (path.exists() and not path.is_file()):
             raise ValidationError("Invalid clip artifact target")
 
-    tombstone = project / f".delete-clip-{clip_index}-{uuid.uuid4()}"
+    trash = project.parent / ".trash"
+    trash.mkdir(mode=0o700, exist_ok=True)
+    tombstone = trash / f"history-{job_id}-clip-{clip_index}"
+    if tombstone.exists():
+        raise ConflictError("History cleanup is pending; retry deletion")
     tombstone.mkdir(mode=0o700)
     staged = {}
     installed = {}
     old_metadata = dict(metadata)
     old_metadata["shorts"] = list(clips)
     remaining = len(clips) - 1
+    survivors = []
+    for old_index, clip in enumerate(clips):
+        if old_index == clip_index:
+            continue
+        stable = dict(clip)
+        old_filename = clip_filename_for(metadata_path, clip, old_index)
+        stable["video_url"] = f"/videos/{job_id}/{old_filename}"
+        survivors.append(stable)
     compacted = dict(metadata)
-    compacted["shorts"] = clips[:clip_index] + clips[clip_index + 1:]
-    project_tombstone = project.parent / f".{job_id}.deleted-{uuid.uuid4()}"
+    compacted["shorts"] = survivors
+    staged_project = tombstone / "project"
     project_moved = False
     metadata_saved = False
     try:
@@ -163,15 +204,15 @@ def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queu
         save_job_metadata(metadata_path, compacted)
         metadata_saved = True
         if remaining == 0:
-            os.replace(project, project_tombstone)
+            os.replace(project, staged_project)
             project_moved = True
             manual_publish_queue.remove_job(job_id)
         else:
             manual_publish_queue.remove_clip_and_reindex(job_id, clip_index)
     except Exception:
         try:
-            if project_moved and project_tombstone.exists():
-                os.replace(project_tombstone, project)
+            if project_moved and staged_project.exists():
+                os.replace(staged_project, project)
                 project_moved = False
         except OSError as exc:
             logger.error("Failed to restore History project %s: %s", job_id, exc)
@@ -188,11 +229,7 @@ def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queu
         shutil.rmtree(tombstone, ignore_errors=True)
         raise
 
-    cleanup_root = project_tombstone if project_moved else tombstone
-    try:
-        shutil.rmtree(cleanup_root)
-    except OSError as exc:
-        logger.warning("History tombstone cleanup failed for %s: %s", job_id, exc)
+    cleanup_history_tombstones(output_dir)
     return {"project_deleted": remaining == 0, "remaining": remaining}
 
 
@@ -203,6 +240,7 @@ def scan_history(output_dir: str) -> List[dict]:
     shape expected by the frontend HistoryTab component.
     """
     results: List[dict] = []
+    cleanup_history_tombstones(output_dir)
     try:
         for entry in os.listdir(output_dir):
             job_dir = os.path.join(output_dir, entry)

@@ -6,6 +6,7 @@ output dir is read.
 """
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -308,7 +309,7 @@ def test_delete_history_clip_tombstone_cleanup_failure_does_not_reverse_success(
     real_rmtree = hs.shutil.rmtree
 
     def fail_tombstone(path, *args, **kwargs):
-        if ".delete-clip-" in str(path):
+        if Path(path).parent.name == ".trash":
             raise OSError("busy tombstone")
         return real_rmtree(path, *args, **kwargs)
 
@@ -318,4 +319,46 @@ def test_delete_history_clip_tombstone_cleanup_failure_does_not_reverse_success(
     assert result == {"project_deleted": False, "remaining": 1}
     assert len(json.loads(metadata_path.read_text(encoding="utf-8"))["shorts"]) == 1
     assert queue.list_entries("all")[0]["id"] == second["id"]
-    assert any(path.name.startswith(".delete-clip-") for path in job_dir.iterdir())
+    assert not any(path.name.startswith(".delete-clip-") for path in job_dir.iterdir())
+    trash = output / ".trash"
+    assert {path.name.split("-", 1)[0] for path in trash.iterdir()} == {"history", "queue"}
+
+    monkeypatch.setattr(hs.shutil, "rmtree", real_rmtree)
+    hs.cleanup_history_tombstones(str(output))
+    assert list(trash.iterdir()) == []
+
+
+@pytest.mark.parametrize("legacy_url", [None, "/"])
+def test_delete_history_clip_assigns_stable_url_to_legacy_survivor(tmp_path, legacy_url):
+    output, job_dir, metadata_path, _metadata, queue, _first, _second = _transaction_job(tmp_path)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if legacy_url is None:
+        metadata["shorts"][1].pop("video_url")
+    else:
+        metadata["shorts"][1]["video_url"] = legacy_url
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+
+    survivor = json.loads(metadata_path.read_text(encoding="utf-8"))["shorts"][0]
+    assert survivor["video_url"] == f"/videos/{VALID_UUID}/video_clip_2.mp4"
+    assert resolve_clip(VALID_UUID, 0, str(output)).clip_path == str(job_dir / "video_clip_2.mp4")
+
+
+def test_scan_history_retries_only_external_tombstone_directories(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    project = output / VALID_UUID
+    project.mkdir(parents=True)
+    (project / "sentinel").write_text("safe", encoding="utf-8")
+    trash = output / ".trash"
+    retry = trash / f"history-{VALID_UUID}-clip-0"
+    retry.mkdir(parents=True)
+    (retry / "artifact.mp4").write_bytes(b"x")
+    protected_file = trash / "do-not-delete.txt"
+    protected_file.write_text("safe", encoding="utf-8")
+
+    hs.scan_history(str(output))
+
+    assert not retry.exists()
+    assert protected_file.read_text(encoding="utf-8") == "safe"
+    assert (project / "sentinel").read_text(encoding="utf-8") == "safe"
