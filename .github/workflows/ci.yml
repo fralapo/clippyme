@@ -64,12 +64,25 @@ jobs:
       #     versions (5.29.6/6.33.5) violate mediapipe 0.10.14's protobuf<5
       #     constraint; drop this ignore when the documented mediapipe/torch
       #     upgrade procedure (requirements.txt header) is executed.
+      #   - PYSEC-2026-2132 (click 8.2.1): command injection in
+      #     click.edit() (opens $EDITOR with attacker-influenced content).
+      #     ClippyMe never calls click.edit() — click is a transitive of
+      #     scenedetect/typer used only for their CLI arg parsing. Fix
+      #     (8.3.3) violates scenedetect==0.6.7.1's click<8.3.0 constraint;
+      #     drop this ignore when scenedetect is upgraded to 0.7.
+      #   - PYSEC-2026-3447 (setuptools 81.0.0): NFD/NFC filename bypass of
+      #     MANIFEST.in excludes when BUILDING an sdist on macOS APFS/HFS+.
+      #     Unreachable: we never build sdists, and the Docker build runs on
+      #     Linux. Fix (83.0.0) violates torch==2.11.0's setuptools<82
+      #     constraint; drop this ignore on the next torch upgrade.
       - name: Dependency vulnerability scan (full pinned tree)
         run: >-
           pip-audit -r requirements.lock --desc
           --ignore-vuln CVE-2025-3000
           --ignore-vuln CVE-2026-24049
           --ignore-vuln PYSEC-2026-1805
+          --ignore-vuln PYSEC-2026-2132
+          --ignore-vuln PYSEC-2026-3447
 
   frontend:
     name: Frontend (test + build + lint)

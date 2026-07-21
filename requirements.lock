@@ -40,14 +40,14 @@ cryptography==49.0.0
     # via google-auth
 ctranslate2==4.8.0
     # via faster-whisper
-curl-cffi==0.15.0
-    # via -r requirements.txt
 cuda-bindings==13.3.1
     # via torch
 cuda-pathfinder==1.5.5
     # via cuda-bindings
 cuda-toolkit==13.0.2
     # via torch
+curl-cffi==0.15.0
+    # via -r requirements.txt
 cycler==0.12.1
     # via matplotlib
 distro==1.9.0
@@ -252,7 +252,9 @@ requests==2.34.2
     #   google-genai
     #   ultralytics
 rich==15.0.0
-    # via typer
+    # via
+    #   curl-cffi
+    #   typer
 scenedetect==0.6.7.1
     # via -r requirements.txt
 scipy==1.17.1
@@ -273,7 +275,9 @@ sniffio==1.3.1
 sounddevice==0.5.5
     # via mediapipe
 starlette==1.3.1
-    # via fastapi
+    # via
+    #   -r requirements.txt
+    #   fastapi
 sympy==1.14.0
     # via torch
 tenacity==9.1.4
