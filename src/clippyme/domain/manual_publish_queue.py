@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
-from clippyme.domain.history_service import is_valid_job_id
+from clippyme.domain.history_service import history_output_lock, is_valid_job_id
 
 
 _LOCKS: dict[Path, threading.RLock] = {}
@@ -128,6 +128,10 @@ class ManualPublishQueue:
 
     def remove_clip_and_reindex(self, job_id, deleted_index):
         """Atomically remove one clip's records and compact later indices."""
+        with history_output_lock(self.output_dir):
+            return self._remove_clip_and_reindex_locked(job_id, deleted_index)
+
+    def _remove_clip_and_reindex_locked(self, job_id, deleted_index):
         self._job_dir(job_id)
         if (
             not isinstance(deleted_index, int)

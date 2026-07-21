@@ -70,6 +70,7 @@ from clippyme.domain.job_worker import make_workers
 from clippyme.domain.history_service import (
     cleanup_history_tombstones,
     delete_history_clip,
+    delete_history_project,
     is_valid_job_id,
     scan_history,
 )
@@ -761,8 +762,9 @@ async def delete_history(job_id: str, request: Request):
     job_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(job_dir):
         raise HTTPException(status_code=404, detail="Job not found on disk")
-    await asyncio.to_thread(manual_publish_queue.remove_job, job_id)
-    await asyncio.to_thread(shutil.rmtree, job_dir, True)
+    await asyncio.to_thread(
+        delete_history_project, OUTPUT_DIR, job_id, manual_publish_queue,
+    )
     if job_id in jobs:
         del jobs[job_id]
         persist_jobs()

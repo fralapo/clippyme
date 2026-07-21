@@ -7,6 +7,7 @@ output dir is read.
 import json
 import os
 from pathlib import Path
+import threading
 
 import pytest
 
@@ -362,3 +363,115 @@ def test_scan_history_retries_only_external_tombstone_directories(tmp_path, monk
     assert not retry.exists()
     assert protected_file.read_text(encoding="utf-8") == "safe"
     assert (project / "sentinel").read_text(encoding="utf-8") == "safe"
+
+
+@pytest.mark.parametrize("fail_commit", [False, True])
+def test_scan_waits_for_active_delete_transaction_and_preserves_outcome(
+    tmp_path, monkeypatch, fail_commit,
+):
+    output, job_dir, metadata_path, metadata, queue, first, second = _transaction_job(tmp_path)
+    staged = threading.Barrier(2)
+    release = threading.Event()
+    scan_started = threading.Event()
+    scan_finished = threading.Event()
+    delete_errors = []
+    real_save = hs.save_job_metadata
+
+    def blocked_save(path, payload):
+        staged.wait(timeout=3)
+        assert release.wait(timeout=3)
+        if fail_commit:
+            raise OSError("forced metadata rollback")
+        return real_save(path, payload)
+
+    monkeypatch.setattr(hs, "save_job_metadata", blocked_save)
+
+    def run_delete():
+        try:
+            hs.delete_history_clip(str(output), VALID_UUID, 0, queue)
+        except Exception as exc:
+            delete_errors.append(exc)
+
+    def run_scan():
+        scan_started.set()
+        hs.scan_history(str(output))
+        scan_finished.set()
+
+    delete_thread = threading.Thread(target=run_delete)
+    delete_thread.start()
+    staged.wait(timeout=3)
+    scan_thread = threading.Thread(target=run_scan)
+    scan_thread.start()
+    assert scan_started.wait(timeout=1)
+    assert not scan_finished.wait(timeout=0.2)
+
+    release.set()
+    delete_thread.join(timeout=3)
+    scan_thread.join(timeout=3)
+    assert not delete_thread.is_alive()
+    assert not scan_thread.is_alive()
+    assert scan_finished.is_set()
+
+    if fail_commit:
+        assert len(delete_errors) == 1
+        assert isinstance(delete_errors[0], OSError)
+        assert json.loads(metadata_path.read_text(encoding="utf-8")) == metadata
+        assert (job_dir / "video_clip_1.mp4").exists()
+        assert (job_dir / "composed_clip_0.mp4").read_bytes() == b"composed_clip_0.mp4"
+        assert {entry["id"] for entry in queue.list_entries("all")} == {
+            first["id"], second["id"],
+        }
+    else:
+        assert delete_errors == []
+        assert len(json.loads(metadata_path.read_text(encoding="utf-8"))["shorts"]) == 1
+        assert not (job_dir / "video_clip_1.mp4").exists()
+        assert queue.list_entries("all")[0]["id"] == second["id"]
+
+
+def test_cleanup_waits_for_whole_project_delete_transaction(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    job_dir = output / VALID_UUID
+    job_dir.mkdir(parents=True)
+    clip = job_dir / "video_clip_1.mp4"
+    clip.write_bytes(b"clip")
+    queue = ManualPublishQueue(output, tmp_path / "data" / "manual_publish_queue.json")
+    queue.enqueue(
+        job_id=VALID_UUID, clip_index=0, source_path=clip, title="one", caption="caption",
+        source_platform="kick", source_channel="channel", source_kind="live",
+        project_title="project",
+    )
+    entered = threading.Barrier(2)
+    release = threading.Event()
+    cleanup_finished = threading.Event()
+    errors = []
+    real_remove_job = queue.remove_job
+
+    def blocked_remove(job_id):
+        entered.wait(timeout=3)
+        assert release.wait(timeout=3)
+        return real_remove_job(job_id)
+
+    monkeypatch.setattr(queue, "remove_job", blocked_remove)
+
+    def run_delete():
+        try:
+            hs.delete_history_project(str(output), VALID_UUID, queue)
+        except Exception as exc:
+            errors.append(exc)
+
+    delete_thread = threading.Thread(target=run_delete)
+    delete_thread.start()
+    entered.wait(timeout=3)
+    cleanup_thread = threading.Thread(
+        target=lambda: (hs.cleanup_history_tombstones(str(output)), cleanup_finished.set())
+    )
+    cleanup_thread.start()
+    assert not cleanup_finished.wait(timeout=0.2)
+
+    release.set()
+    delete_thread.join(timeout=3)
+    cleanup_thread.join(timeout=3)
+    assert errors == []
+    assert cleanup_finished.is_set()
+    assert not job_dir.exists()
+    assert queue.list_entries("all") == []

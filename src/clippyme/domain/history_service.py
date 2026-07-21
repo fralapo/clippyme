@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 from pathlib import Path
 from typing import List
 
@@ -27,6 +28,15 @@ _TOMBSTONE_RE = re.compile(
     rf"^(?:history-{_JOB_ID_RE.pattern[1:-1]}-clip-[0-9]+|"
     rf"queue-{_JOB_ID_RE.pattern[1:-1]}-clip-[0-9]+)$"
 )
+_OUTPUT_LOCKS: dict[Path, threading.RLock] = {}
+_OUTPUT_LOCKS_GUARD = threading.Lock()
+
+
+def history_output_lock(output_dir) -> threading.RLock:
+    """Return the shared reentrant mutation/cleanup lock for an output root."""
+    output_root = Path(output_dir).resolve()
+    with _OUTPUT_LOCKS_GUARD:
+        return _OUTPUT_LOCKS.setdefault(output_root, threading.RLock())
 
 
 def is_valid_job_id(job_id) -> bool:
@@ -54,6 +64,11 @@ def _project_path(output_dir: str, job_id: str) -> Path:
 
 
 def cleanup_history_tombstones(output_dir: str) -> None:
+    with history_output_lock(output_dir):
+        _cleanup_history_tombstones_locked(output_dir)
+
+
+def _cleanup_history_tombstones_locked(output_dir: str) -> None:
     """Best-effort retry of known deletion records under ``output/.trash``."""
     output_root = Path(output_dir).resolve()
     trash = output_root / ".trash"
@@ -140,6 +155,13 @@ def _rollback_staged(staged: dict[Path, Path], installed: dict[Path, Path]) -> N
 
 
 def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queue) -> dict:
+    with history_output_lock(output_dir):
+        return _delete_history_clip_locked(
+            output_dir, job_id, clip_index, manual_publish_queue,
+        )
+
+
+def _delete_history_clip_locked(output_dir, job_id, clip_index, manual_publish_queue) -> dict:
     """Delete one History clip and its manual-publish queue artifact."""
     if not isinstance(clip_index, int) or isinstance(clip_index, bool) or clip_index < 0:
         raise ValidationError("Invalid clip index")
@@ -231,6 +253,15 @@ def delete_history_clip(output_dir: str, job_id, clip_index, manual_publish_queu
 
     cleanup_history_tombstones(output_dir)
     return {"project_deleted": remaining == 0, "remaining": remaining}
+
+
+def delete_history_project(output_dir: str, job_id, manual_publish_queue) -> None:
+    """Coordinate whole-project queue and filesystem deletion with cleanup."""
+    with history_output_lock(output_dir):
+        project = _project_path(output_dir, job_id)
+        manual_publish_queue.remove_job(job_id)
+        shutil.rmtree(project)
+        cleanup_history_tombstones(output_dir)
 
 
 def scan_history(output_dir: str) -> List[dict]:
