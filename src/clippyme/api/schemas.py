@@ -1,6 +1,7 @@
 """Pydantic request schemas for the ClippyMe FastAPI app."""
 import ipaddress
 import socket
+from enum import Enum
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -11,6 +12,12 @@ from pydantic import BaseModel, Field, field_validator
 # backward compatibility (existing imports from clippyme.api.schemas keep working).
 from clippyme.schemas import ViralClip, ViralClipsResponse  # noqa: F401
 from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
+
+
+class ManualPublishStatus(str, Enum):
+    pending = "pending"
+    completed = "completed"
+    all = "all"
 
 
 def _reject_internal_host(host: str) -> None:

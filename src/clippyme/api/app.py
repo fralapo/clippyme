@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import ValidationError
 
 from clippyme.domain.job_results import build_main_cmd, canonical_reframe_mode
@@ -43,11 +43,13 @@ from clippyme.domain.job_journal import JOURNAL_FILENAME, make_journal_writer, r
 from clippyme.domain.job_runner import make_run_job
 from clippyme.domain.job_submission import QueueFullError, submit_job
 from clippyme.domain.publish_service import publish_clip_flow
+from clippyme.domain.manual_publish_queue import ManualPublishQueue
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
     EditAIRequest,
     LiveMonitorStartRequest,
+    ManualPublishStatus,
     ProcessRequest,
     PublishRequest,
     ReframeRequest,
@@ -104,6 +106,10 @@ concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 # restore) interrupted ones instead of silently forgetting them.
 JOURNAL_PATH = os.path.join(DATA_DIR, JOURNAL_FILENAME)
 persist_jobs = make_journal_writer(jobs=jobs, path=JOURNAL_PATH)
+manual_publish_queue = ManualPublishQueue(
+    output_dir=OUTPUT_DIR,
+    state_path=os.path.join(DATA_DIR, "manual_publish_queue.json"),
+)
 
 # The per-job subprocess runner, bound to the shared jobs dict (thin-handler
 # rule: the body lives in clippyme.domain.job_runner).
@@ -703,6 +709,34 @@ async def list_history(request: Request):
     """Scan output/ for past jobs with metadata files."""
     require_trusted_config_request(request)
     return {"jobs": await asyncio.to_thread(scan_history, OUTPUT_DIR)}
+
+
+@app.get("/api/manual-publish")
+async def list_manual_publish(request: Request, status: ManualPublishStatus = ManualPublishStatus.pending):
+    require_trusted_config_request(request)
+    entries = await asyncio.to_thread(manual_publish_queue.list_entries, status.value)
+    return {"entries": entries}
+
+
+@app.post("/api/manual-publish/{entry_id}/complete")
+async def complete_manual_publish(entry_id: str, request: Request):
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "manual-publish", capacity=60, refill_per_sec=1)
+    return await asyncio.to_thread(manual_publish_queue.complete, entry_id)
+
+
+@app.post("/api/manual-publish/{entry_id}/restore")
+async def restore_manual_publish(entry_id: str, request: Request):
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "manual-publish", capacity=60, refill_per_sec=1)
+    return await asyncio.to_thread(manual_publish_queue.restore, entry_id)
+
+
+@app.get("/api/manual-publish/{entry_id}/video")
+async def manual_publish_video(entry_id: str, request: Request):
+    require_trusted_config_request(request)
+    video_path = await asyncio.to_thread(manual_publish_queue.resolve_video, entry_id)
+    return FileResponse(video_path, media_type="video/mp4")
 
 @app.delete("/api/history/{job_id}")
 async def delete_history(job_id: str, request: Request):
