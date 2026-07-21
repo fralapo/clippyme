@@ -376,6 +376,39 @@ def test_find_live_vod_no_match_or_malformed():
     assert find_live_vod({"data": [{"stream_id": "1"}]}, None) is None  # no stream id
 
 
+# --- effective_backfill_start (restart mid-stream coverage guard) ----------
+
+def test_effective_backfill_start_same_stream_uses_coverage():
+    from clippyme.domain.live_monitor import effective_backfill_start
+    # Same stream session → prior coverage floors the backfill start.
+    assert effective_backfill_start(1800, 40000, "2026-07-20T10:00:00+00:00",
+                                    "2026-07-20T10:00:00+00:00") == 40000
+    # Coverage below prelive skip → prelive wins.
+    assert effective_backfill_start(1800, 600, "s", "s") == 1800
+
+
+def test_effective_backfill_start_new_stream_ignores_coverage():
+    from clippyme.domain.live_monitor import effective_backfill_start
+    assert effective_backfill_start(1800, 40000, "2026-07-20T10:00:00+00:00",
+                                    "2026-07-21T09:00:00+00:00") == 1800
+    assert effective_backfill_start(1800, 40000, None, "x") == 1800
+    assert effective_backfill_start(1800, 40000, "x", None) == 1800
+
+
+def test_snapshot_restore_roundtrips_coverage(tmp_path):
+    from clippyme.domain.live_monitor import LiveMonitor
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
+                      output_dir=str(tmp_path))
+    mon._covered_elapsed = 12345
+    mon._covered_stream_start = "2026-07-20T10:00:00+00:00"
+    snap = mon.snapshot()
+    mon2 = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
+                       output_dir=str(tmp_path))
+    mon2.restore(snap)
+    assert mon2._covered_elapsed == 12345
+    assert mon2._covered_stream_start == "2026-07-20T10:00:00+00:00"
+
+
 # --- _publish_one: 429 backoff + retry -------------------------------------
 
 def test_publish_one_retries_on_429_then_succeeds(tmp_path, monkeypatch):

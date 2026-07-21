@@ -272,6 +272,19 @@ def backfill_windows(elapsed_seconds, prelive_skip_seconds, segment_seconds,
     return windows
 
 
+def effective_backfill_start(prelive_skip_seconds: int, covered_elapsed: int,
+                             covered_stream_start, started_at_iso) -> int:
+    """Where backfill windows should begin, stream-relative.
+
+    Prior coverage only counts when it belongs to the SAME stream session
+    (matching stream start time) — a new stream starts from the plain
+    prelive skip."""
+    start = max(0, int(prelive_skip_seconds))
+    if covered_stream_start and started_at_iso and covered_stream_start == started_at_iso:
+        start = max(start, int(covered_elapsed or 0))
+    return start
+
+
 def build_backfill_cmd(vod_url: str, start_s: int, end_s: int, out_path: str) -> list:
     """yt-dlp argv to download an exact [start, end] range of a VOD."""
     return [sys.executable, "-m", "yt_dlp", vod_url,
@@ -417,6 +430,13 @@ class LiveMonitor:
         # loses any pending backfill. Persist self._missed_windows if that ever
         # needs to survive a crash.
         self._missed_windows: list = []
+        # Stream-relative coverage (persisted): how far into the CURRENT stream
+        # this monitor has already captured or queued for backfill. Keyed to the
+        # stream's own start time so a restart mid-marathon doesn't recompute
+        # backfill windows over hours it already handled (duplicate clips), while
+        # a genuinely new stream starts from scratch.
+        self._covered_elapsed: int = 0
+        self._covered_stream_start: str | None = None
         self._vod_baseline_ids: set = set()
 
     # -- public API ------------------------------------------------------
@@ -451,6 +471,8 @@ class LiveMonitor:
             "published": sorted(self._published),
             "segments_captured": self.segments_captured,
             "clips_published": self.clips_published,
+            "covered_elapsed": int(self._covered_elapsed),
+            "covered_stream_start": self._covered_stream_start,
             "state": self.state,
             "updated_at": datetime.now().isoformat(),
         }
@@ -463,6 +485,8 @@ class LiveMonitor:
         self._published = set(snap.get("published") or [])
         self.segments_captured = int(snap.get("segments_captured") or 0)
         self.clips_published = int(snap.get("clips_published") or 0)
+        self._covered_elapsed = int(snap.get("covered_elapsed") or 0)
+        self._covered_stream_start = snap.get("covered_stream_start") or None
 
     def start(self, cfg: dict) -> dict:
         """Resolve secrets, build the platform strategy, and launch the task.
@@ -603,6 +627,10 @@ class LiveMonitor:
             task = asyncio.create_task(self._await_and_publish(job_id, seg_path))
             self._publish_tasks.add(task)
             task.add_done_callback(self._publish_tasks.discard)
+            if started_at is not None:
+                self._covered_elapsed = max(
+                    self._covered_elapsed,
+                    int((datetime.now(timezone.utc) - started_at).total_seconds()))
             self._persist()
             if early_exit:  # capture stopped before a full segment → stream ended
                 break
@@ -680,9 +708,19 @@ class LiveMonitor:
         self._vod_baseline_ids = set()
         if started_at is None:
             return
+        started_iso = started_at.isoformat()
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
-        windows = backfill_windows(
-            elapsed, self.cfg["prelive_skip_seconds"], self.cfg["segment_seconds"])
+        start = effective_backfill_start(
+            self.cfg["prelive_skip_seconds"], self._covered_elapsed,
+            self._covered_stream_start, started_iso)
+        windows = backfill_windows(elapsed, start, self.cfg["segment_seconds"])
+        # Everything up to now is either captured (prior session), queued as a
+        # window, or deliberately skipped — record it so a restart doesn't redo it.
+        if self._covered_stream_start != started_iso:
+            self._covered_elapsed = 0
+        self._covered_stream_start = started_iso
+        self._covered_elapsed = max(self._covered_elapsed, int(elapsed))
+        self._persist()
         if not windows:
             return
         if self.platform == "twitch":
