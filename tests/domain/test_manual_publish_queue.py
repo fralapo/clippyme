@@ -1,5 +1,7 @@
 import json
+import io
 import os
+import stat
 import uuid
 from pathlib import Path
 
@@ -73,7 +75,7 @@ def test_enqueue_falls_back_to_copy_when_hardlink_fails(queue, monkeypatch):
 
 def test_complete_and_restore_are_reversible_without_deleting_artifact(queue):
     entry = _enqueue(queue)
-    artifact = queue.resolve_video(entry["id"])
+    artifact = queue.output_dir.parent / entry["artifact"]
 
     completed = queue.complete(entry["id"])
     assert completed["status"] == "completed"
@@ -101,7 +103,7 @@ def test_invalid_transition_and_unknown_entry_raise_domain_errors(queue):
 
 def test_missing_artifacts_are_excluded_and_cannot_be_resolved(queue):
     entry = _enqueue(queue)
-    queue.resolve_video(entry["id"]).unlink()
+    (queue.output_dir.parent / entry["artifact"]).unlink()
 
     assert queue.list_entries("all") == []
     with pytest.raises(NotFoundError):
@@ -129,16 +131,63 @@ def test_enqueue_rejects_traversal_and_sources_outside_output(queue, job_id, sou
         _enqueue(queue, source, job_id=job_id)
 
 
-def test_tampered_artifact_path_is_never_resolved(queue):
+def test_tampered_artifact_path_rejects_persisted_state(queue):
     entry = _enqueue(queue)
     state = json.loads(queue.state_path.read_text(encoding="utf-8"))
     state["entries"][0]["artifact"] = "../outside.mp4"
     queue.state_path.write_text(json.dumps(state), encoding="utf-8")
 
     reloaded = ManualPublishQueue(queue.output_dir, queue.state_path)
-    assert reloaded.list_entries("all") == []
-    with pytest.raises(NotFoundError):
+    with pytest.raises(ValidationError):
+        reloaded.list_entries("all")
+    with pytest.raises(ValidationError):
         reloaded.resolve_video(entry["id"])
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("status", "arbitrary"),
+        ("status", None),
+        ("id", "not-a-uuid"),
+        ("job_id", "../escape"),
+        ("clip_index", -1),
+        ("title", None),
+        ("completed_at", "unexpected"),
+    ],
+)
+def test_malformed_persisted_entry_is_never_exposed_by_all(queue, field, value):
+    _enqueue(queue)
+    state = json.loads(queue.state_path.read_text(encoding="utf-8"))
+    state["entries"][0][field] = value
+    queue.state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        queue.list_entries("all")
+
+
+def test_resolve_video_returns_an_open_regular_file_handle(queue):
+    entry = _enqueue(queue)
+
+    with queue.resolve_video(entry["id"]) as stream:
+        assert isinstance(stream, io.BufferedReader)
+        assert stat.S_ISREG(os.fstat(stream.fileno()).st_mode)
+        assert stream.read() == b"video"
+    assert stream.closed
+
+
+def test_open_video_descriptor_remains_bound_if_path_is_replaced(queue):
+    entry = _enqueue(queue)
+    artifact = queue.output_dir.parent / entry["artifact"]
+    stream = queue.resolve_video(entry["id"])
+    try:
+        if os.name == "nt":
+            pytest.skip("Windows prevents replacing an open artifact")
+        artifact.unlink()
+        artifact.write_bytes(b"replacement")
+        assert stream.read() == b"video"
+    finally:
+        stream.close()
 
 
 def test_remove_clip_and_job_remove_records_but_not_history_sources(queue):
@@ -156,3 +205,31 @@ def test_remove_clip_and_job_remove_records_but_not_history_sources(queue):
     assert second_source.exists()
     assert not (queue.output_dir.parent / second["artifact"]).exists()
     assert queue.list_entries("all") == []
+
+
+def test_remove_is_idempotent_after_success(queue):
+    _enqueue(queue)
+
+    assert queue.remove_clip(JOB_ID, 0) == 1
+    assert queue.remove_clip(JOB_ID, 0) == 0
+    assert queue.remove_job(JOB_ID) == 0
+
+
+def test_unlink_failure_keeps_state_retriable(queue, monkeypatch):
+    entry = _enqueue(queue)
+    artifact = queue.output_dir.parent / entry["artifact"]
+    real_unlink = Path.unlink
+
+    def fail_artifact_unlink(path, *args, **kwargs):
+        if path == artifact:
+            raise PermissionError("active reader")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_artifact_unlink)
+    with pytest.raises(ConflictError):
+        queue.remove_clip(JOB_ID, 0)
+
+    assert [item["id"] for item in queue.list_entries("all")] == [entry["id"]]
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    assert queue.remove_clip(JOB_ID, 0) == 1
+    assert queue.remove_clip(JOB_ID, 0) == 0

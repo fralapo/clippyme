@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import io
 import pytest
 
 from clippyme.api import app as app_module
@@ -65,3 +66,18 @@ def test_queue_routes_require_trusted_request(client_and_entry):
     assert untrusted.post(f"/api/manual-publish/{entry['id']}/complete").status_code == 403
     assert untrusted.get(f"/api/manual-publish/{entry['id']}/video").status_code == 403
 
+
+def test_video_stream_closes_queue_opened_handle(client_and_entry, monkeypatch):
+    client, entry = client_and_entry
+    stream = io.BytesIO(b"streamed")
+
+    def open_video(entry_id):
+        assert entry_id == entry["id"]
+        return stream
+
+    monkeypatch.setattr(app_module.manual_publish_queue, "resolve_video", open_video)
+    response = client.get(f"/api/manual-publish/{entry['id']}/video")
+
+    assert response.status_code == 200
+    assert response.content == b"streamed"
+    assert stream.closed

@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import BinaryIO
 
 from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
 from clippyme.domain.history_service import is_valid_job_id
@@ -122,7 +124,7 @@ class ManualPublishQueue:
             and entry.get("clip_index") == clip_index
         )
 
-    def resolve_video(self, entry_id) -> Path:
+    def resolve_video(self, entry_id) -> BinaryIO:
         entry_id = self._entry_id(entry_id)
         with self._lock:
             entry = next((e for e in self._load() if e.get("id") == entry_id), None)
@@ -131,7 +133,19 @@ class ManualPublishQueue:
             artifact = self._artifact_path(entry)
             if artifact is None:
                 raise NotFoundError("Manual publish artifact not found")
-            return artifact
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            try:
+                descriptor = os.open(artifact, flags)
+            except (FileNotFoundError, NotADirectoryError, OSError) as exc:
+                raise NotFoundError("Manual publish artifact not found") from exc
+            try:
+                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                    raise NotFoundError("Manual publish artifact is not a regular file")
+                return os.fdopen(descriptor, "rb")
+            except Exception:
+                os.close(descriptor)
+                raise
 
     def _transition(self, entry_id, *, expected, target):
         entry_id = self._entry_id(entry_id)
@@ -155,11 +169,19 @@ class ManualPublishQueue:
             removed = [entry for entry in entries if predicate(entry)]
             if not removed:
                 return 0
-            self._save([entry for entry in entries if not predicate(entry)])
             for entry in removed:
                 artifact = self._artifact_path(entry, require_file=False)
                 if artifact is not None:
-                    artifact.unlink(missing_ok=True)
+                    try:
+                        artifact.unlink(missing_ok=True)
+                    except OSError as exc:
+                        raise ConflictError(
+                            "Manual publish artifact is currently in use; retry removal"
+                        ) from exc
+            # Commit logical removal only after every artifact is gone. If the
+            # state write fails, records remain discoverable and a retry is
+            # safe because unlink(missing_ok=True) is idempotent.
+            self._save([entry for entry in entries if not predicate(entry)])
             return len(removed)
 
     def _load(self):
@@ -172,7 +194,49 @@ class ManualPublishQueue:
         entries = payload.get("entries", []) if isinstance(payload, dict) else None
         if not isinstance(entries, list):
             raise ValidationError("Manual publish queue state is invalid")
+        for entry in entries:
+            self._validate_entry(entry)
         return entries
+
+    def _validate_entry(self, entry):
+        if not isinstance(entry, dict):
+            raise ValidationError("Manual publish queue entry is invalid")
+        required_text = (
+            "title",
+            "caption",
+            "source_platform",
+            "source_channel",
+            "source_kind",
+            "project_title",
+            "created_at",
+        )
+        if any(not isinstance(entry.get(field), str) for field in required_text):
+            raise ValidationError("Manual publish queue entry is invalid")
+        if entry.get("status") not in _STATUSES:
+            raise ValidationError("Manual publish queue entry has invalid status")
+        monitor_id = entry.get("monitor_id")
+        if monitor_id is not None and not isinstance(monitor_id, str):
+            raise ValidationError("Manual publish queue entry is invalid")
+        clip_index = entry.get("clip_index")
+        if not isinstance(clip_index, int) or isinstance(clip_index, bool) or clip_index < 0:
+            raise ValidationError("Manual publish queue entry has invalid clip index")
+        entry_id = self._entry_id(entry.get("id"))
+        job_dir = self._job_dir(entry.get("job_id"))
+        expected = job_dir / "manual_queue" / f"{entry_id}.mp4"
+        expected_stored = expected.relative_to(self.output_dir.parent).as_posix()
+        if entry.get("artifact") != expected_stored:
+            raise ValidationError("Manual publish queue entry has invalid artifact path")
+        try:
+            stored = (self.output_dir.parent / entry["artifact"]).resolve()
+        except OSError as exc:
+            raise ValidationError("Manual publish queue entry has invalid artifact path") from exc
+        if stored != expected:
+            raise ValidationError("Manual publish queue entry has invalid artifact path")
+        completed_at = entry.get("completed_at")
+        if entry["status"] == "pending" and completed_at is not None:
+            raise ValidationError("Pending entry cannot have completed_at")
+        if entry["status"] == "completed" and not isinstance(completed_at, str):
+            raise ValidationError("Completed entry must have completed_at")
 
     def _save(self, entries):
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -211,7 +275,7 @@ class ManualPublishQueue:
             if require_file and not artifact.is_file():
                 return None
             return artifact
-        except (KeyError, TypeError, ValidationError):
+        except (KeyError, TypeError, OSError, ValidationError):
             return None
 
     @staticmethod
@@ -223,4 +287,3 @@ class ManualPublishQueue:
         if str(parsed) != str(entry_id):
             raise ValidationError("Invalid manual publish entry ID")
         return str(parsed)
-

@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import ValidationError
 
 from clippyme.domain.job_results import build_main_cmd, canonical_reframe_mode
@@ -735,8 +735,16 @@ async def restore_manual_publish(entry_id: str, request: Request):
 @app.get("/api/manual-publish/{entry_id}/video")
 async def manual_publish_video(entry_id: str, request: Request):
     require_trusted_config_request(request)
-    video_path = await asyncio.to_thread(manual_publish_queue.resolve_video, entry_id)
-    return FileResponse(video_path, media_type="video/mp4")
+    video = await asyncio.to_thread(manual_publish_queue.resolve_video, entry_id)
+
+    def stream_video():
+        try:
+            while chunk := video.read(1024 * 1024):
+                yield chunk
+        finally:
+            video.close()
+
+    return StreamingResponse(stream_video(), media_type="video/mp4")
 
 @app.delete("/api/history/{job_id}")
 async def delete_history(job_id: str, request: Request):
