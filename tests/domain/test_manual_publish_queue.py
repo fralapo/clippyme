@@ -166,10 +166,19 @@ def test_malformed_persisted_entry_is_never_exposed_by_all(queue, field, value):
         queue.list_entries("all")
 
 
-def test_resolve_video_returns_an_open_regular_file_handle(queue):
+def test_resolve_video_preserves_path_interface(queue):
     entry = _enqueue(queue)
 
-    with queue.resolve_video(entry["id"]) as stream:
+    resolved = queue.resolve_video(entry["id"])
+
+    assert isinstance(resolved, Path)
+    assert resolved == queue.output_dir.parent / entry["artifact"]
+
+
+def test_open_video_returns_an_open_regular_file_handle(queue):
+    entry = _enqueue(queue)
+
+    with queue.open_video(entry["id"]) as stream:
         assert isinstance(stream, io.BufferedReader)
         assert stat.S_ISREG(os.fstat(stream.fileno()).st_mode)
         assert stream.read() == b"video"
@@ -179,7 +188,7 @@ def test_resolve_video_returns_an_open_regular_file_handle(queue):
 def test_open_video_descriptor_remains_bound_if_path_is_replaced(queue):
     entry = _enqueue(queue)
     artifact = queue.output_dir.parent / entry["artifact"]
-    stream = queue.resolve_video(entry["id"])
+    stream = queue.open_video(entry["id"])
     try:
         if os.name == "nt":
             pytest.skip("Windows prevents replacing an open artifact")
@@ -188,6 +197,33 @@ def test_open_video_descriptor_remains_bound_if_path_is_replaced(queue):
         assert stream.read() == b"video"
     finally:
         stream.close()
+
+
+def test_open_video_rejects_symlinked_parent_on_dirfd_platforms(queue, tmp_path):
+    supports_secure_walk = (
+        os.open in os.supports_dir_fd
+        and hasattr(os, "O_DIRECTORY")
+        and hasattr(os, "O_NOFOLLOW")
+    )
+    if not supports_secure_walk:
+        pytest.skip("secure dir_fd walk is not supported on this platform")
+
+    entry = _enqueue(queue)
+    job_dir = queue.output_dir / JOB_ID
+    original = job_dir.with_name(f"{JOB_ID}-original")
+    job_dir.rename(original)
+    outside = tmp_path / "outside-job"
+    outside.mkdir()
+    try:
+        job_dir.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks are not permitted on this host")
+
+    # Bypass persisted-state validation to exercise the open-time directory
+    # walk itself: every parent component must be opened with O_NOFOLLOW.
+    queue._load = lambda: [entry]
+    with pytest.raises(NotFoundError):
+        queue.open_video(entry["id"])
 
 
 def test_remove_clip_and_job_remove_records_but_not_history_sources(queue):

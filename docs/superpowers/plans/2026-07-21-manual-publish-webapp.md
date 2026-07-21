@@ -33,7 +33,7 @@
 **Interfaces:**
 - Produces `ManualPublishQueue(output_dir: Path, state_path: Path)`.
 - Produces `enqueue(*, job_id, clip_index, source_path, title, caption, source_platform, source_channel, source_kind, project_title, monitor_id=None) -> dict`.
-- Produces `list_entries(status="pending")`, `complete(entry_id)`, `restore(entry_id)`, `remove_job(job_id)`, `remove_clip(job_id, clip_index)`, and `resolve_video(entry_id) -> Path`.
+- Produces `list_entries(status="pending")`, `complete(entry_id)`, `restore(entry_id)`, `remove_job(job_id)`, `remove_clip(job_id, clip_index)`, `resolve_video(entry_id) -> Path`, and race-safe `open_video(entry_id) -> BinaryIO` for API streaming.
 - Produces API routes under `/api/manual-publish`.
 
 - [ ] **Step 1: Write failing domain tests** for atomic reload, pending/completed transitions, restore, deterministic grouping fields, path confinement, missing artifact pruning, hardlink freeze with copy fallback, and job/clip cleanup.

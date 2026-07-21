@@ -124,7 +124,8 @@ class ManualPublishQueue:
             and entry.get("clip_index") == clip_index
         )
 
-    def resolve_video(self, entry_id) -> BinaryIO:
+    def resolve_video(self, entry_id) -> Path:
+        """Validate an entry and return its artifact path for compatibility."""
         entry_id = self._entry_id(entry_id)
         with self._lock:
             entry = next((e for e in self._load() if e.get("id") == entry_id), None)
@@ -133,19 +134,80 @@ class ManualPublishQueue:
             artifact = self._artifact_path(entry)
             if artifact is None:
                 raise NotFoundError("Manual publish artifact not found")
-            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
-            flags |= getattr(os, "O_NOFOLLOW", 0)
-            try:
-                descriptor = os.open(artifact, flags)
-            except (FileNotFoundError, NotADirectoryError, OSError) as exc:
-                raise NotFoundError("Manual publish artifact not found") from exc
-            try:
-                if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-                    raise NotFoundError("Manual publish artifact is not a regular file")
-                return os.fdopen(descriptor, "rb")
-            except Exception:
+            return artifact
+
+    def open_video(self, entry_id) -> BinaryIO:
+        """Open a validated artifact without a path-validation/open race.
+
+        Linux/Unix hosts with ``dir_fd`` and ``O_NOFOLLOW`` walk every
+        untrusted component from the trusted output-root descriptor. Platforms
+        without those primitives use a path-based fallback while retaining the
+        queue lock, which still serializes queue-managed cleanup/open races.
+        """
+        entry_id = self._entry_id(entry_id)
+        with self._lock:
+            entry = next((e for e in self._load() if e.get("id") == entry_id), None)
+            if entry is None:
+                raise NotFoundError("Manual publish entry not found")
+            if self._supports_secure_dirfd():
+                descriptor = self._open_video_dirfd(entry["job_id"], entry_id)
+            else:
+                artifact = self._artifact_path(entry)
+                if artifact is None:
+                    raise NotFoundError("Manual publish artifact not found")
+                descriptor = self._open_video_fallback(artifact)
+            return self._regular_file(descriptor)
+
+    @staticmethod
+    def _supports_secure_dirfd():
+        return (
+            os.open in os.supports_dir_fd
+            and hasattr(os, "O_DIRECTORY")
+            and hasattr(os, "O_NOFOLLOW")
+        )
+
+    def _open_video_dirfd(self, job_id, entry_id):
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        directory_flags |= getattr(os, "O_CLOEXEC", 0)
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_BINARY", 0)
+        file_flags |= getattr(os, "O_CLOEXEC", 0)
+        descriptors = []
+        try:
+            root_fd = os.open(self.output_dir, os.O_RDONLY | os.O_DIRECTORY)
+            descriptors.append(root_fd)
+            job_fd = os.open(job_id, directory_flags, dir_fd=root_fd)
+            descriptors.append(job_fd)
+            queue_fd = os.open("manual_queue", directory_flags, dir_fd=job_fd)
+            descriptors.append(queue_fd)
+            return os.open(f"{entry_id}.mp4", file_flags, dir_fd=queue_fd)
+        except OSError as exc:
+            raise NotFoundError("Manual publish artifact not found") from exc
+        finally:
+            for descriptor in reversed(descriptors):
                 os.close(descriptor)
-                raise
+
+    @staticmethod
+    def _open_video_fallback(artifact):
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        try:
+            return os.open(artifact, flags)
+        except OSError as exc:
+            raise NotFoundError("Manual publish artifact not found") from exc
+
+    @staticmethod
+    def _regular_file(descriptor):
+        try:
+            if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+                raise NotFoundError("Manual publish artifact is not a regular file")
+            return os.fdopen(descriptor, "rb")
+        except Exception:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            raise
 
     def _transition(self, entry_id, *, expected, target):
         entry_id = self._entry_id(entry_id)

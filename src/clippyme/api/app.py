@@ -735,7 +735,7 @@ async def restore_manual_publish(entry_id: str, request: Request):
 @app.get("/api/manual-publish/{entry_id}/video")
 async def manual_publish_video(entry_id: str, request: Request):
     require_trusted_config_request(request)
-    video = await asyncio.to_thread(manual_publish_queue.resolve_video, entry_id)
+    video = await asyncio.to_thread(manual_publish_queue.open_video, entry_id)
 
     def stream_video():
         try:

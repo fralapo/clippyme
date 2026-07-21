@@ -75,7 +75,12 @@ def test_video_stream_closes_queue_opened_handle(client_and_entry, monkeypatch):
         assert entry_id == entry["id"]
         return stream
 
-    monkeypatch.setattr(app_module.manual_publish_queue, "resolve_video", open_video)
+    monkeypatch.setattr(app_module.manual_publish_queue, "open_video", open_video)
+    monkeypatch.setattr(
+        app_module.manual_publish_queue,
+        "resolve_video",
+        lambda _entry_id: pytest.fail("API must not resolve and reopen a path"),
+    )
     response = client.get(f"/api/manual-publish/{entry['id']}/video")
 
     assert response.status_code == 200
