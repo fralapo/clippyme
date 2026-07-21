@@ -8,6 +8,8 @@ from clippyme.pipeline.gemini_request import (
     build_reformat_prompt,
     build_viral_prompt,
     compute_gemini_cost,
+    build_model_chain,
+    generate_with_model_fallback,
     encode_words_toon,
     extract_prompt_words,
     is_rate_limit_error,
@@ -133,6 +135,92 @@ def test_transient_errors_not_rate_limited():
 def test_backoff_schedule():
     assert [backoff_seconds(True, a) for a in range(3)] == [10, 20, 40]
     assert [backoff_seconds(False, a) for a in range(3)] == [2, 4, 8]
+
+
+def test_model_chain_adds_lite_fallback_without_duplicates():
+    assert build_model_chain(
+        "gemini-3.5-flash", "gemini-3.1-flash-lite,gemini-3.5-flash"
+    ) == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+
+
+def test_default_model_chain_exhausts_all_free_tier_fallbacks():
+    assert build_model_chain("gemini-3.5-flash") == [
+        "gemini-3.5-flash",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash-preview",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+    ]
+
+
+def test_generate_switches_model_after_primary_quota_exhaustion():
+    calls = []
+    sleeps = []
+
+    class Models:
+        def generate_content(self, *, model, contents, config):
+            calls.append(model)
+            if model == "gemini-3.5-flash":
+                raise RuntimeError("429 RESOURCE_EXHAUSTED quota exceeded")
+            return "ok"
+
+    client = type("Client", (), {"models": Models()})()
+    response, used_model = generate_with_model_fallback(
+        client,
+        "prompt",
+        ["gemini-3.5-flash", "gemini-3.1-flash-lite"],
+        max_attempts=2,
+        sleep_fn=sleeps.append,
+        log_fn=lambda _msg: None,
+    )
+
+    assert response == "ok"
+    assert used_model == "gemini-3.1-flash-lite"
+    assert calls == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    assert sleeps == []
+
+
+def test_generate_skips_unavailable_preview_model():
+    calls = []
+
+    class Models:
+        def generate_content(self, *, model, contents, config):
+            calls.append(model)
+            if model == "gemini-3-flash-preview":
+                raise RuntimeError("404 NOT_FOUND model is not available")
+            return "ok"
+
+    client = type("Client", (), {"models": Models()})()
+    response, used_model = generate_with_model_fallback(
+        client,
+        "prompt",
+        ["gemini-3-flash-preview", "gemini-2.5-flash"],
+        sleep_fn=lambda _seconds: None,
+        log_fn=lambda _msg: None,
+    )
+    assert response == "ok"
+    assert used_model == "gemini-2.5-flash"
+    assert calls == ["gemini-3-flash-preview", "gemini-2.5-flash"]
+
+
+def test_generate_does_not_fallback_on_non_retryable_error():
+    calls = []
+
+    class Models:
+        def generate_content(self, *, model, contents, config):
+            calls.append(model)
+            raise RuntimeError("401 API key invalid")
+
+    client = type("Client", (), {"models": Models()})()
+    with pytest.raises(RuntimeError, match="401"):
+        generate_with_model_fallback(
+            client,
+            "prompt",
+            ["gemini-3.5-flash", "gemini-3.1-flash-lite"],
+            sleep_fn=lambda _seconds: None,
+            log_fn=lambda _msg: None,
+        )
+    assert calls == ["gemini-3.5-flash"]
 
 
 # --- cost computation -----------------------------------------------------------

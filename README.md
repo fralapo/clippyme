@@ -140,6 +140,7 @@ All API keys, model selection, and cookies are managed **from the dashboard Sett
 | Key | Required for | Notes |
 |---|---|---|
 | `GEMINI_API_KEY` | Viral moment detection | Default model `gemini-3.5-flash`; override per job or set the default in Settings (live model discovery). |
+| `GEMINI_FALLBACK_MODELS` | Automatic quota fallback | Default: `gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-2.5-flash,gemini-2.5-flash-lite`. Each new job retries the preferred `GEMINI_MODEL` first. |
 | `DEEPGRAM_API_KEY` | Cloud transcription (default) | Falls back to local Faster-Whisper if missing. |
 | `ELEVENLABS_API_KEY` | Alternative cloud transcription (Scribe) | Adds audio-event tags + optional Voice Isolator; also falls back to Faster-Whisper. |
 | `HUGGINGFACE_TOKEN` | Optional gated models for Whisper | |

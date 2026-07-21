@@ -8,6 +8,7 @@ the level-4 reformat prompt. ``main.get_viral_clips`` orchestrates the actual
 SDK calls around these helpers and re-exports the moved constants.
 """
 import json
+import time
 
 # Per-model pricing ($ per 1M tokens) — update when Google changes rates
 MODEL_PRICING = {
@@ -244,6 +245,84 @@ def backoff_seconds(rate_limited: bool, attempt: int) -> int:
     """429 → 10s / 20s / 40s; transient → 2s / 4s / 8s (attempt is 0-based)."""
     base = 10 if rate_limited else 2
     return base * (2 ** attempt)
+
+
+def build_model_chain(primary_model: str, fallback_models: str | None = None) -> list[str]:
+    """Return a de-duplicated primary → fallback model chain."""
+    raw = fallback_models if fallback_models is not None else (
+        "gemini-3.1-flash-lite,gemini-3-flash-preview,"
+        "gemini-2.5-flash,gemini-2.5-flash-lite"
+    )
+    models = [primary_model, *(part.strip() for part in raw.split(","))]
+    return list(dict.fromkeys(model for model in models if model))
+
+
+def _is_retryable_model_error(exc) -> bool:
+    message = str(exc).lower()
+    return is_rate_limit_error(exc) or any(signal in message for signal in (
+        "503", "504", "unavailable", "deadline_exceeded", "high demand",
+    ))
+
+
+def _is_unavailable_model_error(exc) -> bool:
+    message = str(exc).lower()
+    return (
+        ("404" in message or "not_found" in message)
+        and ("model" in message or "not available" in message)
+    )
+
+
+def generate_with_model_fallback(
+    client,
+    prompt: str,
+    models: list[str],
+    *,
+    max_attempts: int = 3,
+    sleep_fn=time.sleep,
+    log_fn=print,
+):
+    """Generate once, moving to the next model only for retryable failures.
+
+    Returns ``(response, model_used)``. Authentication, validation and other
+    permanent errors are raised immediately instead of being hidden by a
+    model switch.
+    """
+    attempts = max(1, int(max_attempts))
+    last_error = None
+    for model_index, model_name in enumerate(models):
+        for attempt in range(attempts):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config={"http_options": {"timeout": 120000}},
+                )
+                return response, model_name
+            except Exception as exc:
+                last_error = exc
+                if _is_unavailable_model_error(exc):
+                    log_fn(f"⏭️  Gemini model {model_name} unavailable; skipping it")
+                    break
+                if not _is_retryable_model_error(exc):
+                    raise
+                rate_limited = is_rate_limit_error(exc)
+                if rate_limited:
+                    log_fn(f"🔀 Gemini {model_name} quota exhausted; switching model")
+                    break
+                if attempt < attempts - 1:
+                    wait = backoff_seconds(rate_limited, attempt)
+                    reason = "rate-limited" if rate_limited else "transient error"
+                    log_fn(
+                        f"⚠️  Gemini {model_name} {reason} "
+                        f"(attempt {attempt + 1}/{attempts}): {exc}. "
+                        f"Retrying in {wait}s..."
+                    )
+                    sleep_fn(wait)
+        if model_index < len(models) - 1:
+            log_fn(f"🔀 Gemini {model_name} unavailable — trying {models[model_index + 1]}")
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("No Gemini models configured")
 
 
 def compute_gemini_cost(prompt_tokens, output_tokens, model_name):

@@ -72,9 +72,11 @@ from clippyme.pipeline.gemini_request import (  # noqa: E402,F401
     GEMINI_PROMPT_TEMPLATE,
     MODEL_PRICING,
     backoff_seconds,
+    build_model_chain,
     build_reformat_prompt,
     build_viral_prompt,
     compute_gemini_cost,
+    generate_with_model_fallback,
     is_rate_limit_error,
 )
 
@@ -409,7 +411,8 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     # Use selected model from env, or default to gemini-3.5-flash
     model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
-    print(f"🤖  Initializing Gemini with model: {model_name}")
+    model_chain = build_model_chain(model_name, os.getenv("GEMINI_FALLBACK_MODELS"))
+    print(f"🤖  Initializing Gemini with model chain: {' → '.join(model_chain)}")
 
     if any(old in model_name for old in ("1.0", "1.5", "2.0")):
         print(f"⚠️  WARNING: {model_name} is deprecated. Please switch to gemini-3.5-flash or later via the dashboard.")
@@ -418,36 +421,12 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     # template fill) is pure — it lives in gemini_request, host-tested.
     prompt, words = build_viral_prompt(transcript_result, video_duration, instructions)
 
-    # Retry with exponential backoff for rate limits / transient errors.
-    # 429 (quota) gets a longer base backoff because Google's "wait N
-    # seconds" signal lives in the error message rather than structured
-    # metadata in the python SDK — we can't honor it precisely, but we
-    # can at least slow down instead of retrying immediately.
-    response = None
     max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3") or "3")
-    for attempt in range(max_attempts):
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config={"http_options": {"timeout": 120000}},
-            )
-            break
-        except Exception as e:
-            is_rate_limit = is_rate_limit_error(e)
-            wait = backoff_seconds(is_rate_limit, attempt)
-            if attempt < max_attempts - 1:
-                reason = "rate-limited" if is_rate_limit else "transient error"
-                print(
-                    f"⚠️  Gemini API {reason} (attempt {attempt + 1}/{max_attempts}): "
-                    f"{e}. Retrying in {wait}s..."
-                )
-                time.sleep(wait)
-            else:
-                print(f"❌ Gemini API failed after {max_attempts} attempts: {e}")
-                return None
-
-    if response is None:
+    try:
+        response, model_name = generate_with_model_fallback(
+            client, prompt, model_chain, max_attempts=max_attempts)
+    except Exception as e:
+        print(f"❌ Gemini API failed across model chain: {e}")
         return None
 
     # --- Cost Calculation (pure math in gemini_request) ---
@@ -490,10 +469,10 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             retry_model = os.getenv("GEMINI_RETRY_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
             retry_prompt = build_reformat_prompt(err_msg, text)
             try:
-                retry_resp = client.models.generate_content(
-                    model=retry_model,
-                    contents=retry_prompt,
-                    config={"http_options": {"timeout": 120000}},
+                retry_chain = build_model_chain(
+                    retry_model, os.getenv("GEMINI_FALLBACK_MODELS"))
+                retry_resp, retry_model = generate_with_model_fallback(
+                    client, retry_prompt, retry_chain, max_attempts=1,
                 )
                 print(f"🔁 Retry via {retry_model} (cheap reformatter)")
                 return retry_resp.text or ""
