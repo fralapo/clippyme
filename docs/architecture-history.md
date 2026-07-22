@@ -57,3 +57,37 @@ narrative changelog) is in git history; per-feature rationale lives in the
   snapping (`cut_ops.py` + `media_probe.detect_silences`), post-render QA
   (`clip_qa.py`), colour grade layer, animated hooks, conversational trim,
   cross-job taste memory.
+
+## 2026-07-22 — manual publish queue + mobile webapp
+
+Zernio's 5-posts/day/account cap made it a bottleneck for high-volume
+pipelines, so a persistent **manual publish queue** was added as the default
+publish destination (`domain/manual_publish_queue.py`, validated/locked/
+atomic-write CRUD over `data/manual_publish_queue.json`, frozen artifacts
+under each job dir's `manual_queue/`), with a `publisher_mode` choice
+(`manual_queue` default | `zernio`) settable per job on `/api/process`,
+`/api/batch`, and `/api/live-monitor/start`, recorded in a `publisher_mode.json`
+sidecar. New endpoints: `GET /api/manual-publish`, `POST .../complete`,
+`POST .../restore`, and `GET .../video` (HTTP Range 206; the only endpoint
+deliberately exempt from `CLIPPYME_API_TOKEN`, since `<video>` elements can't
+send custom headers — it stays trusted-origin gated). A startup importer
+backfills clips from jobs that finished before this feature existed. Clip-level
+**History deletion** (`DELETE /api/history/{job_id}/clips/{clip_index}`) shipped
+alongside it, transactional via an `output/.trash` tombstone with retry, and
+deleting a project's last clip now deletes the whole project. The live monitor
+gained durable **auto-resume** (`resume_on_start` in the snapshot,
+`LiveMonitorRegistry.auto_resume()`/`shutdown()`), so channel coverage
+survives a backend restart. Frontend: a new mobile-first page
+(`dashboard/src/redesign/manualPublish.jsx`, tabs Da pubblicare/Pubblicate/
+History/Monitor) plus `lib/manualShare.js` (secure-context-gated Web Share),
+meant to be reached over Tailscale (HTTPS via `tailscale serve` for Web
+Share; caption-copy/download work over plain HTTP too).
+
+A whole-branch review caught two must-fix seam bugs before merge: monitor jobs
+were double-enqueuing (completion hook + monitor both wrote the same clip,
+hook first in production, raw+composed both landing in the queue) — fixed by
+stamping `owner="live_monitor"` in the sidecar and skipping the hook for
+monitor-owned jobs; and the video endpoint 401'd under `CLIPPYME_API_TOKEN`
+(the exact LAN deployment the feature targets) — fixed by the token exemption
+above, which also motivated adding Range support since the fix moved the
+endpoint onto the same serving posture as the static mounts.
