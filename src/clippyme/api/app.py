@@ -820,6 +820,17 @@ async def live_monitor_stop(request: Request):
     return await live_monitor.stop(monitor_id)
 
 
+@app.post("/api/live-monitor/{monitor_id}/config")
+async def live_monitor_update_config(monitor_id: str, request: Request):
+    """Patch selected settings on a running monitor (body: partial dict of
+    updatable fields — see ``validate_monitor_partial_update``). Applies to
+    FUTURE segments/publishes only, never retroactively."""
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "livemonitor", capacity=10, refill_per_sec=10 / 60)
+    partial = await request.json()
+    return {"monitor": live_monitor.update_config(monitor_id, partial)}
+
+
 @app.get("/api/live-monitor/status")
 async def live_monitor_status(request: Request, monitor_id: Optional[str] = None):
     """One monitor's status (``?monitor_id=``) or ``{"monitors": [...]}`` for all."""

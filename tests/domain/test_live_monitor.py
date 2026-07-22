@@ -18,6 +18,7 @@ from clippyme.domain.live_monitor import (
     render_template,
     should_process_segment,
     validate_monitor_config,
+    validate_monitor_partial_update,
     _hhmmss,
 )
 from clippyme.integrations.twitch_client import find_live_vod
@@ -239,6 +240,117 @@ def test_validate_config_youtube_channel_forms(chan):
 def test_validate_config_youtube_rejects_junk_channel():
     with pytest.raises(ValidationError):
         validate_monitor_config(_base_cfg(platform="youtube", mode="vod", slug="not a handle"))
+
+
+# --- validate_monitor_partial_update (runtime config updates) --------------
+
+def _running_cfg(**over):
+    return validate_monitor_config(_base_cfg(**over))
+
+
+def test_partial_update_rejects_empty():
+    with pytest.raises(ValidationError):
+        validate_monitor_partial_update({}, _running_cfg())
+
+
+def test_partial_update_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        validate_monitor_partial_update({"min_gap_seconds": 60, "channel": "other"}, _running_cfg())
+
+
+@pytest.mark.parametrize("field", ["platform", "mode", "channel", "slug", "loop", "publisher_mode"])
+def test_partial_update_rejects_identity_lifecycle_fields(field):
+    with pytest.raises(ValidationError):
+        validate_monitor_partial_update({field: "x"}, _running_cfg())
+
+
+def test_partial_update_allows_updatable_fields_and_merges():
+    current = _running_cfg(slug="grenbaud")
+    new_cfg = validate_monitor_partial_update(
+        {"min_gap_seconds": 120, "instructions": "focus on jokes"}, current)
+    # unchanged fields carry over from current_cfg
+    assert new_cfg["channel"] == "grenbaud"
+    assert new_cfg["platform"] == "kick"
+    # updated fields applied
+    assert new_cfg["min_gap_seconds"] == 120
+    assert new_cfg["instructions"] == "focus on jokes"
+
+
+def test_partial_update_clamps_numeric_knobs_like_full_validation():
+    current = _running_cfg()
+    new_cfg = validate_monitor_partial_update({"segment_seconds": 99999}, current)
+    assert new_cfg["segment_seconds"] == 3600  # clamped to max, same as validate_monitor_config
+
+
+def test_partial_update_allows_banner_and_compose():
+    current = _running_cfg()
+    new_cfg = validate_monitor_partial_update(
+        {"banner": {"enabled": False}, "compose": {"toggles": {"hook": False}}}, current)
+    assert new_cfg["banner"] == {"enabled": False}
+    assert new_cfg["compose"] == {"toggles": {"hook": False}}
+
+
+# --- LiveMonitor.update_config / LiveMonitorRegistry.update_config ---------
+
+def test_monitor_update_config_swaps_cfg_and_persists(tmp_path):
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    persisted = []
+    mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path),
+                      on_state_change=lambda: persisted.append(True))
+    mon.cfg = _running_cfg(slug="foo")
+
+    result = mon.update_config({"min_gap_seconds": 42})
+
+    assert mon.cfg["min_gap_seconds"] == 42
+    assert result["min_gap_seconds"] == 42
+    assert persisted  # _persist() called
+
+    # returned dict is snapshot-shaped: only _SNAPSHOT_CONFIG_FIELDS keys
+    from clippyme.domain.live_monitor import _SNAPSHOT_CONFIG_FIELDS
+    assert set(result) == set(_SNAPSHOT_CONFIG_FIELDS)
+
+
+def test_registry_update_config_not_found(tmp_path):
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+    with pytest.raises(__import__("clippyme.domain.errors", fromlist=["NotFoundError"]).NotFoundError):
+        reg.update_config("kick:nope", {"min_gap_seconds": 60})
+
+
+def test_registry_update_config_delegates_and_persists(tmp_path):
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+
+    class _FakeMon:
+        id = "kick:foo"
+
+        def update_config(self, partial):
+            self.updated = partial
+            return {"min_gap_seconds": partial["min_gap_seconds"]}
+
+        def snapshot(self):
+            return {"platform": "kick", "channel": "foo"}
+
+    fake = _FakeMon()
+    reg._monitors["kick:foo"] = fake
+
+    result = reg.update_config("kick:foo", {"min_gap_seconds": 60})
+
+    assert fake.updated == {"min_gap_seconds": 60}
+    assert result == {"min_gap_seconds": 60}
+
+
+def test_snapshot_includes_config_for_restart_survival(tmp_path):
+    from clippyme.domain.live_monitor import LiveMonitor
+    mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(slug="foo", banner={"enabled": False}, compose={"toggles": {}})
+    snap = mon.snapshot()
+    assert snap["config"]["banner"] == {"enabled": False}
+    assert snap["config"]["compose"] == {"toggles": {}}
+    assert snap["config"]["min_gap_seconds"] == mon.cfg["min_gap_seconds"]
 
 
 # --- global slot sharing across monitors -----------------------------------

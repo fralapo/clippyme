@@ -238,6 +238,41 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
     }
 
 
+# Fields a running monitor's config may be safely mutated to at runtime.
+# platform/mode/channel/slug/loop/publisher_mode are identity/lifecycle knobs
+# — changing them mid-run would need a restart, not a config patch.
+_UPDATABLE_CONFIG_FIELDS = (
+    "instructions", "caption_template", "title_template", "min_gap_seconds",
+    "segment_seconds", "prelive_skip_seconds", "platforms", "banner", "compose",
+    "poll_interval",
+)
+
+# The full set of cfg keys worth persisting/restoring (mirrors
+# validate_monitor_config's return shape). No secrets ever live in cfg.
+_SNAPSHOT_CONFIG_FIELDS = (
+    "platform", "mode", "channel", "slug", "platforms", "segment_seconds",
+    "prelive_skip_seconds", "min_gap_seconds", "poll_interval", "loop",
+    "instructions", "caption_template", "title_template", "timezone",
+    "banner", "compose",
+)
+
+
+def validate_monitor_partial_update(partial: dict, current_cfg: dict) -> dict:
+    """Validate a runtime config-update payload against a running monitor's
+    current config. Only ``_UPDATABLE_CONFIG_FIELDS`` may be changed; anything
+    else (platform/mode/channel/slug/loop/publisher_mode/...) is rejected.
+    Returns the fully re-validated merged config (same shape as
+    ``validate_monitor_config``'s return)."""
+    if not isinstance(partial, dict) or not partial:
+        raise ValidationError("no updatable fields provided")
+    bad = set(partial) - set(_UPDATABLE_CONFIG_FIELDS)
+    if bad:
+        raise ValidationError(f"cannot update field(s): {sorted(bad)}")
+    merged = dict(current_cfg)
+    merged.update(partial)
+    return validate_monitor_config(merged, default_timezone=current_cfg.get("timezone"))
+
+
 def _hhmmss(seconds: int) -> str:
     seconds = max(0, int(seconds))
     return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
@@ -476,6 +511,9 @@ class LiveMonitor:
             "platform": self.platform,
             "mode": self.mode,
             "channel": self.cfg.get("channel"),
+            # Full cfg (no secrets — validate_monitor_config never puts any
+            # in there) so a restart/auto-resume picks up runtime updates too.
+            "config": {k: self.cfg.get(k) for k in _SNAPSHOT_CONFIG_FIELDS} if self.cfg else None,
             "seen_ids": sorted(self._seen_ids),
             "published": sorted(self._published),
             "segments_captured": self.segments_captured,
@@ -542,6 +580,18 @@ class LiveMonitor:
             self._task = None
         logger.info("LiveMonitor started: %s (mode=%s)", self.id, self.mode)
         return self.status()
+
+    def update_config(self, partial: dict) -> dict:
+        """Apply a validated partial config update while running.
+
+        Swaps ``self.cfg`` in one atomic assignment — every per-segment /
+        per-publish read site reads ``self.cfg[...]`` at use time, so the new
+        values apply to the NEXT segment/publish only, never retroactively.
+        """
+        new_cfg = validate_monitor_partial_update(partial, self.cfg)
+        self.cfg = new_cfg
+        self._persist()
+        return {k: new_cfg.get(k) for k in _SNAPSHOT_CONFIG_FIELDS}
 
     def _make_strategy(self, cfg: dict, pc: dict):
         platform, channel = cfg["platform"], cfg["channel"]
@@ -1215,6 +1265,16 @@ class LiveMonitorRegistry:
             resumed.append(mid)
         self.persist()
         return {"resumed": resumed, "failed": failed}
+
+    def update_config(self, monitor_id: str, partial: dict) -> dict:
+        """Apply a runtime config patch to a running monitor; persists the
+        new state so it survives restart/auto-resume."""
+        mon = self._monitors.get(monitor_id)
+        if mon is None:
+            raise NotFoundError(f"no such monitor: {monitor_id}")
+        result = mon.update_config(partial)
+        self.persist()
+        return result
 
     def status(self, monitor_id: str | None = None) -> dict:
         if monitor_id:
