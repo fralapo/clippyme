@@ -13,6 +13,7 @@ import { ResultsView } from './results';
 import { PublishModal } from './publish';
 import { HistoryView, SettingsView, ApiKeyModal } from './views';
 import { LiveMonitorView } from './live';
+import { ManualPublishView } from './manualPublish';
 import { EditClipModal } from './captions';
 import { optsToPreselections, restoreJob, listBackendJobIds, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from './realApi';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from './presets';
@@ -37,6 +38,7 @@ const DEFAULT_OPTS = {
   hooks: true, hookPos: 'top', hookSize: 'M', hookStyle: { ...HOOK_STYLE_DEFAULT },
   logo: false, logoPos: 'top-right', logoSize: 'M', gradePreset: 'none',
   banner: false, bannerPlatform: 'kick', bannerHandle: '', bannerYPct: 0.85,
+  publisherMode: 'manual_queue',
   language: 'multi',
   platforms: { tiktok: true, ig: true, yt: false },
   preset: 'viral',
@@ -411,6 +413,8 @@ export default function RedesignApp() {
       )}
 
       {tab === 'live' && <LiveMonitorView pushToast={pushToast} />}
+
+      {tab === 'publish' && <ManualPublishView pushToast={pushToast} />}
 
       {tab === 'history' && !viewingHistory && (
         <HistoryView history={history} availableIds={availableJobIds}

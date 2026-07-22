@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import uuid
 import shutil
@@ -27,7 +28,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import ValidationError
 
 from clippyme.domain.job_results import build_main_cmd, canonical_reframe_mode
@@ -43,11 +44,13 @@ from clippyme.domain.job_journal import JOURNAL_FILENAME, make_journal_writer, r
 from clippyme.domain.job_runner import make_run_job
 from clippyme.domain.job_submission import QueueFullError, submit_job
 from clippyme.domain.publish_service import publish_clip_flow
+from clippyme.domain.manual_publish_queue import ManualPublishQueue, import_existing_clips
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
     EditAIRequest,
     LiveMonitorStartRequest,
+    ManualPublishStatus,
     ProcessRequest,
     PublishRequest,
     ReframeRequest,
@@ -65,7 +68,13 @@ from clippyme.storage.config_store import (
     load_zernio_config,
 )
 from clippyme.domain.job_worker import make_workers
-from clippyme.domain.history_service import scan_history, is_valid_job_id
+from clippyme.domain.history_service import (
+    cleanup_history_tombstones,
+    delete_history_clip,
+    delete_history_project,
+    is_valid_job_id,
+    scan_history,
+)
 from clippyme.api.config_routes import router as config_router
 
 load_dotenv()
@@ -104,10 +113,15 @@ concurrency_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
 # restore) interrupted ones instead of silently forgetting them.
 JOURNAL_PATH = os.path.join(DATA_DIR, JOURNAL_FILENAME)
 persist_jobs = make_journal_writer(jobs=jobs, path=JOURNAL_PATH)
+manual_publish_queue = ManualPublishQueue(
+    output_dir=OUTPUT_DIR,
+    state_path=os.path.join(DATA_DIR, "manual_publish_queue.json"),
+)
 
 # The per-job subprocess runner, bound to the shared jobs dict (thin-handler
 # rule: the body lives in clippyme.domain.job_runner).
-run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs)
+run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs,
+                        manual_publish_queue=manual_publish_queue)
 
 # Multi-platform content monitor registry: concurrent asyncio tasks (one per
 # platform:channel) that detect live streams / new VODs, submit them as normal
@@ -117,11 +131,13 @@ from clippyme.domain.live_monitor import LiveMonitorRegistry
 live_monitor = LiveMonitorRegistry(
     jobs=jobs, job_queue=job_queue, output_dir=OUTPUT_DIR,
     upload_dir=UPLOAD_DIR, on_job_change=persist_jobs,
+    manual_publish_queue=manual_publish_queue,
 )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    cleanup_history_tombstones(OUTPUT_DIR)
     # Recover journalled jobs from the previous server life BEFORE the
     # dispatcher starts: queued jobs are re-enqueued, interrupted ones are
     # marked failed (or restored as completed when their result is on disk).
@@ -144,17 +160,34 @@ async def lifespan(app: FastAPI):
         job_retention_seconds=JOB_RETENTION_SECONDS,
         max_concurrent_jobs=MAX_CONCURRENT_JOBS,
     )
+    # Idempotently import any extant, unpublished clips left on disk into the
+    # manual publish queue BEFORE the worker starts dispatching recovered jobs
+    # (so no pipeline subprocess mutates a job dir mid-scan) and BEFORE monitor
+    # auto-resume — runs once per startup, never fatal (a bad job's metadata
+    # just gets skipped and logged).
+    try:
+        await asyncio.to_thread(import_existing_clips, manual_publish_queue)
+    except Exception:
+        logger.exception("manual publish clip import failed")
     worker_task = asyncio.create_task(process_queue())
     cleanup_task = asyncio.create_task(cleanup_jobs())
     # Background auto-update for the auto-editor binary used by smartcut.py.
     # Failures are non-fatal — smartcut has an FFmpeg fallback path.
     from clippyme.integrations.auto_editor_updater import background_updater_loop
     ae_updater_task = asyncio.create_task(background_updater_loop())
+    # Bring back every monitor that was still marked resume_on_start when the
+    # process last went down (durable auto-resume). Never fatal to startup —
+    # a per-monitor failure stays visible via its status() instead.
+    try:
+        await live_monitor.auto_resume()
+    except Exception:
+        logger.exception("live monitor auto-resume failed")
     yield
     # Stop the live monitor first so its in-flight capture/publish tasks unwind
-    # cleanly before we tear down the worker loops they depend on.
+    # cleanly before we tear down the worker loops they depend on. shutdown()
+    # (not stop()) so resume_on_start survives for the next auto-resume.
     try:
-        await live_monitor.stop()
+        await live_monitor.shutdown()
     except Exception:
         logger.exception("live monitor failed to stop cleanly")
     # Cancel ALL background tasks on shutdown — not just the updater. Leaving
@@ -174,17 +207,27 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+# Media routes under /api that must stay off the token gate, like the static
+# media mounts: <video src>/download anchors can't attach custom headers. The
+# manual-publish video endpoint keeps its own trusted-origin/private-network
+# gate, strict-UUID entry validation, and dirfd/O_NOFOLLOW artifact open.
+_TOKEN_EXEMPT_MEDIA = re.compile(r"^/api/manual-publish/[0-9a-fA-F-]{36}/video$")
+
+
 @app.middleware("http")
 async def _api_token_gate(request: Request, call_next):
     """Optional shared-secret auth for deliberate LAN deployments.
 
     Active only when CLIPPYME_API_TOKEN is set (default unset = no-op). Guards
     every /api route; the static media mounts (/videos, /thumbnails, /fonts)
-    stay IP-open because <video>/<img>/FontFace requests can't attach custom
-    headers. HTTPException is converted here because raise inside middleware
-    bypasses FastAPI's exception handlers.
+    and the _TOKEN_EXEMPT_MEDIA routes stay IP-open because
+    <video>/<img>/FontFace requests can't attach custom headers. HTTPException
+    is converted here because raise inside middleware bypasses FastAPI's
+    exception handlers.
     """
-    if request.url.path.startswith("/api/") and request.method != "OPTIONS":
+    if (request.url.path.startswith("/api/") and request.method != "OPTIONS"
+            and not (request.method in ("GET", "HEAD")
+                     and _TOKEN_EXEMPT_MEDIA.match(request.url.path))):
         try:
             enforce_api_token(request)
         except HTTPException as exc:
@@ -303,6 +346,7 @@ async def process_endpoint(
     no_zoom = False
     skip_analysis = False
     model = None
+    publisher_mode = "manual_queue"
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         try:
@@ -320,6 +364,7 @@ async def process_endpoint(
         no_zoom = bool(validated.no_zoom)
         skip_analysis = bool(validated.skip_analysis)
         model = validated.model
+        publisher_mode = validated.publisher_mode
 
     # For multipart/form-data uploads, extract reframe_mode + language from form fields
     if "multipart/form-data" in content_type:
@@ -334,11 +379,12 @@ async def process_endpoint(
         no_zoom = str(form.get("no_zoom", "")).lower() in {"1", "true", "yes"} or no_zoom
         skip_analysis = str(form.get("skip_analysis", "")).lower() in {"1", "true", "yes"} or skip_analysis
         model = form.get("model", model) or None
+        publisher_mode = form.get("publisher_mode", publisher_mode) or "manual_queue"
         # Validate the multipart values through the same schema for
         # consistency — we drop the url requirement since we're using
         # an uploaded file path.
         try:
-            ProcessRequest.model_validate({
+            validated = ProcessRequest.model_validate({
                 "url": "https://upload.invalid/local",
                 "reframe_mode": reframe_mode or None,
                 "aspect": aspect or None,
@@ -347,9 +393,11 @@ async def process_endpoint(
                 "no_zoom": no_zoom,
                 "skip_analysis": skip_analysis,
                 "model": model or None,
+                "publisher_mode": publisher_mode,
             })
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors())
+        publisher_mode = validated.publisher_mode
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
@@ -407,7 +455,7 @@ async def process_endpoint(
     await submit_job(
         jobs=jobs, job_queue=job_queue, job_id=job_id,
         cmd=cmd, env=env, job_output_dir=job_output_dir,
-        on_change=persist_jobs,
+        on_change=persist_jobs, publisher_mode=publisher_mode,
     )
 
     return {"job_id": job_id, "status": "queued"}
@@ -460,7 +508,7 @@ async def batch_process(req: BatchRequest, request: Request):
             await submit_job(
                 jobs=jobs, job_queue=job_queue, job_id=job_id,
                 cmd=cmd, env=env, job_output_dir=job_output_dir, batch=True,
-                on_change=persist_jobs,
+                on_change=persist_jobs, publisher_mode=req.publisher_mode,
             )
             batch_jobs.append({"url": url, "job_id": job_id})
         except QueueFullError:
@@ -704,6 +752,97 @@ async def list_history(request: Request):
     require_trusted_config_request(request)
     return {"jobs": await asyncio.to_thread(scan_history, OUTPUT_DIR)}
 
+
+@app.get("/api/manual-publish")
+async def list_manual_publish(request: Request, status: ManualPublishStatus = ManualPublishStatus.pending):
+    require_trusted_config_request(request)
+    entries = await asyncio.to_thread(manual_publish_queue.list_entries, status.value)
+    return {"entries": entries}
+
+
+@app.post("/api/manual-publish/{entry_id}/complete")
+async def complete_manual_publish(entry_id: str, request: Request):
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "manual-publish", capacity=60, refill_per_sec=1)
+    return await asyncio.to_thread(manual_publish_queue.complete, entry_id)
+
+
+@app.post("/api/manual-publish/{entry_id}/restore")
+async def restore_manual_publish(entry_id: str, request: Request):
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "manual-publish", capacity=60, refill_per_sec=1)
+    return await asyncio.to_thread(manual_publish_queue.restore, entry_id)
+
+
+def _parse_byte_range(header, size):
+    """Parse a single-range ``Range: bytes=start-end`` header.
+
+    Returns ``None`` when no Range header is present (serve a full 200) or an
+    inclusive ``(start, end)`` tuple. Raises ``ValueError`` for a malformed or
+    unsatisfiable range (→ 416). Multi-range requests are not supported and
+    map to 416 as well (no ``<video>`` element sends them).
+    """
+    if not header:
+        return None
+    m = re.fullmatch(r"bytes=(\d*)-(\d*)", header.strip())
+    if not m or (not m.group(1) and not m.group(2)):
+        raise ValueError(f"unsupported Range: {header!r}")
+    if not m.group(1):  # suffix form: bytes=-N (last N bytes)
+        suffix = int(m.group(2))
+        if suffix == 0 or size == 0:
+            raise ValueError(f"unsatisfiable Range: {header!r}")
+        return max(0, size - suffix), size - 1
+    start = int(m.group(1))
+    end = int(m.group(2)) if m.group(2) else size - 1
+    if start >= size or start > end:
+        raise ValueError(f"unsatisfiable Range: {header!r}")
+    return start, min(end, size - 1)
+
+
+@app.get("/api/manual-publish/{entry_id}/video")
+async def manual_publish_video(entry_id: str, request: Request):
+    require_trusted_config_request(request)
+    video = await asyncio.to_thread(manual_publish_queue.open_video, entry_id)
+    try:
+        video.seek(0, os.SEEK_END)
+        size = video.tell()
+        video.seek(0)
+        byte_range = _parse_byte_range(request.headers.get("range"), size)
+    except ValueError:
+        video.close()
+        return Response(status_code=416, headers={
+            "Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"})
+    except Exception:
+        video.close()
+        raise
+
+    def stream_video(limit=None):
+        try:
+            remaining = limit
+            while True:
+                step = 1024 * 1024 if remaining is None else min(1024 * 1024, remaining)
+                if step <= 0:
+                    break
+                chunk = video.read(step)
+                if not chunk:
+                    break
+                yield chunk
+                if remaining is not None:
+                    remaining -= len(chunk)
+        finally:
+            video.close()
+
+    headers = {"Accept-Ranges": "bytes"}
+    if byte_range is None:
+        headers["Content-Length"] = str(size)
+        return StreamingResponse(stream_video(), media_type="video/mp4", headers=headers)
+    start, end = byte_range
+    video.seek(start)
+    headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    headers["Content-Length"] = str(end - start + 1)
+    return StreamingResponse(stream_video(end - start + 1), status_code=206,
+                             media_type="video/mp4", headers=headers)
+
 @app.delete("/api/history/{job_id}")
 async def delete_history(job_id: str, request: Request):
     """Delete a job's output directory and all its files."""
@@ -713,12 +852,28 @@ async def delete_history(job_id: str, request: Request):
     job_dir = os.path.join(OUTPUT_DIR, job_id)
     if not os.path.isdir(job_dir):
         raise HTTPException(status_code=404, detail="Job not found on disk")
-    await asyncio.to_thread(shutil.rmtree, job_dir, True)
+    await asyncio.to_thread(
+        delete_history_project, OUTPUT_DIR, job_id, manual_publish_queue,
+    )
     if job_id in jobs:
         del jobs[job_id]
         persist_jobs()
     logger.info("Deleted job %s and all files", job_id)
     return {"success": True}
+
+
+@app.delete("/api/history/{job_id}/clips/{clip_index}")
+async def delete_history_clip_endpoint(job_id: str, clip_index: int, request: Request):
+    """Delete one History clip and its manual-publish queue record."""
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "history-delete", capacity=30, refill_per_sec=0.5)
+    result = await asyncio.to_thread(
+        delete_history_clip, OUTPUT_DIR, job_id, clip_index, manual_publish_queue,
+    )
+    if result["project_deleted"] and job_id in jobs:
+        del jobs[job_id]
+        persist_jobs()
+    return result
 
 @app.post("/api/compose/{job_id}/{clip_index}")
 async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, request: Request):

@@ -1,16 +1,23 @@
 """Pydantic request schemas for the ClippyMe FastAPI app."""
 import ipaddress
 import socket
+from enum import Enum
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ViralClip / ViralClipsResponse moved to the neutral clippyme.schemas module so
 # the pipeline no longer imports from clippyme.api. Re-exported here for
 # backward compatibility (existing imports from clippyme.api.schemas keep working).
 from clippyme.schemas import ViralClip, ViralClipsResponse  # noqa: F401
 from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
+
+
+class ManualPublishStatus(str, Enum):
+    pending = "pending"
+    completed = "completed"
+    all = "all"
 
 
 def _reject_internal_host(host: str) -> None:
@@ -75,6 +82,11 @@ class ProcessRequest(BaseModel):
     # appended as --model to the pipeline argv. When omitted, the pipeline uses
     # GEMINI_MODEL from env / Settings (default gemini-3.5-flash).
     model: Optional[str] = Field(None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$")
+    # Publish destination for this job's finished clips: "manual_queue" (default —
+    # land in the Manual Publish tab for hand-review) or "zernio" (opt out of the
+    # manual queue; the user will publish via the per-clip Zernio flow instead).
+    # Mirrors LiveMonitorStartRequest.publisher_mode for consistency.
+    publisher_mode: str = Field("manual_queue", pattern=r"^(manual_queue|zernio)$")
 
 
 class BatchRequest(BaseModel):
@@ -82,6 +94,7 @@ class BatchRequest(BaseModel):
     instructions: Optional[str] = Field(None, max_length=MAX_INSTRUCTIONS_LEN)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
     aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
+    publisher_mode: str = Field("manual_queue", pattern=r"^(manual_queue|zernio)$")
 
     @field_validator("urls")
     @classmethod
@@ -350,7 +363,10 @@ class LiveMonitorStartRequest(BaseModel):
     slug: str = Field(..., min_length=1, max_length=256)
     platform: str = Field("kick", pattern=r"^(kick|twitch|youtube)$")
     mode: str = Field("live", pattern=r"^(live|vod)$")
-    platforms: List[dict] = Field(..., min_length=1, max_length=14)
+    # Manual delivery is the safe default and needs no Zernio targets. The
+    # domain layer requires targets when publisher_mode='zernio'.
+    publisher_mode: str = Field("manual_queue", pattern=r"^(manual_queue|zernio)$")
+    platforms: Optional[List[dict]] = Field(None, max_length=14)
     segment_seconds: int = Field(1800, ge=60, le=3600)
     prelive_skip_seconds: int = Field(1800, ge=0, le=7200)
     min_gap_seconds: int = Field(900, ge=0, le=86400)
@@ -406,8 +422,14 @@ class LiveMonitorStartRequest(BaseModel):
 
     @field_validator("platforms")
     @classmethod
-    def _validate_platforms(cls, v: List[dict]) -> List[dict]:
-        return validate_publish_platforms(v)
+    def _validate_platforms(cls, v: Optional[List[dict]]) -> Optional[List[dict]]:
+        return None if v is None else validate_publish_platforms(v)
+
+    @model_validator(mode="after")
+    def _zernio_requires_platforms(self):
+        if self.publisher_mode == "zernio" and not self.platforms:
+            raise ValueError("at least one platform target is required for zernio")
+        return self
 
 
 class ZernioConfigRequest(BaseModel):

@@ -347,6 +347,50 @@ export async function getLiveMonitorStatus() {
   return res.json();
 }
 
+// --- Manual publish queue --------------------------------------------------
+
+export async function getManualQueue(status = 'pending') {
+  const res = await apiFetch(getApiUrl(`/api/manual-publish?status=${encodeURIComponent(status)}`));
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json(); // { entries: [...] }
+}
+
+export async function completeManualEntry(id) {
+  const res = await apiFetch(getApiUrl(`/api/manual-publish/${id}/complete`), { method: 'POST' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+export async function restoreManualEntry(id) {
+  const res = await apiFetch(getApiUrl(`/api/manual-publish/${id}/restore`), { method: 'POST' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// Same-origin streaming URL for the entry's frozen MP4 — used as <video src>,
+// the Scarica MP4 download href, and the fetch target for shareClip().
+export function manualEntryVideoUrl(id) {
+  return getApiUrl(`/api/manual-publish/${id}/video`);
+}
+
+// --- History (per-clip) -----------------------------------------------------
+
+// Full backend-truth job list (title/clips/timestamps), unlike
+// listBackendJobIds() which only extracts the id set. Powers the manual-
+// publish app's History tab (per-clip delete needs the clip array).
+export async function listHistoryJobs() {
+  const res = await apiFetch(getApiUrl('/api/history'));
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  return data.jobs || [];
+}
+
+export async function deleteHistoryClip(jobId, clipIndex) {
+  const res = await apiFetch(getApiUrl(`/api/history/${jobId}/clips/${clipIndex}`), { method: 'DELETE' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json(); // { project_deleted, remaining }
+}
+
 // Map the redesign's flat `opts` into the preselections shape the existing
 // hooks + seedClipParams expect (subtitles/hook as truthy objects).
 export function optsToPreselections(opts) {
@@ -356,6 +400,10 @@ export function optsToPreselections(opts) {
     // 'object' is the legacy name for 'subject' (FrameShift face-first); the
     // backend accepts both but normalize here so new jobs persist the new name.
     reframe_mode: (opts.reframeMode === 'object' ? 'subject' : opts.reframeMode) || (opts.reframe === false ? 'disabled' : 'auto'),
+    // Publish destination the user picked for this recipe; forwarded to
+    // /api/process|/api/batch by lib/api.js (manual_queue → clips land in
+    // the mobile publish page; zernio → job opts out of the page).
+    publisher_mode: opts.publisherMode || 'manual_queue',
     aspect: opts.aspect || '9:16',
     language: opts.language,
     no_zoom: !opts.zoom,

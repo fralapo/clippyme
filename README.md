@@ -42,6 +42,7 @@ Fork of OpenShorts, hardened and extended: cloud-or-local transcription, Gemini 
 - [Editing toggles (compose-on-download)](#editing-toggles-compose-on-download)
 - [Reframing](#reframing)
 - [Publishing (Zernio)](#publishing-zernio)
+- [Manual publishing (mobile)](#manual-publishing-mobile)
 - [Security posture](#security-posture)
 - [CPU vs GPU](#cpu-vs-gpu)
 - [Acknowledgements](#acknowledgements)
@@ -60,7 +61,7 @@ Given a video URL or upload, ClippyMe runs the following pipeline end-to-end:
 4. **Reframe to 9:16** with active-speaker tracking: YOLOv8 person detection + MediaPipe FaceMesh mouth-aspect-ratio (MAR) variance to pick who is speaking, then a smoothed cameraman that adapts speed and zoom per scene. Hardened against messy real-world inputs: variable-frame-rate normalization, audio `start_time` compensation (YouTube A/V desync), and corrupt-frame resilience, all no-ops on clean sources.
 5. **Post-process** each clip: Ken Burns auto-zoom (1.0→1.05×), EBU R128 audio normalization to −14 LUFS, automatic cover frame selection. Every rendered mp4 is written with a leading `moov` atom (`+faststart`), so it starts playing in the browser before the full file downloads and uploads cleanly to social. Every render and compose pass shares one near-visually-lossless libx264 setting (CRF 18, `CLIPPYME_X264_CRF`), so the stacked re-encodes don't compound into soft output; the final mux and download copy are stream-copy/lossless.
 6. **Optional editing** at download time (compose-on-demand): a **Colour grade** preset (warm_cinematic / cool_crisp / neutral_punch / vivid_pop), **Smart Cut** (filler-word + silence removal via auto-editor v3 timeline + audio polish, plus a separate manual transcript trim and a conversational AI trim), **Hook** text overlay (Pillow + emoji, with Instagram-Stories-style banner / colours / outline / font, defaulting to bannerless white Anton with a thin black outline), **Subtitles** (6 ASS karaoke presets or classic SRT with a live preview), and a **Brand logo** watermark. The per-clip editor is a tabbed modal; settings can be applied to one clip, copied to all clips, or staged across a multi-select. Custom subtitle/hook fonts and the logo are uploaded once in Settings.
-7. **Publish or schedule** to TikTok / Instagram / YouTube via **Zernio**, with a SmartScheduler that picks Italian-prime-time slots, avoids same-day collisions, and (when scheduling) spreads one clip per day to stay under per-platform daily caps. Any residual Zernio daily-limit 429 is surfaced verbatim per clip.
+7. **Publish** either automatically to TikTok / Instagram / YouTube via **Zernio** (SmartScheduler picks Italian-prime-time slots, avoids same-day collisions, and spreads one clip per day to stay under per-platform daily caps; any residual Zernio daily-limit 429 is surfaced verbatim per clip), or, by default, drop the finished clips into the **manual publish queue** for hands-free posting from your phone — pick the destination per job (`publisher_mode`) at generation time.
 
 While a job runs you stay in control:
 
@@ -269,6 +270,11 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `GET` | `/api/history` | Past jobs from disk. |
 | `POST` | `/api/history/{job_id}/restore` | Reload a past job into memory. |
 | `DELETE` | `/api/history/{job_id}` | Delete from disk. |
+| `DELETE` | `/api/history/{job_id}/clips/{clip_index}` | Delete a single clip (transactional tombstone; deletes the whole project if it was the last clip). |
+| `GET` | `/api/manual-publish?status=pending\|completed\|all` | List the manual-publish queue. |
+| `POST` | `/api/manual-publish/{id}/complete` | Mark a queued clip as published. |
+| `POST` | `/api/manual-publish/{id}/restore` | Undo a complete, back to pending. |
+| `GET` | `/api/manual-publish/{id}/video` | Stream a queued clip (HTTP Range/206). Exempt from `CLIPPYME_API_TOKEN` (media elements can't send headers) but still trusted-origin/private-network gated. |
 | `GET` | `/api/config/models` | List Gemini models (trusted origin). |
 | `POST` | `/api/config` | Persist API keys (trusted origin). |
 | `POST` | `/api/config/cookies` | Upload Netscape cookies file (trusted origin, 10 MB cap). |
@@ -349,6 +355,45 @@ The dashboard's unified `PublishModal` publishes the selected clips concurrently
 
 ---
 
+## Manual publishing (mobile)
+
+Zernio caps at **5 posts/day/account**, which most active pipelines blow
+through fast. The **manual publish queue** is the alternative destination:
+instead of scheduling through Zernio, finished clips land in a persistent
+queue and you post them yourself from a phone — full control over which
+platform, caption, and timing each clip gets.
+
+Pick the destination per job with `publisher_mode` (`manual_queue`, the
+default, or `zernio`) when you submit `/api/process`, `/api/batch`, or start
+a `/api/live-monitor` — a small sidecar file remembers the choice for that
+job so retries and the completion hook agree on where its clips go.
+
+The queue has its own mobile-first page (`dashboard/src/redesign/manualPublish.jsx`)
+with four tabs:
+
+- **Da pubblicare** — pending clips, with preview, caption copy, download,
+  and Web Share.
+- **Pubblicate** — clips you've marked complete (with an undo/**restore**).
+- **History** — past jobs, including per-clip delete.
+- **Monitor** — live-monitor status when watching channels hands-free.
+
+**Accessing it from a phone**: the dashboard binds to loopback by default, so
+reach it over Tailscale from the same tailnet. Web Share (`lib/manualShare.js`)
+requires a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts) —
+plain `http://` over Tailscale's own IP won't unlock it. Put
+[Tailscale Serve](https://tailscale.com/kb/1312/serve) in front of the
+frontend to get HTTPS on the tailnet:
+
+```bash
+tailscale serve https / http://127.0.0.1:5175
+```
+
+Without HTTPS, the page still works: caption copy and download both work
+over plain HTTP, only the native Share sheet is gated behind the secure
+context.
+
+---
+
 ## Live monitor (auto clip & publish)
 
 The **Live Monitor** tab watches a channel and turns its content into published shorts hands-free. Multiple monitors run in parallel (one per platform+channel), state survives restarts (`data/live_monitor.json`).
@@ -380,7 +425,7 @@ This project has been audited; the current state is suitable for **trusted LAN d
 - **Spoof-resistant client IP**: `X-Forwarded-For` / `X-Real-IP` are honoured only when `TRUST_PROXY=1` **and** the TCP peer is itself a private/loopback proxy, so a direct public client can't forge its address to dodge the rate limiter or the trusted-origin guard. Within `X-Forwarded-For` the backend reads the **last** hop — the address the proxy itself wrote — so it stays spoof-proof whether your proxy appends to the header (nginx's `$proxy_add_x_forwarded_for`, as shipped) or overwrites it. Exactly one trusted proxy is supported; don't enable it behind a proxy chain.
 - **SSRF hardening**: download + Zernio upload URLs are re-resolved and rejected when every resolved address is internal/loopback/link-local (DNS-rebinding-aware), with the DNS lookup bounded by a daemon-thread timeout (no process-global socket state).
 - **Loopback by default**: both published ports bind to `127.0.0.1` (`CLIPPYME_BIND`). The trust model treats every private-network peer as an authorized client for config/state endpoints, so LAN exposure is opt-in, not the default.
-- **Optional API token** (`CLIPPYME_API_TOKEN`): when set, an app middleware requires the shared secret on every `/api` request (`X-API-Token` or `Authorization: Bearer`, constant-time compare) — the auth layer for deliberate LAN deployments. Static media mounts stay IP-open (`<video>`/FontFace can't send custom headers).
+- **Optional API token** (`CLIPPYME_API_TOKEN`): when set, an app middleware requires the shared secret on every `/api` request (`X-API-Token` or `Authorization: Bearer`, constant-time compare) — the auth layer for deliberate LAN deployments. Static media mounts stay IP-open (`<video>`/FontFace can't send custom headers), and `GET /api/manual-publish/{id}/video` is exempt for the same reason (still trusted-origin/private-network gated, entry id and artifact path independently validated).
 
 **Not yet in place** (required before exposing publicly): a reverse proxy terminating TLS + security headers.
 

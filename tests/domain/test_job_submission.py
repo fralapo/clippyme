@@ -1,9 +1,16 @@
 """Host tests for clippyme.domain.job_submission — enqueue + queue-full rollback."""
 import asyncio
+import json
 
 import pytest
 
-from clippyme.domain.job_submission import QueueFullError, submit_job
+from clippyme.domain.job_submission import (
+    QueueFullError,
+    read_publisher_mode,
+    read_publisher_owner,
+    submit_job,
+    write_publisher_mode,
+)
 
 JOB_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 JOB_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
@@ -75,3 +82,93 @@ def test_on_change_hook_called_after_enqueue(tmp_path):
 
     asyncio.run(run())
     assert calls == [1]
+
+
+def test_submit_writes_manual_queue_sidecar_by_default(tmp_path):
+    async def run():
+        jobs, q = {}, asyncio.Queue(maxsize=1)
+        out = tmp_path / JOB_A
+        out.mkdir()
+        await submit_job(jobs=jobs, job_queue=q, job_id=JOB_A,
+                         cmd=["x"], env={}, job_output_dir=str(out))
+        return out
+
+    out = asyncio.run(run())
+    payload = json.loads((out / "publisher_mode.json").read_text(encoding="utf-8"))
+    assert payload == {"publisher_mode": "manual_queue"}
+
+
+def test_submit_writes_zernio_sidecar_when_requested(tmp_path):
+    async def run():
+        jobs, q = {}, asyncio.Queue(maxsize=1)
+        out = tmp_path / JOB_A
+        out.mkdir()
+        await submit_job(jobs=jobs, job_queue=q, job_id=JOB_A,
+                         cmd=["x"], env={}, job_output_dir=str(out),
+                         publisher_mode="zernio")
+        return out
+
+    out = asyncio.run(run())
+    assert read_publisher_mode(str(out)) == "zernio"
+
+
+def test_submit_sidecar_atomic_write_leaves_no_tmp_file(tmp_path):
+    out = tmp_path / JOB_A
+    out.mkdir()
+    write_publisher_mode(str(out), "manual_queue")
+    assert not (out / "publisher_mode.json.tmp").exists()
+    assert (out / "publisher_mode.json").exists()
+
+
+def test_read_publisher_mode_defaults_when_sidecar_missing(tmp_path):
+    out = tmp_path / JOB_A
+    out.mkdir()
+    assert read_publisher_mode(str(out)) == "manual_queue"
+
+
+def test_read_publisher_mode_defaults_when_sidecar_corrupt(tmp_path):
+    out = tmp_path / JOB_A
+    out.mkdir()
+    (out / "publisher_mode.json").write_text("{not json", encoding="utf-8")
+    assert read_publisher_mode(str(out)) == "manual_queue"
+
+
+def test_write_publisher_mode_rejects_unknown_value_as_manual_queue(tmp_path):
+    out = tmp_path / JOB_A
+    out.mkdir()
+    write_publisher_mode(str(out), "dropbox")
+    assert read_publisher_mode(str(out)) == "manual_queue"
+
+
+def test_sidecar_owner_roundtrip(tmp_path):
+    """The monitor stamps owner='live_monitor'; both fields survive the trip."""
+    out = tmp_path / JOB_A
+    out.mkdir()
+    write_publisher_mode(str(out), "manual_queue", owner="live_monitor")
+    assert read_publisher_mode(str(out)) == "manual_queue"
+    assert read_publisher_owner(str(out)) == "live_monitor"
+
+
+def test_sidecar_owner_defaults_to_none(tmp_path):
+    out = tmp_path / JOB_A
+    out.mkdir()
+    # Missing sidecar entirely.
+    assert read_publisher_owner(str(out)) is None
+    # Sidecar without an owner field (regular /api/process jobs).
+    write_publisher_mode(str(out), "manual_queue")
+    assert read_publisher_owner(str(out)) is None
+
+
+def test_submit_job_stamps_publisher_owner(tmp_path):
+    async def run():
+        jobs, q = {}, asyncio.Queue(maxsize=1)
+        out = tmp_path / JOB_A
+        out.mkdir()
+        await submit_job(jobs=jobs, job_queue=q, job_id=JOB_A,
+                         cmd=["x"], env={}, job_output_dir=str(out),
+                         publisher_owner="live_monitor")
+        return out
+
+    out = asyncio.run(run())
+    assert read_publisher_owner(str(out)) == "live_monitor"
+    assert read_publisher_mode(str(out)) == "manual_queue"

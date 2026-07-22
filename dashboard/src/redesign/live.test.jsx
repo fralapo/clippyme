@@ -142,6 +142,33 @@ test('banner Custom reveals platform+handle and sends the override', async () =>
   expect(startLiveMonitor.mock.calls[0][0].banner).toEqual({ platform: 'twitch', handle: 'xqc', y_pct: 0.85 });
 });
 
+test('defaults to Manual queue: start needs no Zernio targets/config and hides the Platforms picker', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  expect(screen.queryByText('Platforms')).toBeNull();
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  const body = startLiveMonitor.mock.calls[0][0];
+  expect(body.publisher_mode).toBe('manual_queue');
+  expect(body.platforms).toBeUndefined();
+});
+
+test('switching to Zernio automatic reveals the Platforms picker and requires targets + config', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  fireEvent.click(screen.getByRole('button', { name: 'Zernio automatic' }));
+  expect(screen.getByText('Platforms')).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  const body = startLiveMonitor.mock.calls[0][0];
+  expect(body.publisher_mode).toBe('zernio');
+  expect(body.platforms.length).toBeGreaterThan(0);
+});
+
 test('twitch missing-credentials (400) points to Settings', async () => {
   const { startLiveMonitor } = await import('./realApi');
   startLiveMonitor.mockRejectedValueOnce(new Error(

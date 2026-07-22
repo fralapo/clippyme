@@ -289,6 +289,14 @@ function OptionsPanel({ opts, set }) {
           options={[{ id: '9:16', label: '9:16' }, { id: '1:1', label: '1:1' }, { id: '16:9', label: '16:9' }]} /></div>
       </div>
 
+      <div className="label" style={{ margin: '16px 0 4px' }}>Publishing</div>
+      <div className="opt">
+        <div className="oico"><Icon n="send" /></div>
+        <div className="otxt"><div className="ot">Publish destination</div><div className="od">Manual queue lets you grab &amp; post by hand · Zernio auto-posts to your connected accounts</div></div>
+        <div className="r"><Segmented value={opts.publisherMode || 'manual_queue'} onChange={(id) => set({ publisherMode: id })}
+          options={[{ id: 'manual_queue', label: 'Manual queue' }, { id: 'zernio', label: 'Zernio automatic' }]} /></div>
+      </div>
+
       <div className="label" style={{ margin: '16px 0 4px' }}>AI &amp; reframe</div>
       <OptRow icon="sparkles" label="Find viral moments" desc="Gemini scores the transcript · off = whole video"
         on={opts.detect} set={(v) => set({ detect: v })} />
