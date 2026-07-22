@@ -150,11 +150,19 @@ async def lifespan(app: FastAPI):
     # Failures are non-fatal — smartcut has an FFmpeg fallback path.
     from clippyme.integrations.auto_editor_updater import background_updater_loop
     ae_updater_task = asyncio.create_task(background_updater_loop())
+    # Bring back every monitor that was still marked resume_on_start when the
+    # process last went down (durable auto-resume). Never fatal to startup —
+    # a per-monitor failure stays visible via its status() instead.
+    try:
+        await live_monitor.auto_resume()
+    except Exception:
+        logger.exception("live monitor auto-resume failed")
     yield
     # Stop the live monitor first so its in-flight capture/publish tasks unwind
-    # cleanly before we tear down the worker loops they depend on.
+    # cleanly before we tear down the worker loops they depend on. shutdown()
+    # (not stop()) so resume_on_start survives for the next auto-resume.
     try:
-        await live_monitor.stop()
+        await live_monitor.shutdown()
     except Exception:
         logger.exception("live monitor failed to stop cleanly")
     # Cancel ALL background tasks on shutdown — not just the updater. Leaving

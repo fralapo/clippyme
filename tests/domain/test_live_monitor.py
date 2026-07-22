@@ -297,6 +297,188 @@ def test_registry_stop_retires_monitor_but_keeps_snapshot(tmp_path):
     assert reg._snapshots["kick:foo"]["seen_ids"] == ["v1"]
 
 
+def test_loop_monitor_snapshot_marks_resume_on_start(tmp_path, monkeypatch):
+    from clippyme.domain import live_monitor as lm
+    from clippyme.storage import config_store
+
+    monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "g"})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC"})
+    monkeypatch.setattr(lm.LiveMonitor, "_make_strategy", lambda self, cfg, pc: object())
+
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+
+    reg.start(_base_cfg(platform="kick", mode="live", slug="foo", loop=True, platforms=[]))
+
+    assert reg._monitors["kick:foo"].snapshot()["resume_on_start"] is True
+    assert reg._monitors["kick:foo"].status()["resume_on_start"] is True
+
+
+def test_registry_explicit_stop_disables_resume_on_start(tmp_path):
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+
+    class _FakeMon:
+        id = "kick:foo"
+        resume_on_start = True
+
+        async def stop(self):
+            return {"id": self.id, "running": False}
+
+        def status(self):
+            return {"id": self.id, "running": False, "resume_on_start": self.resume_on_start}
+
+        def snapshot(self):
+            return {
+                "platform": "kick", "mode": "live", "channel": "foo",
+                "config": {"platform": "kick", "mode": "live", "channel": "foo", "slug": "foo", "loop": True},
+                "seen_ids": ["v1"], "published": ["/clips/a.mp4"],
+                "manual_queued": {"/clips/b.mp4": "entry-1"},
+                "segments_captured": 2, "clips_published": 3,
+                "covered_elapsed": 42, "resume_on_start": self.resume_on_start,
+            }
+
+    reg._monitors["kick:foo"] = _FakeMon()
+
+    import asyncio
+    asyncio.run(reg.stop("kick:foo"))
+
+    snap = reg._snapshots["kick:foo"]
+    assert snap["resume_on_start"] is False
+    assert snap["seen_ids"] == ["v1"]
+    assert snap["published"] == ["/clips/a.mp4"]
+    assert snap["manual_queued"] == {"/clips/b.mp4": "entry-1"}
+    assert snap["segments_captured"] == 2
+    assert snap["clips_published"] == 3
+    assert snap["covered_elapsed"] == 42
+
+
+def test_registry_shutdown_preserves_resume_on_start(tmp_path):
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+
+    class _FakeMon:
+        id = "kick:foo"
+
+        async def stop(self):
+            return {"id": self.id, "running": False}
+
+        def status(self):
+            return {"id": self.id, "running": False}
+
+        def snapshot(self):
+            return {
+                "platform": "kick", "mode": "live", "channel": "foo",
+                "config": {"platform": "kick", "mode": "live", "channel": "foo", "slug": "foo", "loop": True},
+                "resume_on_start": True, "seen_ids": ["v1"],
+            }
+
+    reg._monitors["kick:foo"] = _FakeMon()
+
+    import asyncio
+    asyncio.run(reg.shutdown())
+
+    assert reg._snapshots["kick:foo"]["resume_on_start"] is True
+    assert reg.status()["monitors"] == []
+
+
+def test_registry_auto_resume_starts_marked_snapshots_and_preserves_guards(tmp_path, monkeypatch):
+    from clippyme.domain import live_monitor as lm
+    from clippyme.storage import config_store
+
+    state = tmp_path / "state.json"
+    state.write_text(__import__("json").dumps({
+        "monitors": {
+            "kick:foo": {
+                "platform": "kick", "mode": "live", "channel": "foo",
+                "publisher_mode": "manual_queue",
+                "config": {
+                    "platform": "kick", "mode": "live", "channel": "foo", "slug": "foo",
+                    "publisher_mode": "manual_queue", "platforms": [], "loop": True,
+                    "segment_seconds": 120, "prelive_skip_seconds": 30,
+                    "min_gap_seconds": 60, "poll_interval": 45, "timezone": "UTC",
+                },
+                "resume_on_start": True,
+                "seen_ids": ["vod1"], "published": ["/clips/a.mp4"],
+                "manual_queued": {"/clips/b.mp4": "entry-1"},
+                "segments_captured": 4, "clips_published": 5,
+                "covered_elapsed": 600, "covered_stream_start": "stream-start",
+            }
+        }
+    }), encoding="utf-8")
+    monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "fresh"})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC"})
+    monkeypatch.setattr(lm.LiveMonitor, "_make_strategy", lambda self, cfg, pc: object())
+
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path), state_path=str(state))
+
+    import asyncio
+
+    # NOTE: is_running() reflects a real asyncio.Task, which only stays
+    # pending while its owning loop is running. asyncio.run() drains/cancels
+    # every pending task before it returns, so the running-task check and the
+    # shutdown must share ONE asyncio.run() call (one live loop), not two.
+    async def _scenario():
+        await reg.auto_resume()
+
+        mon = reg._monitors["kick:foo"]
+        assert mon.is_running()
+        assert mon._gemini_key == "fresh"
+        assert mon._seen_ids == {"vod1"}
+        assert mon._published == {"/clips/a.mp4"}
+        assert mon._manual_queued == {"/clips/b.mp4": "entry-1"}
+        assert mon.segments_captured == 4
+        assert mon.clips_published == 5
+        assert mon._covered_elapsed == 600
+        assert mon._covered_stream_start == "stream-start"
+
+        await reg.shutdown()
+
+    asyncio.run(_scenario())
+
+
+def test_registry_auto_resume_failure_is_visible_in_status(tmp_path, monkeypatch):
+    from clippyme.storage import config_store
+
+    # Isolate from a real/leaked GEMINI_API_KEY env var (start()'s fallback):
+    # this test asserts the specific "not configured" failure path.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    state = tmp_path / "state.json"
+    state.write_text(__import__("json").dumps({
+        "monitors": {
+            "kick:foo": {
+                "platform": "kick", "mode": "live", "channel": "foo",
+                "config": {
+                    "platform": "kick", "mode": "live", "channel": "foo", "slug": "foo",
+                    "publisher_mode": "manual_queue", "platforms": [], "loop": True,
+                },
+                "resume_on_start": True,
+            }
+        }
+    }), encoding="utf-8")
+    monkeypatch.setattr(config_store, "load_persistent_config", lambda: {})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC"})
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path), state_path=str(state))
+
+    import asyncio
+    result = asyncio.run(reg.auto_resume())
+
+    assert result["resumed"] == []
+    assert result["failed"][0]["id"] == "kick:foo"
+    status = reg.status()["monitors"]
+    assert status[0]["id"] == "kick:foo"
+    assert status[0]["running"] is False
+    assert status[0]["state"] == "auto_resume_failed"
+    assert "Gemini API key not configured" in status[0]["last_error"]
+    assert reg._snapshots["kick:foo"]["resume_on_start"] is True
+
+
 def test_registry_migrates_legacy_state(tmp_path):
     import json
     state = tmp_path / "state.json"
