@@ -6,6 +6,7 @@ export function TopNav({ tab, setTab, busy }) {
   const tabs = [
     { id: 'create', label: 'Create', icon: 'wand-sparkles' },
     { id: 'live', label: 'Live Monitor', icon: 'rss' },
+    { id: 'publish', label: 'Publish', icon: 'send' },
     { id: 'history', label: 'History', icon: 'clock' },
     { id: 'settings', label: 'Settings', icon: 'settings' },
   ];

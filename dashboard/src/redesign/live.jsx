@@ -70,6 +70,9 @@ export function LiveMonitorView({ pushToast }) {
   const [zernio, setZernio] = useState(null);
   const [platform, setPlatform] = useState('kick');
   const [mode, setMode] = useState('live');
+  // Manual queue is the safe default (no Zernio required); Zernio automatic
+  // reveals + requires the account-targets picker below.
+  const [publisherMode, setPublisherMode] = useState('manual_queue');
   const [slug, setSlug] = useState('');
   const [touched, setTouched] = useState(false);
   const [plats, setPlats] = useState({ tiktok: true, ig: true, yt: false });
@@ -98,7 +101,8 @@ export function LiveMonitorView({ pushToast }) {
   const toggle = (k) => setPlats((p) => ({ ...p, [k]: !p[k] }));
   const targets = buildPlatformTargets(plats, accounts, PLAT);
   const slugError = validateSlug(slug, platform);
-  const canStart = !slugError && targets.length > 0 && zernio?.configured;
+  const isManual = publisherMode === 'manual_queue';
+  const canStart = !slugError && (isManual || (targets.length > 0 && zernio?.configured));
   const isVod = mode === 'vod';
 
   const onStart = async () => {
@@ -110,7 +114,8 @@ export function LiveMonitorView({ pushToast }) {
         slug: platform === 'youtube' ? slug.trim() : slug.trim().toLowerCase(),
         platform,
         mode,
-        platforms: targets,
+        publisher_mode: publisherMode,
+        ...(isManual ? {} : { platforms: targets }),
         ...clampMonitorTimings(segmentMin, preliveMin, minGapMin),
         loop,
         caption_template: captionTemplate,
@@ -162,6 +167,13 @@ export function LiveMonitorView({ pushToast }) {
         </div>
 
         <div className="field">
+          <span className="field-label">Publish destination</span>
+          <Segmented full value={publisherMode} onChange={setPublisherMode}
+            options={[{ id: 'manual_queue', label: 'Manual queue' }, { id: 'zernio', label: 'Zernio automatic' }]} />
+          <div className="od">{isManual ? 'Finished clips wait in the manual publish queue for you to grab & post.' : 'Finished clips auto-post to the Zernio targets below.'}</div>
+        </div>
+
+        <div className="field">
           <span className="field-label">Mode</span>
           <Segmented value={mode} onChange={setMode}
             options={[{ id: 'live', label: 'Live' }, { id: 'vod', label: 'VOD' }]} full />
@@ -178,18 +190,20 @@ export function LiveMonitorView({ pushToast }) {
           {touched && slugError && <div className="od" style={{ color: 'var(--danger)' }}>{slugError}</div>}
         </div>
 
-        <div className="field">
-          <span className="field-label">Platforms</span>
-          <div className="plats">
-            {PLATFORMS.map((p) => {
-              const has = !!accounts[PLAT[p.id].acct];
-              return (
-                <PlatPill key={p.id} {...p} on={plats[p.id] && has}
-                  onClick={() => (has ? toggle(p.id) : pushToast?.('warn', `No ${PLAT[p.id].label} account saved`))} />
-              );
-            })}
+        {!isManual && (
+          <div className="field">
+            <span className="field-label">Platforms</span>
+            <div className="plats">
+              {PLATFORMS.map((p) => {
+                const has = !!accounts[PLAT[p.id].acct];
+                return (
+                  <PlatPill key={p.id} {...p} on={plats[p.id] && has}
+                    onClick={() => (has ? toggle(p.id) : pushToast?.('warn', `No ${PLAT[p.id].label} account saved`))} />
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="field">
           <span className="field-label">Title template (optional)</span>

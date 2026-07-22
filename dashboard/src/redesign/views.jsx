@@ -21,7 +21,9 @@ const FALLBACK_MODELS = [
   { name: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro — max quality' },
 ];
 
-function relTime(ts) {
+// Exported so manualPublish.jsx's History tab reuses the exact same relative-
+// time formatting instead of re-implementing it.
+export function relTime(ts) {
   if (!ts) return '';
   const s = Math.floor((Date.now() - ts) / 1000);
   if (s < 60) return 'just now';
