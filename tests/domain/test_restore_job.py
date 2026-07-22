@@ -53,6 +53,23 @@ def test_restore_all_present(tmp_path):
     assert len(entry["result"]["clips"]) == 2
 
 
+def test_restore_resolves_title_based_clip_filename(tmp_path):
+    # New-format metadata (task 4): clip_filename is the sanitized-title
+    # basename, and the file on disk is named that way, not positionally.
+    job_id = "44444444-4444-4444-4444-444444444444"
+    job_dir = os.path.join(str(tmp_path), job_id)
+    os.makedirs(job_dir)
+    shorts = [{"clip_filename": "epic_moment_clip_1.mp4", "title": "epic"}]
+    with open(os.path.join(job_dir, f"{job_id}_metadata.json"), "w") as f:
+        json.dump({"shorts": shorts, "cost_analysis": {"total_cost": 0.1}}, f)
+    open(os.path.join(job_dir, "epic_moment_clip_1.mp4"), "wb").close()
+
+    entry = restore_job_from_disk(job_id, str(tmp_path), job_dir)
+    clips = entry["result"]["clips"]
+    assert len(clips) == 1
+    assert clips[0]["video_url"] == f"/videos/{job_id}/epic_moment_clip_1.mp4"
+
+
 def test_restore_no_clips_on_disk_raises(tmp_path):
     job_id = "33333333-3333-3333-3333-333333333333"
     shorts = [{"video_url": f"/videos/{job_id}/{job_id}_clip_1.mp4"}]

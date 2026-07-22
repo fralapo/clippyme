@@ -6,6 +6,8 @@ import os
 import re
 from typing import List
 
+from clippyme.domain.clip_resolve import clip_filename_for
+
 logger = logging.getLogger("clippyme")
 
 # Strict UUID4 pattern: 8-4-4-4-12 hex with the version/variant nibbles
@@ -54,12 +56,8 @@ def scan_history(output_dir: str) -> List[dict]:
                     data = json.load(f)
                 clips = data.get("shorts", [])
                 clip_files = []
-                from clippyme.domain.url_utils import filename_from_video_url
                 for i, clip in enumerate(clips):
-                    clip_filename = filename_from_video_url(clip.get("video_url"))
-                    if not clip_filename:
-                        base_name = os.path.basename(meta_files[0]).replace("_metadata.json", "")
-                        clip_filename = f"{base_name}_clip_{i + 1}.mp4"
+                    clip_filename = clip_filename_for(meta_files[0], clip, i)
                     clip_path = os.path.join(job_dir, clip_filename)
                     if os.path.exists(clip_path):
                         clip_files.append(

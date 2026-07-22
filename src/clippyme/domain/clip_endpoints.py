@@ -5,10 +5,9 @@ import json
 import logging
 import os
 
-from clippyme.domain.clip_resolve import ResolvedClip
+from clippyme.domain.clip_resolve import ResolvedClip, clip_filename_for
 from clippyme.domain.errors import ClippyMeError, NotFoundError, ValidationError
 from clippyme.domain.smartcut import smart_cut
-from clippyme.domain.url_utils import filename_from_video_url
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +76,9 @@ def restore_job_from_disk(job_id: str, output_dir: str, job_dir: str) -> dict:
     with open(meta_files[0], "r") as f:
         data = json.load(f)
     clips = data.get("shorts", [])
-    base_name = os.path.basename(meta_files[0]).replace("_metadata.json", "")
     present = []
     for i, clip in enumerate(clips):
-        clip_filename = filename_from_video_url(clip.get("video_url"))
-        if not clip_filename:
-            clip_filename = f"{base_name}_clip_{i+1}.mp4"
+        clip_filename = clip_filename_for(meta_files[0], clip, i)
         # Only restore clips whose rendered file actually made it to disk. When a
         # job is stopped/cancelled mid-render the metadata still lists every
         # Gemini moment (e.g. 15 shorts) while only the clips that finished

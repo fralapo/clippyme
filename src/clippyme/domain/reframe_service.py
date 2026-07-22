@@ -13,9 +13,9 @@ import sys
 import time
 
 from clippyme.domain.clip_locks import clip_lock
+from clippyme.domain.clip_resolve import clip_filename_for
 from clippyme.domain.errors import ClippyMeError, NotFoundError
 from clippyme.domain.job_artifacts import load_job_metadata, save_job_metadata
-from clippyme.domain.url_utils import filename_from_video_url
 from clippyme.storage.config_store import load_persistent_config
 
 logger = logging.getLogger(__name__)
@@ -44,16 +44,11 @@ async def run_reframe(*, job_id: str, clip_index: int, mode: str,
 
     clip_data = clips[clip_index]
 
-    # Resolve the current clip filename (same logic as smartcut / subtitle)
-    filename = filename_from_video_url(clip_data.get("video_url"))
-    if not filename:
-        base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
-        filename = f"{base_name}_clip_{clip_index + 1}.mp4"
-
     # Target path = the ORIGINAL reframed clip path (we overwrite it in place
     # so all downstream references — subtitle/hook/compose — keep working).
-    base_name = os.path.basename(metadata_path).replace("_metadata.json", "")
-    original_clip_filename = f"{base_name}_clip_{clip_index + 1}.mp4"
+    # Routes through clip_resolve so title-based (clip_filename) and legacy
+    # (video_url / positional) metadata both resolve to the real on-disk name.
+    original_clip_filename = clip_filename_for(metadata_path, clip_data, clip_index)
     target_path = os.path.join(output_dir, original_clip_filename)
     source_path = os.path.join(output_dir, f"source_{original_clip_filename}")
 

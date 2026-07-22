@@ -90,6 +90,22 @@ def test_scan_history_surfaces_title_matching_source(tmp_path):
     assert out[0]["title"] == out[0]["source"] == "myvideo"
 
 
+def test_scan_history_resolves_title_based_clip_filename(tmp_path):
+    # New-format metadata (task 4): file on disk is the sanitized-title name,
+    # persisted as clip_filename, not the positional myvideo_clip_1.mp4.
+    job_dir = os.path.join(str(tmp_path), VALID_UUID)
+    os.makedirs(job_dir)
+    clips = [{"start": 0, "end": 10, "clip_filename": "my_viral_title_clip_1.mp4"}]
+    with open(os.path.join(job_dir, "myvideo_metadata.json"), "w") as f:
+        json.dump({"shorts": clips, "cost_analysis": {"total_cost": 0.42}}, f)
+    open(os.path.join(job_dir, "my_viral_title_clip_1.mp4"), "wb").close()
+
+    out = hs.scan_history(str(tmp_path))
+    assert len(out) == 1
+    assert out[0]["clipCount"] == 1
+    assert out[0]["clips"][0]["video_url"] == f"/videos/{VALID_UUID}/my_viral_title_clip_1.mp4"
+
+
 def test_scan_history_surfaces_published_records(tmp_path):
     clips = [
         {"start": 0, "end": 10, "published": [{"platforms": ["tiktok"], "post_id": "p1"}]},
