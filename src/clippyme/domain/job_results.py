@@ -7,6 +7,8 @@ import logging
 import os
 import re
 
+from clippyme.domain.clip_resolve import clip_filename_for
+
 logger = logging.getLogger("clippyme")
 
 # Reframe modes. 'subject' (FrameShift face-first crop) was formerly named
@@ -132,8 +134,12 @@ def _build_clips(data: dict, base_name: str, job_id: str, output_dir: str, only_
         logger.debug("backfill_hook_text failed: %s", exc)
 
     result = []
+    # clip_filename_for wants a metadata path only to derive the positional
+    # fallback's base name via os.path.basename(...).replace("_metadata.json",
+    # "") — the file doesn't need to exist on disk for that string op.
+    fake_metadata_path = f"{base_name}_metadata.json"
     for i, clip in enumerate(clips):
-        clip_filename = f"{base_name}_clip_{i+1}.mp4"
+        clip_filename = clip_filename_for(fake_metadata_path, clip, i)
         clip_path = os.path.join(output_dir, clip_filename)
         exists = os.path.exists(clip_path) and os.path.getsize(clip_path) > 0
         if only_ready and not exists:

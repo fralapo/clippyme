@@ -830,6 +830,11 @@ if __name__ == '__main__':
                 clip_title = clip.get("video_title_for_youtube_short") or clip.get("title")
                 clip_basename = clip_output_basename(clip_title, i, video_title)
                 clip_filename = f"{clip_basename}.mp4"
+                # Persist the real on-disk basename into metadata so every
+                # consumer (job_results._build_clips, clip_resolve) can find
+                # this clip without recomputing the (now clip-title-based)
+                # naming convention itself — see task-4b-brief.md.
+                clip['clip_filename'] = clip_filename
                 # Keep the 16:9 source slice persistently so the user can
                 # later switch reframe modes from the dashboard without
                 # re-running the entire pipeline. Naming convention:
@@ -890,6 +895,14 @@ if __name__ == '__main__':
                 # NOTE: we intentionally do NOT delete clip_source_path.
                 # It's needed by POST /api/reframe/{job_id}/{clip_index} to
                 # re-run reframing with a different mode on demand.
+
+            # Re-dump metadata now that every clip['clip_filename'] has been
+            # set by the loop above (the earlier dump at job start ran BEFORE
+            # per-clip basenames existed, so it never saw them). Same atomic
+            # tmp+replace pattern as the initial write.
+            with open(metadata_tmp, 'w') as f:
+                json.dump(clips_data, f, indent=2)
+            os.replace(metadata_tmp, metadata_file)
 
     # Clean up original if requested
     if args.url and not args.keep_original and os.path.exists(input_video):

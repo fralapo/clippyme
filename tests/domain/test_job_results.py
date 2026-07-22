@@ -7,7 +7,7 @@ input validation are security-relevant, so they get explicit coverage.
 """
 import pytest
 
-from clippyme.domain.job_results import build_main_cmd, MAX_INSTRUCTIONS_LEN
+from clippyme.domain.job_results import _build_clips, build_main_cmd, MAX_INSTRUCTIONS_LEN
 
 
 # --- happy path / flag assembly --------------------------------------------
@@ -147,3 +147,31 @@ def test_url_with_leading_whitespace_dash_rejected():
 def test_input_path_starting_with_dash_rejected():
     with pytest.raises(ValueError, match="input_path must not start with '-'"):
         build_main_cmd(input_path="-rf", output_dir="o")
+
+
+# --- _build_clips: task 4b clip_filename resolution -------------------------
+
+def test_build_clips_uses_clip_filename_from_metadata(tmp_path):
+    (tmp_path / "My Title_clip_1.mp4").write_bytes(b"\x00")
+    data = {"shorts": [{"clip_filename": "My Title_clip_1.mp4", "start": 0, "end": 5}]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
+    assert len(result) == 1
+    assert result[0]["video_url"] == "/videos/job1/My Title_clip_1.mp4"
+
+
+def test_build_clips_legacy_metadata_positional_unchanged(tmp_path):
+    # No clip_filename key → byte-identical to pre-task-4b positional naming.
+    (tmp_path / "vid_clip_1.mp4").write_bytes(b"\x00")
+    data = {"shorts": [{"start": 0, "end": 5}]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
+    assert len(result) == 1
+    assert result[0]["video_url"] == "/videos/job1/vid_clip_1.mp4"
+
+
+@pytest.mark.parametrize("bad", ["../evil.mp4", "sub/dir_clip_1.mp4", "sub\\dir_clip_1.mp4"])
+def test_build_clips_ignores_tampered_clip_filename(tmp_path, bad):
+    (tmp_path / "vid_clip_1.mp4").write_bytes(b"\x00")
+    data = {"shorts": [{"clip_filename": bad, "start": 0, "end": 5}]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
+    assert len(result) == 1
+    assert result[0]["video_url"] == "/videos/job1/vid_clip_1.mp4"
