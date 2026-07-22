@@ -46,7 +46,7 @@ test('missing navigator.share returns fallback', async () => {
 
 test('canShare({files}) returning false returns fallback', async () => {
   setNavigatorShare(vi.fn(async () => {}), vi.fn(() => false));
-  globalThis.fetch = vi.fn(async () => new Response(new Blob(['data']), { status: 200 }));
+  globalThis.fetch = vi.fn(async () => ({ ok: true, blob: async () => new Blob(['data']) }));
   const result = await shareClip({ videoUrl: '/api/x/video', filename: 'clip.mp4', caption: 'hi' });
   expect(result).toEqual({ fallback: true });
 });
@@ -55,7 +55,7 @@ test('builds a video/mp4 File from the fetched same-origin blob and shares it', 
   const shareMock = vi.fn(async () => {});
   const canShareMock = vi.fn(() => true);
   setNavigatorShare(shareMock, canShareMock);
-  globalThis.fetch = vi.fn(async () => new Response(new Blob(['bytes']), { status: 200 }));
+  globalThis.fetch = vi.fn(async () => ({ ok: true, blob: async () => new Blob(['bytes']) }));
   const result = await shareClip({ videoUrl: '/api/manual-publish/abc/video', filename: 'my-clip.mp4', caption: 'Check this out' });
   expect(result).toEqual({ shared: true });
   expect(globalThis.fetch).toHaveBeenCalledWith('/api/manual-publish/abc/video');
@@ -69,14 +69,14 @@ test('builds a video/mp4 File from the fetched same-origin blob and shares it', 
 test('AbortError from navigator.share returns cancelled and never falls back or downloads', async () => {
   const abortErr = Object.assign(new Error('The user aborted a request.'), { name: 'AbortError' });
   setNavigatorShare(vi.fn(async () => { throw abortErr; }), vi.fn(() => true));
-  globalThis.fetch = vi.fn(async () => new Response(new Blob(['bytes']), { status: 200 }));
+  globalThis.fetch = vi.fn(async () => ({ ok: true, blob: async () => new Blob(['bytes']) }));
   const result = await shareClip({ videoUrl: '/api/x/video', filename: 'clip.mp4', caption: 'hi' });
   expect(result).toEqual({ cancelled: true });
 });
 
 test('a non-abort share failure returns fallback', async () => {
   setNavigatorShare(vi.fn(async () => { throw new Error('boom'); }), vi.fn(() => true));
-  globalThis.fetch = vi.fn(async () => new Response(new Blob(['bytes']), { status: 200 }));
+  globalThis.fetch = vi.fn(async () => ({ ok: true, blob: async () => new Blob(['bytes']) }));
   const result = await shareClip({ videoUrl: '/api/x/video', filename: 'clip.mp4', caption: 'hi' });
   expect(result).toEqual({ fallback: true });
 });
@@ -84,7 +84,7 @@ test('a non-abort share failure returns fallback', async () => {
 test('a failed fetch (non-ok response) returns fallback without calling share', async () => {
   const shareMock = vi.fn(async () => {});
   setNavigatorShare(shareMock, vi.fn(() => true));
-  globalThis.fetch = vi.fn(async () => new Response(null, { status: 404 }));
+  globalThis.fetch = vi.fn(async () => ({ ok: false }));
   const result = await shareClip({ videoUrl: '/api/x/video', filename: 'clip.mp4', caption: 'hi' });
   expect(result).toEqual({ fallback: true });
   expect(shareMock).not.toHaveBeenCalled();
