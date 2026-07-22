@@ -685,7 +685,7 @@ if __name__ == '__main__':
 
     script_start_time = time.time()
 
-    from clippyme.pipeline.run_ops import build_cut_command, resolve_output_dir
+    from clippyme.pipeline.run_ops import build_cut_command, clip_output_basename, resolve_output_dir
 
     # 1. Get Input Video
     if args.url:
@@ -824,8 +824,12 @@ if __name__ == '__main__':
                 print(f"\n🎬 Processing Clip {i+1}: {start}s - {end}s")
                 print(f"   Title: {clip.get('video_title_for_youtube_short', 'No Title')}")
                 
-                # Cut clip
-                clip_filename = f"{video_title}_clip_{i+1}.mp4"
+                # Cut clip. Filename prefers the clip's Gemini viral title
+                # (sanitized for Windows), falling back to the legacy
+                # {video_title}_clip_{i+1} convention when absent/reserved.
+                clip_title = clip.get("video_title_for_youtube_short") or clip.get("title")
+                clip_basename = clip_output_basename(clip_title, i, video_title)
+                clip_filename = f"{clip_basename}.mp4"
                 # Keep the 16:9 source slice persistently so the user can
                 # later switch reframe modes from the dashboard without
                 # re-running the entire pipeline. Naming convention:
