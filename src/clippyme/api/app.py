@@ -43,7 +43,7 @@ from clippyme.domain.job_journal import JOURNAL_FILENAME, make_journal_writer, r
 from clippyme.domain.job_runner import make_run_job
 from clippyme.domain.job_submission import QueueFullError, submit_job
 from clippyme.domain.publish_service import publish_clip_flow
-from clippyme.domain.manual_publish_queue import ManualPublishQueue
+from clippyme.domain.manual_publish_queue import ManualPublishQueue, import_existing_clips
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
@@ -158,6 +158,15 @@ async def lifespan(app: FastAPI):
         job_retention_seconds=JOB_RETENTION_SECONDS,
         max_concurrent_jobs=MAX_CONCURRENT_JOBS,
     )
+    # Idempotently import any extant, unpublished clips left on disk into the
+    # manual publish queue BEFORE the worker starts dispatching recovered jobs
+    # (so no pipeline subprocess mutates a job dir mid-scan) and BEFORE monitor
+    # auto-resume — runs once per startup, never fatal (a bad job's metadata
+    # just gets skipped and logged).
+    try:
+        await asyncio.to_thread(import_existing_clips, manual_publish_queue)
+    except Exception:
+        logger.exception("manual publish clip import failed")
     worker_task = asyncio.create_task(process_queue())
     cleanup_task = asyncio.create_task(cleanup_jobs())
     # Background auto-update for the auto-editor binary used by smartcut.py.

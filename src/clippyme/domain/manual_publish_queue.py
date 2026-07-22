@@ -32,6 +32,94 @@ def _lock_for(path: Path) -> threading.RLock:
         return _LOCKS.setdefault(path, threading.RLock())
 
 
+def import_existing_clips(queue: "ManualPublishQueue") -> list:
+    """Idempotently import extant, unpublished clips into ``queue``.
+
+    Scans every job dir under ``queue.output_dir``, reads its newest
+    ``*_metadata.json`` and enqueues each clip whose render file exists on
+    disk, has no successful ``published`` record, and has no manual-queue
+    entry already covering its ``(job_id, clip_index)``. A missing/corrupt
+    metadata file skips that one job — it never aborts the scan.
+
+    ponytail: there is no marker in job metadata distinguishing monitor-
+    generated jobs from regular ones, so every job dir is scanned — the queue
+    is the general manual-publish destination, not monitor-only. Platform/
+    channel grouping reuses ``suggest_banner`` over the download-time
+    ``source_info`` sidecar (falls back to "unknown" for local-upload jobs
+    that never captured one).
+    """
+    from clippyme.domain.banner import suggest_banner
+    from clippyme.domain.clip_resolve import clip_filename_for
+    from clippyme.domain.history_service import is_valid_job_id
+    from clippyme.domain.job_artifacts import find_job_metadata_path
+
+    with queue._lock:
+        queued = {
+            (entry.get("job_id"), entry.get("clip_index"))
+            for entry in queue._load()
+        }
+
+    imported = []
+    try:
+        job_ids = sorted(os.listdir(queue.output_dir))
+    except OSError:
+        return imported
+
+    for job_id in job_ids:
+        if not is_valid_job_id(job_id):
+            continue
+        job_dir = queue.output_dir / job_id
+        if not job_dir.is_dir():
+            continue
+        try:
+            metadata_path = find_job_metadata_path(job_id, str(queue.output_dir))
+            metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+            shorts = metadata.get("shorts")
+            if not isinstance(shorts, list):
+                continue
+
+            source_info = metadata.get("source_info") or {}
+            channel_url = source_info.get("channel_url") or source_info.get("webpage_url") or ""
+            suggested = suggest_banner(channel_url, channel_hint=source_info.get("uploader_id")) or {}
+            platform = suggested.get("platform") or "unknown"
+            channel = suggested.get("handle") or source_info.get("uploader_id") or "unknown"
+            project_title = Path(metadata_path).name.replace("_metadata.json", "").replace("_", " ")
+
+            for index, clip in enumerate(shorts):
+                if not isinstance(clip, dict) or (job_id, index) in queued:
+                    continue
+                if clip.get("published"):
+                    continue
+                filename = clip_filename_for(metadata_path, clip, index)
+                clip_path = job_dir / filename
+                if not clip_path.is_file():
+                    continue
+                title = clip.get("video_title_for_youtube_short") or clip.get("title") or "Clip"
+                try:
+                    entry = queue.enqueue(
+                        job_id=job_id,
+                        clip_index=index,
+                        source_path=clip_path,
+                        title=title,
+                        caption=clip.get("caption") or "",
+                        source_platform=platform,
+                        source_channel=channel,
+                        source_kind="import",
+                        project_title=project_title,
+                        monitor_id=None,
+                    )
+                except Exception:
+                    logger.exception(
+                        "manual-publish import: enqueue failed for %s/%s", job_id, index)
+                    continue
+                queued.add((job_id, index))
+                imported.append(entry)
+        except Exception:
+            logger.exception("manual-publish import: skipping job %s (bad metadata)", job_id)
+            continue
+    return imported
+
+
 class ManualPublishQueue:
     def __init__(self, output_dir: Path, state_path: Path):
         self.output_dir = Path(output_dir).resolve()
