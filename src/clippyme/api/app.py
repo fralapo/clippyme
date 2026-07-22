@@ -831,6 +831,18 @@ async def live_monitor_update_config(monitor_id: str, request: Request):
     return {"monitor": live_monitor.update_config(monitor_id, partial)}
 
 
+@app.post("/api/live-monitor/{monitor_id}/publishing")
+async def live_monitor_set_publishing(monitor_id: str, request: Request):
+    """Pause/resume auto-publishing for a running monitor (body:
+    ``{"enabled": bool}``). While paused, finished clips accumulate and are
+    drained through the normal publish path on resume."""
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "livemonitor", capacity=10, refill_per_sec=10 / 60)
+    body = await request.json()
+    enabled = bool(body.get("enabled")) if isinstance(body, dict) else False
+    return {"monitor": live_monitor.set_publishing(monitor_id, enabled)}
+
+
 @app.get("/api/live-monitor/status")
 async def live_monitor_status(request: Request, monitor_id: Optional[str] = None):
     """One monitor's status (``?monitor_id=``) or ``{"monitors": [...]}`` for all."""

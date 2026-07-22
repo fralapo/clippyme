@@ -465,6 +465,12 @@ class LiveMonitor:
         self._scheduler: SharedGapScheduler | None = None
         self._published: set[str] = set()
         self._seen_ids: set[str] = set()
+        # Runtime auto-publish toggle. While False, finished clips accumulate in
+        # _pending_publish (paths + public clip metadata only — never secrets)
+        # and drain through the normal publish path when flipped back True.
+        self.publishing_enabled: bool = True
+        self._pending_publish: list[dict] = []
+        self._draining: bool = False
         self._gemini_key = None
         self._zernio_key = None
 
@@ -515,6 +521,8 @@ class LiveMonitor:
             "backfill_pending": self.backfill_pending,
             "last_error": self.last_error,
             "resume_on_start": self.resume_on_start,
+            "publishing_enabled": self.publishing_enabled,
+            "pending_publish": len(self._pending_publish),
         }
 
     def snapshot(self) -> dict:
@@ -528,6 +536,9 @@ class LiveMonitor:
             "config": {k: self.cfg.get(k) for k in _SNAPSHOT_CONFIG_FIELDS} if self.cfg else None,
             "seen_ids": sorted(self._seen_ids),
             "published": sorted(self._published),
+            # Paths + public clip metadata only (no secrets) — restored on resume.
+            "publishing_enabled": self.publishing_enabled,
+            "pending_publish": self._pending_publish,
             "segments_captured": self.segments_captured,
             "clips_published": self.clips_published,
             "covered_elapsed": int(self._covered_elapsed),
@@ -543,6 +554,8 @@ class LiveMonitor:
             return
         self._seen_ids = set(snap.get("seen_ids") or [])
         self._published = set(snap.get("published") or [])
+        self.publishing_enabled = bool(snap.get("publishing_enabled", True))
+        self._pending_publish = list(snap.get("pending_publish") or [])
         self.segments_captured = int(snap.get("segments_captured") or 0)
         self.clips_published = int(snap.get("clips_published") or 0)
         self._covered_elapsed = int(snap.get("covered_elapsed") or 0)
@@ -1070,6 +1083,11 @@ class LiveMonitor:
         # Dedupe on the BASE clip path (stable), then compose the publish recipe.
         if clip_path in self._published:
             return
+        # Paused: queue the clip (public metadata only) and drain it on resume.
+        if not self.publishing_enabled:
+            self._pending_publish.append({"job_id": job_id, "clip": clip})
+            self._persist()
+            return
         upload_path = await self._compose_for_publish(job_id, clip, clip_path)
 
         title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
@@ -1124,6 +1142,95 @@ class LiveMonitor:
         self._published.add(clip_path)
         self.clips_published += 1
         self._persist()
+        # Clip is published → it's done; free the disk (best-effort, never raises).
+        self._delete_clip_artifacts(job_id, clip, clip_path, upload_path)
+
+    # -- pause / resume auto-publish -------------------------------------
+
+    def set_publishing(self, enabled: bool) -> dict:
+        """Flip the runtime auto-publish toggle. Flipping to True schedules a
+        drain of any clips that accumulated while paused, through the normal
+        publish path (spacing + global slot logic preserved)."""
+        self.publishing_enabled = bool(enabled)
+        self._persist()
+        if self.publishing_enabled and self._pending_publish:
+            try:
+                self._track_task(asyncio.create_task(self._drain_pending()))
+            except RuntimeError:
+                logger.warning("LiveMonitor %s: no running loop for pending drain", self.id)
+        return {"publishing_enabled": self.publishing_enabled,
+                "pending_publish": len(self._pending_publish)}
+
+    async def _drain_pending(self) -> None:
+        """Publish every queued clip in order. Guarded by ``_draining`` so two
+        concurrent drains can't interleave; the actual publishes are serialised
+        globally by ``_publish_one``'s ``_publish_lock``, so spacing holds."""
+        if self._draining:
+            return
+        self._draining = True
+        try:
+            first = True
+            while (self._pending_publish and self.publishing_enabled
+                   and not self._stop.is_set()):
+                if not first:
+                    await asyncio.sleep(PUBLISH_SPACING_SECONDS)
+                first = False
+                entry = self._pending_publish.pop(0)
+                self._persist()
+                await self._publish_one(entry["job_id"], entry["clip"])
+        finally:
+            self._draining = False
+
+    # -- delete published clip artifacts ---------------------------------
+
+    def _delete_clip_artifacts(self, job_id: str, clip: dict, clip_path: str,
+                               upload_path: str) -> None:
+        """Best-effort removal of a published clip's on-disk artifacts + a
+        metadata mark. Never raises — the publish already succeeded."""
+        try:
+            job_dir = os.path.join(self._output_dir, job_id)
+            clip_filename = os.path.basename(clip_path)
+            stem = os.path.splitext(clip_filename)[0]
+            idx = clip.get("original_index")
+            targets = [
+                clip_path,
+                upload_path,
+                os.path.join(job_dir, f"source_{clip_filename}"),
+                os.path.join(job_dir, f"{stem}_cover.jpg"),
+            ]
+            if idx is not None:
+                targets.append(os.path.join(job_dir, f"composed_clip_{idx}.mp4"))
+            for path in targets:
+                _safe_remove(path)
+            self._mark_clip_deleted(job_id, idx)
+            self._maybe_remove_empty_job_dir(job_id, job_dir)
+        except Exception:
+            logger.warning("LiveMonitor %s: artifact cleanup failed for %s",
+                           self.id, job_id, exc_info=True)
+
+    def _mark_clip_deleted(self, job_id: str, idx) -> None:
+        """Mark the clip entry deleted instead of removing it. resolve_clip /
+        _build_clips key clips by list POSITION (original_index == index in
+        ``shorts``), so dropping an entry would shift every later clip's index
+        and break their per-clip endpoints. Marking keeps positions stable."""
+        if idx is None:
+            return
+        from clippyme.domain.job_artifacts import load_job_metadata, save_job_metadata
+        metadata_path, data = load_job_metadata(job_id, self._output_dir)
+        shorts = data.get("shorts", [])
+        if 0 <= idx < len(shorts):
+            shorts[idx]["deleted_after_publish"] = True
+            save_job_metadata(metadata_path, data)
+
+    def _maybe_remove_empty_job_dir(self, job_id: str, job_dir: str) -> None:
+        """Drop the whole job dir once no clip (.mp4) files remain — but only
+        for a finished job, never one still processing."""
+        import glob
+        if self._jobs.get(job_id, {}).get("status") not in ("completed", "stopped"):
+            return
+        if glob.glob(os.path.join(job_dir, "*.mp4")):
+            return  # other clips still on disk
+        shutil.rmtree(job_dir, ignore_errors=True)
 
     # -- misc ------------------------------------------------------------
 
@@ -1298,6 +1405,16 @@ class LiveMonitorRegistry:
         if mon is None:
             raise NotFoundError(f"no such monitor: {monitor_id}")
         result = mon.update_config(partial)
+        self.persist()
+        return result
+
+    def set_publishing(self, monitor_id: str, enabled: bool) -> dict:
+        """Pause/resume auto-publishing for a running monitor; persists the flag
+        so it survives restart/auto-resume, and drains pending clips on resume."""
+        mon = self._monitors.get(monitor_id)
+        if mon is None:
+            raise NotFoundError(f"no such monitor: {monitor_id}")
+        result = mon.set_publishing(enabled)
         self.persist()
         return result
 

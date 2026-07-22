@@ -3,6 +3,7 @@
 No curl_cffi / ffmpeg / event loop needed — LiveMonitor.__init__ is cheap and
 the helpers under test are pure.
 """
+import os
 from datetime import date, datetime, timezone
 
 import pytest
@@ -916,3 +917,184 @@ def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
     assert len(calls) == 1
     assert mon.clips_published == 0
     assert "HTTP 500" in (mon.last_error or "")
+
+
+# --- pause / resume auto-publish -------------------------------------------
+
+def _publishing_monitor(tmp_path, monkeypatch, *, jobs=None):
+    """A LiveMonitor wired with a fake publish_clip (records calls, succeeds)."""
+    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.integrations import social_publisher as sp
+
+    calls = []
+    monkeypatch.setattr(sp, "publish_clip", lambda **kw: calls.append(kw))
+    mon = LiveMonitor(id="kick:chan", jobs=jobs if jobs is not None else {},
+                      job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
+               "platforms": [{"platform": "tiktok", "accountId": "a"}],
+               "timezone": "Europe/Rome"}
+    mon._zernio_key = "sk_test"
+
+    # Skip the real ffmpeg compose pass — publish/delete behaviour is what these
+    # tests exercise; publish the raw clip path directly.
+    async def _no_compose(job_id, clip, base_path):
+        return base_path
+    mon._compose_for_publish = _no_compose
+    return mon, calls
+
+
+def test_paused_publish_queues_instead_of_publishing(tmp_path, monkeypatch):
+    """publishing_enabled=False → clip goes to pending, publish_clip NOT called,
+    and the flag + pending round-trip through snapshot/restore."""
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+    mon.publishing_enabled = False
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
+
+    asyncio.run(mon._publish_one("job1", clip))
+
+    assert calls == []                       # nothing published while paused
+    assert len(mon._pending_publish) == 1
+    assert mon.clips_published == 0
+
+    snap = mon.snapshot()
+    assert snap["publishing_enabled"] is False
+    assert snap["pending_publish"] == [{"job_id": "job1", "clip": clip}]
+
+    fresh = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    fresh.restore(snap)
+    assert fresh.publishing_enabled is False
+    assert fresh._pending_publish == [{"job_id": "job1", "clip": clip}]
+
+
+def test_resume_drains_pending_in_order_with_spacing(tmp_path, monkeypatch):
+    """Resume drains queued clips through the publish path, in order, spacing
+    consecutive publishes."""
+    import asyncio
+
+    from clippyme.domain import live_monitor as lm
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "a.mp4").write_bytes(b"x")
+    (job_dir / "b.mp4").write_bytes(b"x")
+
+    sleeps = []
+
+    async def fake_sleep(secs):
+        sleeps.append(secs)
+
+    monkeypatch.setattr(lm.asyncio, "sleep", fake_sleep)
+
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+    mon.publishing_enabled = False
+    for name in ("a.mp4", "b.mp4"):
+        asyncio.run(mon._publish_one(
+            "job1", {"video_url": f"/videos/job1/{name}", "title": name}))
+    assert calls == [] and len(mon._pending_publish) == 2
+
+    mon.publishing_enabled = True
+    asyncio.run(mon._drain_pending())
+
+    published_paths = [os.path.basename(c["clip_path"]) for c in calls]
+    assert published_paths == ["a.mp4", "b.mp4"]           # order preserved
+    assert lm.PUBLISH_SPACING_SECONDS in sleeps             # spacing applied
+    assert mon._pending_publish == []
+    assert mon.clips_published == 2
+
+
+def test_successful_publish_deletes_clip_files_and_empty_dir(tmp_path, monkeypatch):
+    """A published clip's artifacts are removed; when it was the last clip the
+    whole job dir goes away."""
+    import asyncio
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+    (job_dir / "source_c.mp4").write_bytes(b"x")
+    (job_dir / "c_cover.jpg").write_bytes(b"x")
+    (job_dir / "composed_clip_0.mp4").write_bytes(b"x")
+    (job_dir / "run_metadata.json").write_text(
+        '{"shorts": [{"video_url": "/videos/job1/c.mp4"}]}')
+
+    jobs = {"job1": {"status": "completed"}}
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+
+    asyncio.run(mon._publish_one("job1", clip))
+
+    assert len(calls) == 1
+    assert mon.clips_published == 1
+    assert not job_dir.exists()          # last clip → job dir removed
+
+
+def test_successful_publish_keeps_dir_and_marks_metadata_when_clips_remain(tmp_path, monkeypatch):
+    """Deleting one clip marks its metadata entry and leaves siblings intact."""
+    import asyncio
+    import json
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+    (job_dir / "d.mp4").write_bytes(b"x")   # sibling clip stays
+    meta = job_dir / "run_metadata.json"
+    meta.write_text(json.dumps({"shorts": [
+        {"video_url": "/videos/job1/c.mp4"},
+        {"video_url": "/videos/job1/d.mp4"},
+    ]}))
+
+    jobs = {"job1": {"status": "completed"}}
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+
+    asyncio.run(mon._publish_one("job1", clip))
+
+    assert job_dir.exists()
+    assert not (job_dir / "c.mp4").exists()
+    assert (job_dir / "d.mp4").exists()
+    data = json.loads(meta.read_text())
+    assert data["shorts"][0].get("deleted_after_publish") is True
+    assert "deleted_after_publish" not in data["shorts"][1]
+
+
+def test_deletion_failure_does_not_raise_and_clip_stays_published(tmp_path, monkeypatch):
+    """os.remove blowing up must not surface — the publish already succeeded."""
+    import asyncio
+
+    from clippyme.domain import live_monitor as lm
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+
+    # RuntimeError escapes _safe_remove's OSError guard → exercises the outer
+    # best-effort try/except in _delete_clip_artifacts.
+    def boom(path):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(lm.os, "remove", boom)
+
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+
+    asyncio.run(mon._publish_one("job1", clip))   # must not raise
+
+    assert len(calls) == 1
+    assert mon.clips_published == 1
+
+
+def test_registry_set_publishing_unknown_id_raises_not_found(tmp_path):
+    from clippyme.domain.errors import NotFoundError
+    from clippyme.domain.live_monitor import LiveMonitorRegistry
+
+    reg = LiveMonitorRegistry(jobs={}, job_queue=None, output_dir=str(tmp_path),
+                              state_path=str(tmp_path / "state.json"))
+    with pytest.raises(NotFoundError):
+        reg.set_publishing("kick:nope", False)
