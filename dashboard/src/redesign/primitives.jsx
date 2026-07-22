@@ -18,9 +18,9 @@ export function Badge({ tone = 'out', icon, children }) {
   return <span className={'badge badge-' + tone}>{icon && <Icon n={icon} />}{children}</span>;
 }
 
-export function Switch({ on, onChange }) {
+export function Switch({ on, onChange, disabled, label }) {
   return (
-    <button type="button" role="switch" aria-checked={on} className={'sw' + (on ? ' on' : '')}
+    <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} className={'sw' + (on ? ' on' : '')}
       onClick={(e) => { e.stopPropagation(); onChange && onChange(!on); }}><i></i></button>
   );
 }

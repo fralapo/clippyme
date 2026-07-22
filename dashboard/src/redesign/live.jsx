@@ -5,12 +5,23 @@
 import { useState, useEffect } from 'react';
 import { Hero } from './chrome';
 import { Icon, Panel, Btn, Badge, Switch, Segmented, PlatPill, PLATFORMS } from './primitives';
-import { getZernio, startLiveMonitor, stopLiveMonitor } from './realApi';
+import { getZernio, startLiveMonitor, stopLiveMonitor, updateMonitorConfig, setMonitorPublishing } from './realApi';
 import { PLAT } from './publish';
 import { validateSlug, buildPlatformTargets, classifyStartError, clampMonitorTimings } from '../lib/liveMonitorForm';
 import { buildMonitorBannerPayload } from '../lib/liveMonitorBanner';
 import { BannerControls } from './bannerControls';
+import { SubtitleControls } from './subtitleControls';
 import { useLiveMonitorStatus } from '../hooks/useLiveMonitorStatus';
+
+// SubtitleControls is fully controlled with no built-in defaults (see
+// subtitleControls.jsx) — this is the same default set create.jsx's
+// SubConfig seeds new recipes with, reused here for the monitor's optional
+// subtitle override drawer.
+const SUB_DEFAULTS = {
+  mode: 'karaoke', preset: 'hormozi_bold', font: 'Montserrat-Black',
+  font_color: '#FFFFFF', outline_color: '#000000', font_size: 0,
+  border_width: 2, bg: false, position: 'bottom', align: 'center', offset_y: 0,
+};
 
 const STATE_LABEL = {
   idle: 'Idle',
@@ -39,29 +50,123 @@ const SLUG_PLACEHOLDER = {
   youtube: '@handle or https://youtube.com/@handle',
 };
 
-function MonitorCard({ monitor, onStop, stopping }) {
+// Local-only settings-drawer state, seeded blank: the running-monitor status
+// payload doesn't echo back its live `config` (see task-5-brief), so "Apply"
+// sends only the fields the user actually touches — untouched fields stay
+// omitted rather than clobbering server state with blanks.
+function MonitorSettings({ monitor, onApply, applying }) {
+  const [instructions, setInstructions] = useState('');
+  const [captionTemplate, setCaptionTemplate] = useState('');
+  const [titleTemplate, setTitleTemplate] = useState('');
+  const [segmentMin, setSegmentMin] = useState('');
+  const [preliveMin, setPreliveMin] = useState('');
+  const [minGapMin, setMinGapMin] = useState('');
+  const [subOn, setSubOn] = useState(false);
+  const [sub, setSub] = useState(SUB_DEFAULTS);
+
+  const apply = () => {
+    const partial = {};
+    if (instructions.trim()) partial.instructions = instructions.trim();
+    if (captionTemplate.trim()) partial.caption_template = captionTemplate.trim();
+    if (titleTemplate.trim()) partial.title_template = titleTemplate.trim();
+    if (segmentMin !== '') partial.segment_seconds = clampMonitorTimings(segmentMin, 0, 0).segment_seconds;
+    if (preliveMin !== '') partial.prelive_skip_seconds = clampMonitorTimings(0, preliveMin, 0).prelive_skip_seconds;
+    if (minGapMin !== '') partial.min_gap_seconds = clampMonitorTimings(0, 0, minGapMin).min_gap_seconds;
+    if (subOn) partial.compose = { subtitle_params: sub };
+    onApply(monitor.id, partial);
+  };
+
   return (
-    <div className="opt" style={{ borderBottom: 0 }}>
-      <div className="otxt">
-        <div className="ot">
-          <Badge tone="out">{PLATFORM_LABEL[monitor.platform] || monitor.platform}</Badge>{' '}
-          <Badge tone={STATE_TONE[monitor.state] || 'out'}>{STATE_LABEL[monitor.state] || monitor.state || 'Unknown'}</Badge>
-          <span style={{ marginLeft: 8, color: 'var(--fg-3)' }}>{monitor.channel || monitor.slug}</span>
-          {monitor.mode === 'vod' && <span style={{ marginLeft: 8, color: 'var(--fg-4)' }}>VOD</span>}
-        </div>
-        <div className="od">
-          {monitor.mode === 'vod'
-            ? `${monitor.segments_captured || 0} item(s) processed · ${monitor.clips_published || 0} clip(s) published`
-            : `${monitor.segments_captured || 0} segment(s) captured · ${monitor.clips_published || 0} clip(s) published`}
-        </div>
-        {monitor.current_job_id && <div className="od">Current job: {monitor.current_job_id}</div>}
-        {monitor.last_error && <div className="od" style={{ color: 'var(--danger)' }}>{monitor.last_error}</div>}
+    <div className="cfg-drawer fade-in" style={{ marginTop: 10 }}>
+      <div className="od" style={{ marginBottom: 8 }}>Changes apply to the next clips only.</div>
+      <div className="field">
+        <span className="field-label">AI instructions</span>
+        <textarea className="ta" rows="2" aria-label={`Settings instructions ${monitor.id}`}
+          value={instructions} onChange={(e) => setInstructions(e.target.value)} />
       </div>
-      <div className="r">
-        <Btn variant="secondary" size="sm" icon="square" disabled={stopping} onClick={() => onStop(monitor.id)}>
-          {stopping ? 'Stopping…' : 'Stop'}
-        </Btn>
+      <div className="field">
+        <span className="field-label">Title template</span>
+        <input className="key-input" style={{ width: '100%' }} aria-label={`Settings title template ${monitor.id}`}
+          value={titleTemplate} onChange={(e) => setTitleTemplate(e.target.value)} />
       </div>
+      <div className="field">
+        <span className="field-label">Caption template</span>
+        <input className="key-input" style={{ width: '100%' }} aria-label={`Settings caption template ${monitor.id}`}
+          value={captionTemplate} onChange={(e) => setCaptionTemplate(e.target.value)} />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 10 }}>
+        <label className="field">
+          <span className="field-label">Segment (min)</span>
+          <input className="key-input" type="number" min="1" max="60" aria-label={`Settings segment minutes ${monitor.id}`}
+            value={segmentMin} onChange={(e) => setSegmentMin(e.target.value)} />
+        </label>
+        <label className="field">
+          <span className="field-label">Prelive skip (min)</span>
+          <input className="key-input" type="number" min="0" max="120" aria-label={`Settings prelive skip minutes ${monitor.id}`}
+            value={preliveMin} onChange={(e) => setPreliveMin(e.target.value)} />
+        </label>
+        <label className="field">
+          <span className="field-label">Min gap (min)</span>
+          <input className="key-input" type="number" min="0" max="1440" aria-label={`Settings min gap minutes ${monitor.id}`}
+            value={minGapMin} onChange={(e) => setMinGapMin(e.target.value)} />
+        </label>
+      </div>
+      <div className="opt" style={{ borderBottom: 0, paddingLeft: 0, paddingRight: 0 }}>
+        <div className="otxt"><div className="ot">Subtitle overrides</div><div className="od">Applies to future clips only</div></div>
+        <Switch on={subOn} onChange={setSubOn} />
+      </div>
+      {subOn && <SubtitleControls variant="create" value={sub} onChange={(p) => setSub((s) => ({ ...s, ...p }))} />}
+      <Btn variant="secondary" size="sm" disabled={applying} onClick={apply} style={{ marginTop: 10 }}>
+        {applying ? 'Applying…' : 'Apply'}
+      </Btn>
+    </div>
+  );
+}
+
+function MonitorCard({ monitor, onStop, stopping, onApplySettings, applyingSettings, onTogglePublishing, togglingPublishing }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  return (
+    <div className="opt" style={{ borderBottom: 0, flexDirection: 'column', alignItems: 'stretch' }}>
+      <div style={{ display: 'flex', width: '100%' }}>
+        <div className="otxt">
+          <div className="ot">
+            <Badge tone="out">{PLATFORM_LABEL[monitor.platform] || monitor.platform}</Badge>{' '}
+            <Badge tone={STATE_TONE[monitor.state] || 'out'}>{STATE_LABEL[monitor.state] || monitor.state || 'Unknown'}</Badge>
+            <span style={{ marginLeft: 8, color: 'var(--fg-3)' }}>{monitor.channel || monitor.slug}</span>
+            {monitor.mode === 'vod' && <span style={{ marginLeft: 8, color: 'var(--fg-4)' }}>VOD</span>}
+          </div>
+          <div className="od">
+            {monitor.mode === 'vod'
+              ? `${monitor.segments_captured || 0} item(s) processed · ${monitor.clips_published || 0} clip(s) published`
+              : `${monitor.segments_captured || 0} segment(s) captured · ${monitor.clips_published || 0} clip(s) published`}
+          </div>
+          {monitor.current_job_id && <div className="od">Current job: {monitor.current_job_id}</div>}
+          {monitor.last_error && <div className="od" style={{ color: 'var(--danger)' }}>{monitor.last_error}</div>}
+        </div>
+        <div className="r">
+          <Btn variant="secondary" size="sm" icon="sliders-horizontal" onClick={() => setSettingsOpen((v) => !v)}>
+            Settings
+          </Btn>
+          <Btn variant="secondary" size="sm" icon="square" disabled={stopping} onClick={() => onStop(monitor.id)}>
+            {stopping ? 'Stopping…' : 'Stop'}
+          </Btn>
+        </div>
+      </div>
+
+      <div className="opt" style={{ borderBottom: 0, paddingLeft: 0, paddingRight: 0, marginTop: 6 }}>
+        <div className="otxt">
+          <div className="ot">Zernio auto-publish</div>
+          {!monitor.publishing_enabled && (
+            <div className="od">Paused — {monitor.pending_publish || 0} clip(s) waiting</div>
+          )}
+        </div>
+        <Switch on={!!monitor.publishing_enabled} disabled={togglingPublishing} label={`Zernio auto-publish ${monitor.id}`}
+          onChange={(on) => onTogglePublishing(monitor.id, on)} />
+      </div>
+
+      {settingsOpen && (
+        <MonitorSettings monitor={monitor} onApply={onApplySettings} applying={applyingSettings} />
+      )}
     </div>
   );
 }
@@ -84,10 +189,15 @@ export function LiveMonitorView({ pushToast }) {
   const [segmentMin, setSegmentMin] = useState(30);
   const [preliveMin, setPreliveMin] = useState(30);
   const [minGapMin, setMinGapMin] = useState(15);
+  const [catchup, setCatchup] = useState('backfill');
+  const [subOn, setSubOn] = useState(false);
+  const [sub, setSub] = useState(SUB_DEFAULTS);
   const [starting, setStarting] = useState(false);
   const [stoppingId, setStoppingId] = useState(null);
+  const [applyingSettingsId, setApplyingSettingsId] = useState(null);
+  const [togglingPublishingId, setTogglingPublishingId] = useState(null);
 
-  const monitors = useLiveMonitorStatus();
+  const [monitors, refreshMonitors] = useLiveMonitorStatus();
 
   useEffect(() => { getZernio().then(setZernio).catch(() => setZernio({ configured: false })); }, []);
 
@@ -113,10 +223,12 @@ export function LiveMonitorView({ pushToast }) {
         platforms: targets,
         ...clampMonitorTimings(segmentMin, preliveMin, minGapMin),
         loop,
+        catchup,
         caption_template: captionTemplate,
         title_template: titleTemplate,
         instructions,
         banner: buildMonitorBannerPayload(bannerMode, { platform: bannerPlatform, handle: bannerHandle, y_pct: bannerYPct }),
+        ...(subOn ? { compose: { subtitle_params: sub } } : {}),
       });
       pushToast?.('success', `Monitoring ${slug.trim()}…`);
       setSlug('');
@@ -143,6 +255,32 @@ export function LiveMonitorView({ pushToast }) {
     }
   };
 
+  const onApplySettings = async (monitorId, partial) => {
+    if (Object.keys(partial).length === 0) return;
+    setApplyingSettingsId(monitorId);
+    try {
+      await updateMonitorConfig(monitorId, partial);
+      pushToast?.('success', 'Settings applied — will take effect from the next clips.');
+      refreshMonitors();
+    } catch (e) {
+      pushToast?.('error', 'Update failed: ' + String(e.message || e).slice(0, 60));
+    } finally {
+      setApplyingSettingsId(null);
+    }
+  };
+
+  const onTogglePublishing = async (monitorId, enabled) => {
+    setTogglingPublishingId(monitorId);
+    try {
+      await setMonitorPublishing(monitorId, enabled);
+      refreshMonitors();
+    } catch (e) {
+      pushToast?.('error', 'Update failed: ' + String(e.message || e).slice(0, 60));
+    } finally {
+      setTogglingPublishingId(null);
+    }
+  };
+
   return (
     <div className="container narrow fade-in">
       <Hero eyebrow="Live Monitor" line1="Auto-clip a channel." grad="live."
@@ -151,7 +289,9 @@ export function LiveMonitorView({ pushToast }) {
       <Panel title="Monitors" icon="rss" style={{ marginBottom: 18 }}>
         {monitors.length === 0 && <div className="od">No monitors running.</div>}
         {monitors.map((m) => (
-          <MonitorCard key={m.id} monitor={m} onStop={onStop} stopping={stoppingId === m.id} />
+          <MonitorCard key={m.id} monitor={m} onStop={onStop} stopping={stoppingId === m.id}
+            onApplySettings={onApplySettings} applyingSettings={applyingSettingsId === m.id}
+            onTogglePublishing={onTogglePublishing} togglingPublishing={togglingPublishingId === m.id} />
         ))}
       </Panel>
 
@@ -168,6 +308,12 @@ export function LiveMonitorView({ pushToast }) {
           {platform === 'youtube' && (
             <div className="od">YouTube: clips every new long-form upload; Shorts excluded</div>
           )}
+        </div>
+
+        <div className="field">
+          <span className="field-label">Catchup</span>
+          <Segmented full value={catchup} onChange={setCatchup}
+            options={[{ id: 'backfill', label: 'From the start of the live' }, { id: 'live_only', label: 'From now only' }]} />
         </div>
 
         <div className="field">
@@ -208,6 +354,16 @@ export function LiveMonitorView({ pushToast }) {
             placeholder="e.g. “Find the funniest moments” or “Skip the intro, focus on the demo”"
             onChange={(e) => setInstructions(e.target.value)}></textarea>
         </div>
+
+        <div className="opt" style={{ borderBottom: 0 }}>
+          <div className="otxt"><div className="ot">Subtitles (customize)</div><div className="od">Leave off to use server defaults</div></div>
+          <div className="r"><Switch on={subOn} onChange={setSubOn} label="Customize subtitles" /></div>
+        </div>
+        {subOn && (
+          <div style={{ marginBottom: 14 }}>
+            <SubtitleControls variant="create" value={sub} onChange={(p) => setSub((s) => ({ ...s, ...p }))} />
+          </div>
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: isVod ? '1fr' : 'repeat(3,1fr)', gap: 8, marginBottom: 14 }}>
           {!isVod && (

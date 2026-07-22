@@ -347,6 +347,32 @@ export async function getLiveMonitorStatus() {
   return res.json();
 }
 
+export async function updateMonitorConfig(monitorId, partial) {
+  const res = await apiFetch(getApiUrl(`/api/live-monitor/${monitorId}/config`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(partial),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function setMonitorPublishing(monitorId, enabled) {
+  const res = await apiFetch(getApiUrl(`/api/live-monitor/${monitorId}/publishing`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
 // Map the redesign's flat `opts` into the preselections shape the existing
 // hooks + seedClipParams expect (subtitles/hook as truthy objects).
 export function optsToPreselections(opts) {
