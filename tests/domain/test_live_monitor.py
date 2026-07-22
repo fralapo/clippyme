@@ -203,6 +203,23 @@ def test_validate_config_instructions_defaults_empty():
     assert cfg["instructions"] == ""
 
 
+# --- catchup (backfill vs live_only) ----------------------------------------
+
+def test_validate_config_catchup_defaults_backfill():
+    cfg = validate_monitor_config(_base_cfg())
+    assert cfg["catchup"] == "backfill"
+
+
+def test_validate_config_catchup_accepts_live_only():
+    cfg = validate_monitor_config(_base_cfg(catchup="live_only"))
+    assert cfg["catchup"] == "live_only"
+
+
+def test_validate_config_catchup_rejects_bad_value():
+    with pytest.raises(ValidationError):
+        validate_monitor_config(_base_cfg(catchup="rewind"))
+
+
 # --- multi-platform config -------------------------------------------------
 
 def test_validate_config_platform_mode_defaults():
@@ -258,7 +275,8 @@ def test_partial_update_rejects_unknown_field():
         validate_monitor_partial_update({"min_gap_seconds": 60, "channel": "other"}, _running_cfg())
 
 
-@pytest.mark.parametrize("field", ["platform", "mode", "channel", "slug", "loop", "publisher_mode"])
+@pytest.mark.parametrize(
+    "field", ["platform", "mode", "channel", "slug", "loop", "publisher_mode", "catchup"])
 def test_partial_update_rejects_identity_lifecycle_fields(field):
     with pytest.raises(ValidationError):
         validate_monitor_partial_update({field: "x"}, _running_cfg())
@@ -698,6 +716,91 @@ def test_snapshot_restore_roundtrips_coverage(tmp_path):
     mon2.restore(snap)
     assert mon2._covered_elapsed == 12345
     assert mon2._covered_stream_start == "2026-07-20T10:00:00+00:00"
+
+
+# --- catchup="live_only" never recovers pre-start footage -------------------
+
+def test_schedule_backfill_live_only_skips_windows_and_tasks(tmp_path):
+    """live_only must never queue missed windows, a kick VOD baseline, or a
+    Twitch in-progress-VOD backfill task — only bookkeep 'now' as covered."""
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(catchup="live_only")
+    mon.platform = "kick"
+    started_at = datetime(2026, 7, 20, 10, 0, 0, tzinfo=timezone.utc)
+
+    def boom(*a, **k):
+        raise AssertionError("backfill fetch_vods must not be called in live_only")
+
+    mon._strategy = type("S", (), {"fetch_vods": boom})()
+
+    asyncio.run(mon._schedule_backfill(started_at))
+
+    assert mon._missed_windows == []
+    assert mon._vod_baseline_ids == set()
+    assert mon.backfill_pending == 0
+    assert mon._covered_stream_start == started_at.isoformat()
+    assert mon._covered_elapsed > 0  # "now", not the prelive-skip offset
+    # no backfill task was ever scheduled
+    assert not mon._publish_tasks
+
+
+def test_schedule_backfill_backfill_mode_still_queues_kick_windows(tmp_path):
+    """Unchanged default behaviour: catchup='backfill' still queues windows."""
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg()  # default catchup="backfill"
+    mon.platform = "kick"
+    from datetime import timedelta
+    started_at = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    mon._strategy = type("S", (), {"fetch_vods": lambda self: []})()
+
+    asyncio.run(mon._schedule_backfill(started_at))
+
+    assert mon._missed_windows  # windows queued, unlike live_only
+    assert mon.backfill_pending == len(mon._missed_windows)
+
+
+def test_recover_kick_backfill_noop_in_live_only(tmp_path):
+    """Defence-in-depth: even if _missed_windows were somehow non-empty,
+    _recover_kick_backfill must not submit a job when catchup='live_only'."""
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(catchup="live_only")
+    mon._missed_windows = [(0, 100)]
+
+    def boom(*a, **k):
+        raise AssertionError("must not run when catchup='live_only'")
+
+    mon._backfill_windows = boom
+
+    asyncio.run(mon._recover_kick_backfill())  # returns immediately, no error
+
+
+def test_backfill_from_vod_noop_in_live_only(tmp_path):
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(catchup="live_only")
+
+    def boom(*a, **k):
+        raise AssertionError("must not run when catchup='live_only'")
+
+    mon._backfill_windows = boom
+
+    asyncio.run(mon._backfill_from_vod([(0, 100)]))
 
 
 # --- _publish_one: 429 backoff + retry -------------------------------------

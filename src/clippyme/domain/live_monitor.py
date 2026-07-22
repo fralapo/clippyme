@@ -179,6 +179,13 @@ def _validate_channel(platform: str, raw) -> str:
     return ch
 
 
+def _validate_catchup(value) -> str:
+    catchup = str(value or "backfill").strip().lower()
+    if catchup not in ("backfill", "live_only"):
+        raise ValidationError("catchup must be 'backfill' or 'live_only'")
+    return catchup
+
+
 def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome") -> dict:
     """Coerce + bound a raw start payload into the monitor's config dict.
 
@@ -230,6 +237,11 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
         "caption_template": str(config.get("caption_template") or "")[:2200],
         "title_template": str(config.get("title_template") or "")[:500],
         "timezone": str(config.get("timezone") or default_timezone or "Europe/Rome")[:64],
+        # "backfill" (default) recovers footage missed before capture started
+        # (prelive window, kick/twitch missed-window recovery). "live_only"
+        # never recovers pre-start footage — coverage begins at launch. This is
+        # a start-time choice, not runtime-updatable (see _UPDATABLE_CONFIG_FIELDS).
+        "catchup": _validate_catchup(config.get("catchup")),
         # Banner + compose overrides for the auto-publish flow (None = defaults).
         # Kept as-is here; build_monitor_compose / monitor_banner_params own the
         # semantics. The API schema already bounds them.
@@ -253,7 +265,7 @@ _SNAPSHOT_CONFIG_FIELDS = (
     "platform", "mode", "channel", "slug", "platforms", "segment_seconds",
     "prelive_skip_seconds", "min_gap_seconds", "poll_interval", "loop",
     "instructions", "caption_template", "title_template", "timezone",
-    "banner", "compose",
+    "banner", "compose", "catchup",
 )
 
 
@@ -784,6 +796,15 @@ class LiveMonitor:
             return
         started_iso = started_at.isoformat()
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+        if self.cfg.get("catchup") == "live_only":
+            # No historical recovery — coverage starts at "now" (current
+            # stream elapsed), never before this monitor session started.
+            if self._covered_stream_start != started_iso:
+                self._covered_elapsed = 0
+            self._covered_stream_start = started_iso
+            self._covered_elapsed = max(self._covered_elapsed, int(elapsed))
+            self._persist()
+            return
         start = effective_backfill_start(
             self.cfg["prelive_skip_seconds"], self._covered_elapsed,
             self._covered_stream_start, started_iso)
@@ -813,6 +834,8 @@ class LiveMonitor:
 
     async def _backfill_from_vod(self, windows) -> None:
         """Twitch: resolve the in-progress VOD url and process each missed window."""
+        if self.cfg.get("catchup") == "live_only":
+            return  # ponytail: defence-in-depth — _schedule_backfill never calls us in this mode
         if not hasattr(self._strategy, "live_vod_url"):
             return
         try:
@@ -831,6 +854,8 @@ class LiveMonitor:
     async def _recover_kick_backfill(self) -> None:
         """Kick: poll for the replay VOD that appears after the session ends
         (an id not in the pre-session baseline), then process the missed windows."""
+        if self.cfg.get("catchup") == "live_only":
+            return  # ponytail: defence-in-depth — _schedule_backfill never calls us in this mode
         windows = self._missed_windows
         for _ in range(30):  # ponytail: fixed cap; replay usually lands in minutes
             if self._stop.is_set():

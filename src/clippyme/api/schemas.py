@@ -372,6 +372,11 @@ class LiveMonitorStartRequest(BaseModel):
     # banner attached under the letterbox band, subtitles bottom-left) apply
     # when omitted. Shallow-merged over the defaults in build_monitor_compose.
     compose: Optional[dict] = None
+    # "backfill" (default, current behaviour) recovers footage missed before
+    # capture started (prelive window, kick/twitch missed-window recovery).
+    # "live_only" never recovers pre-start footage. Re-validated in the
+    # domain layer; kept permissive here (regex mirrors mode/platform style).
+    catchup: str = Field("backfill", pattern=r"^(backfill|live_only)$")
 
     @field_validator("banner")
     @classmethod
