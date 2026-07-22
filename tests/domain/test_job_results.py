@@ -175,3 +175,20 @@ def test_build_clips_ignores_tampered_clip_filename(tmp_path, bad):
     result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
     assert len(result) == 1
     assert result[0]["video_url"] == "/videos/job1/vid_clip_1.mp4"
+
+
+def test_build_clips_partial_job_mid_processing_first_clip_ready(tmp_path):
+    # Mid-job snapshot (per-iteration metadata re-dump, task 4b follow-up):
+    # clip 1 already has clip_filename + is on disk under the new sanitized
+    # name; clip 2 hasn't been cut yet (no clip_filename key, no file).
+    # only_ready=True (the /api/status partial-result path) must return the
+    # first clip and skip the second — not show zero clips for the job.
+    (tmp_path / "Ready Clip Title_clip_1.mp4").write_bytes(b"\x00")
+    data = {"shorts": [
+        {"clip_filename": "Ready Clip Title_clip_1.mp4", "start": 0, "end": 5},
+        {"start": 5, "end": 10},
+    ]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
+    assert len(result) == 1
+    assert result[0]["video_url"] == "/videos/job1/Ready Clip Title_clip_1.mp4"
+    assert result[0]["original_index"] == 0

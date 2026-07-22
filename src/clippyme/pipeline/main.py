@@ -835,6 +835,17 @@ if __name__ == '__main__':
                 # this clip without recomputing the (now clip-title-based)
                 # naming convention itself — see task-4b-brief.md.
                 clip['clip_filename'] = clip_filename
+                # Re-dump metadata NOW (not just after the whole loop) so a
+                # /api/status poll mid-job can already resolve this clip's
+                # real filename the moment it lands on disk — otherwise
+                # _build_clips(only_ready=True) keeps computing the stale
+                # positional name for every clip until the job finishes and
+                # shows zero clips for the whole run. Same atomic tmp+replace
+                # write as the initial dump above; N clips is small (<=~10),
+                # so N extra small writes is cheap.
+                with open(metadata_tmp, 'w') as f:
+                    json.dump(clips_data, f, indent=2)
+                os.replace(metadata_tmp, metadata_file)
                 # Keep the 16:9 source slice persistently so the user can
                 # later switch reframe modes from the dashboard without
                 # re-running the entire pipeline. Naming convention:
@@ -895,14 +906,6 @@ if __name__ == '__main__':
                 # NOTE: we intentionally do NOT delete clip_source_path.
                 # It's needed by POST /api/reframe/{job_id}/{clip_index} to
                 # re-run reframing with a different mode on demand.
-
-            # Re-dump metadata now that every clip['clip_filename'] has been
-            # set by the loop above (the earlier dump at job start ran BEFORE
-            # per-clip basenames existed, so it never saw them). Same atomic
-            # tmp+replace pattern as the initial write.
-            with open(metadata_tmp, 'w') as f:
-                json.dump(clips_data, f, indent=2)
-            os.replace(metadata_tmp, metadata_file)
 
     # Clean up original if requested
     if args.url and not args.keep_original and os.path.exists(input_video):
