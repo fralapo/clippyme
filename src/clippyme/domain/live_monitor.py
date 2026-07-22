@@ -444,6 +444,10 @@ class LiveMonitor:
         self.platform = id.split(":", 1)[0] if ":" in id else ""
         self.mode = "live"
         self.state = "idle"
+        # Persisted across a snapshot/restore round-trip. True for any monitor
+        # that runs indefinitely (loop=True live monitors, all vod pollers) —
+        # a durable process restart should bring it back up automatically.
+        self.resume_on_start: bool = False
         self.last_error: str | None = None
         self.current_job_id: str | None = None
         self.segments_captured = 0   # live: segments; vod: items processed
@@ -482,6 +486,7 @@ class LiveMonitor:
             "current_job_id": self.current_job_id,
             "backfill_pending": self.backfill_pending,
             "last_error": self.last_error,
+            "resume_on_start": self.resume_on_start,
         }
 
     def snapshot(self) -> dict:
@@ -503,6 +508,7 @@ class LiveMonitor:
             "covered_elapsed": int(self._covered_elapsed),
             "covered_stream_start": self._covered_stream_start,
             "state": self.state,
+            "resume_on_start": self.resume_on_start,
             "updated_at": datetime.now().isoformat(),
         }
 
@@ -529,6 +535,7 @@ class LiveMonitor:
         self.clips_published = int(snap.get("clips_published") or 0)
         self._covered_elapsed = int(snap.get("covered_elapsed") or 0)
         self._covered_stream_start = snap.get("covered_stream_start") or None
+        self.resume_on_start = bool(snap.get("resume_on_start", False))
 
     def start(self, cfg: dict) -> dict:
         """Resolve secrets, build the platform strategy, and launch the task.
@@ -551,6 +558,10 @@ class LiveMonitor:
         self.cfg = cfg
         self.platform = cfg["platform"]
         self.mode = cfg["mode"]
+        # A loop=True live monitor restarts itself after every stream, and a
+        # vod poller runs forever — both are durable across a process
+        # restart, so mark them for registry.auto_resume() on next startup.
+        self.resume_on_start = bool(cfg.get("loop")) or self.mode == "vod"
         self._strategy = self._make_strategy(cfg, pc)
         self._scheduler = SharedGapScheduler(
             min_gap_seconds=cfg["min_gap_seconds"], picked_slots=self._picked_slots)
@@ -558,7 +569,16 @@ class LiveMonitor:
         self.last_error = None
         self.current_job_id = None
 
-        self._task = asyncio.create_task(self._run())
+        coro = self._run()
+        try:
+            self._task = asyncio.create_task(coro)
+        except RuntimeError:
+            # No running event loop (e.g. a synchronous caller) — record the
+            # start state without scheduling the background task.
+            coro.close()
+            logger.warning(
+                "LiveMonitor %s: no running event loop, task not scheduled", self.id)
+            self._task = None
         logger.info("LiveMonitor started: %s (mode=%s)", self.id, self.mode)
         return self.status()
 
@@ -1204,18 +1224,78 @@ class LiveMonitorRegistry:
         self.persist()
         return {"monitors": [m.status() for m in self._monitors.values()]}
 
-    def _retire(self, mid: str, mon) -> None:
-        """Drop an explicitly-stopped monitor from the visible list.
+    def _retire(self, mid: str, mon, *, disable_resume: bool = True) -> None:
+        """Drop a stopped monitor from the visible list.
 
         Its snapshot is kept in ``_snapshots`` (and thus on disk) so the
         seen-VOD / published guards survive a later restart of the same
         channel — only the status-list entry goes away.
+
+        ``disable_resume`` clears ``resume_on_start`` on the retired snapshot
+        for an explicit user/API stop (the monitor should stay down). A
+        graceful process shutdown passes ``disable_resume=False`` so
+        ``registry.auto_resume()`` brings it back on the next startup.
         """
         try:
-            self._snapshots[mid] = mon.snapshot()
+            snap = mon.snapshot()
+            if disable_resume:
+                snap = dict(snap)
+                snap["resume_on_start"] = False
+            self._snapshots[mid] = snap
         except Exception:
             logger.warning("LiveMonitor %s: snapshot on retire failed", mid, exc_info=True)
         self._monitors.pop(mid, None)
+
+    async def shutdown(self) -> None:
+        """Graceful process shutdown: stop every monitor task WITHOUT
+        disabling ``resume_on_start``, persisting the last coverage point
+        before the process exits."""
+        for mid, mon in list(self._monitors.items()):
+            try:
+                await mon.stop()
+            except Exception:
+                logger.exception("LiveMonitor %s failed to stop cleanly", mon.id)
+            self._retire(mid, mon, disable_resume=False)
+        self.persist()
+
+    async def auto_resume(self) -> dict:
+        """Restart every persisted snapshot with ``resume_on_start`` truthy.
+
+        Credentials are always reloaded from ``config_store`` inside the
+        normal ``LiveMonitor.start()`` path — never from the snapshot. A
+        failure for one monitor is recorded (readable via ``status()``) and
+        does not raise, so it can never fail FastAPI startup.
+        """
+        resumed: list[str] = []
+        failed: list[dict] = []
+        for mid, snap in list(self._snapshots.items()):
+            if not snap.get("resume_on_start"):
+                continue
+            cfg = snap.get("config")
+            if not isinstance(cfg, dict):
+                continue
+            mon = LiveMonitor(
+                id=mid, jobs=self._jobs, job_queue=self._job_queue,
+                output_dir=self._output_dir, upload_dir=self._upload_dir,
+                on_job_change=self._on_job_change, picked_slots=self._picked_slots,
+                publish_lock=self._publish_lock,
+                manual_publish_queue=self._manual_publish_queue,
+                on_state_change=self.persist)
+            mon.restore(snap)
+            try:
+                mon.start(cfg)
+            except Exception as exc:
+                logger.exception("LiveMonitor %s: auto-resume failed", mid)
+                mon.state = "auto_resume_failed"
+                mon.last_error = str(exc)
+                self._monitors[mid] = mon
+                failed.append({"id": mid, "error": str(exc)})
+                continue
+            self._monitors[mid] = mon
+            self._snapshots.pop(mid, None)
+            resumed.append(mid)
+        self.persist()
+        return {"resumed": resumed, "failed": failed}
 
     def status(self, monitor_id: str | None = None) -> dict:
         if monitor_id:
