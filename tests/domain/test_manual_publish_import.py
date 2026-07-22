@@ -138,6 +138,22 @@ def test_missing_sidecar_is_imported_as_legacy_default(queue):
     assert imported[0]["job_id"] == JOB_A
 
 
+def test_monitor_owned_job_is_still_imported(queue):
+    """Crash backstop: a monitor-owned job (sidecar owner='live_monitor')
+    whose clips never got enqueued (backend died between completion and the
+    monitor's enqueue) must still be picked up by the startup importer — only
+    the completion hook defers to the monitor."""
+    from clippyme.domain.job_submission import write_publisher_mode
+
+    job_dir = _make_job(queue, JOB_A, clips=[{"start": 0, "end": 10}])
+    write_publisher_mode(str(job_dir), "manual_queue", owner="live_monitor")
+
+    imported = import_existing_clips(queue)
+
+    assert len(imported) == 1
+    assert imported[0]["job_id"] == JOB_A
+
+
 def test_missing_clip_file_is_not_imported(queue):
     job_dir = queue.output_dir / JOB_A
     job_dir.mkdir(parents=True, exist_ok=True)

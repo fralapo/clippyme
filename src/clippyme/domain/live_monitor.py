@@ -954,7 +954,8 @@ class LiveMonitor:
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
             cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change,
-            publisher_mode=self.cfg.get("publisher_mode", "manual_queue"))
+            publisher_mode=self.cfg.get("publisher_mode", "manual_queue"),
+            publisher_owner="live_monitor")
         logger.info("LiveMonitor %s submitted segment job %s", self.id, job_id)
         return job_id
 
@@ -969,7 +970,8 @@ class LiveMonitor:
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
             cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change,
-            publisher_mode=self.cfg.get("publisher_mode", "manual_queue"))
+            publisher_mode=self.cfg.get("publisher_mode", "manual_queue"),
+            publisher_owner="live_monitor")
         logger.info("LiveMonitor %s submitted url job %s (%s)", self.id, job_id, url)
         return job_id
 

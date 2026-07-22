@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import uuid
 import shutil
@@ -27,7 +28,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import ValidationError
 
 from clippyme.domain.job_results import build_main_cmd, canonical_reframe_mode
@@ -206,17 +207,27 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+# Media routes under /api that must stay off the token gate, like the static
+# media mounts: <video src>/download anchors can't attach custom headers. The
+# manual-publish video endpoint keeps its own trusted-origin/private-network
+# gate, strict-UUID entry validation, and dirfd/O_NOFOLLOW artifact open.
+_TOKEN_EXEMPT_MEDIA = re.compile(r"^/api/manual-publish/[0-9a-fA-F-]{36}/video$")
+
+
 @app.middleware("http")
 async def _api_token_gate(request: Request, call_next):
     """Optional shared-secret auth for deliberate LAN deployments.
 
     Active only when CLIPPYME_API_TOKEN is set (default unset = no-op). Guards
     every /api route; the static media mounts (/videos, /thumbnails, /fonts)
-    stay IP-open because <video>/<img>/FontFace requests can't attach custom
-    headers. HTTPException is converted here because raise inside middleware
-    bypasses FastAPI's exception handlers.
+    and the _TOKEN_EXEMPT_MEDIA routes stay IP-open because
+    <video>/<img>/FontFace requests can't attach custom headers. HTTPException
+    is converted here because raise inside middleware bypasses FastAPI's
+    exception handlers.
     """
-    if request.url.path.startswith("/api/") and request.method != "OPTIONS":
+    if (request.url.path.startswith("/api/") and request.method != "OPTIONS"
+            and not (request.method in ("GET", "HEAD")
+                     and _TOKEN_EXEMPT_MEDIA.match(request.url.path))):
         try:
             enforce_api_token(request)
         except HTTPException as exc:
@@ -763,19 +774,74 @@ async def restore_manual_publish(entry_id: str, request: Request):
     return await asyncio.to_thread(manual_publish_queue.restore, entry_id)
 
 
+def _parse_byte_range(header, size):
+    """Parse a single-range ``Range: bytes=start-end`` header.
+
+    Returns ``None`` when no Range header is present (serve a full 200) or an
+    inclusive ``(start, end)`` tuple. Raises ``ValueError`` for a malformed or
+    unsatisfiable range (→ 416). Multi-range requests are not supported and
+    map to 416 as well (no ``<video>`` element sends them).
+    """
+    if not header:
+        return None
+    m = re.fullmatch(r"bytes=(\d*)-(\d*)", header.strip())
+    if not m or (not m.group(1) and not m.group(2)):
+        raise ValueError(f"unsupported Range: {header!r}")
+    if not m.group(1):  # suffix form: bytes=-N (last N bytes)
+        suffix = int(m.group(2))
+        if suffix == 0 or size == 0:
+            raise ValueError(f"unsatisfiable Range: {header!r}")
+        return max(0, size - suffix), size - 1
+    start = int(m.group(1))
+    end = int(m.group(2)) if m.group(2) else size - 1
+    if start >= size or start > end:
+        raise ValueError(f"unsatisfiable Range: {header!r}")
+    return start, min(end, size - 1)
+
+
 @app.get("/api/manual-publish/{entry_id}/video")
 async def manual_publish_video(entry_id: str, request: Request):
     require_trusted_config_request(request)
     video = await asyncio.to_thread(manual_publish_queue.open_video, entry_id)
+    try:
+        video.seek(0, os.SEEK_END)
+        size = video.tell()
+        video.seek(0)
+        byte_range = _parse_byte_range(request.headers.get("range"), size)
+    except ValueError:
+        video.close()
+        return Response(status_code=416, headers={
+            "Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"})
+    except Exception:
+        video.close()
+        raise
 
-    def stream_video():
+    def stream_video(limit=None):
         try:
-            while chunk := video.read(1024 * 1024):
+            remaining = limit
+            while True:
+                step = 1024 * 1024 if remaining is None else min(1024 * 1024, remaining)
+                if step <= 0:
+                    break
+                chunk = video.read(step)
+                if not chunk:
+                    break
                 yield chunk
+                if remaining is not None:
+                    remaining -= len(chunk)
         finally:
             video.close()
 
-    return StreamingResponse(stream_video(), media_type="video/mp4")
+    headers = {"Accept-Ranges": "bytes"}
+    if byte_range is None:
+        headers["Content-Length"] = str(size)
+        return StreamingResponse(stream_video(), media_type="video/mp4", headers=headers)
+    start, end = byte_range
+    video.seek(start)
+    headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    headers["Content-Length"] = str(end - start + 1)
+    return StreamingResponse(stream_video(end - start + 1), status_code=206,
+                             media_type="video/mp4", headers=headers)
 
 @app.delete("/api/history/{job_id}")
 async def delete_history(job_id: str, request: Request):

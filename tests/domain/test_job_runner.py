@@ -109,10 +109,51 @@ def test_enqueue_failure_is_non_fatal(tmp_path):
     assert queue.list_entries("all") == []
 
 
+def test_hook_skips_monitor_owned_job(tmp_path):
+    """The live monitor is the single queue writer for its own jobs: the
+    completion hook must not enqueue anything when the sidecar records
+    owner='live_monitor', even though the mode is manual_queue."""
+    output = tmp_path / "output"
+    output.mkdir()
+    job_dir = _make_job(output, JOB_ID, clips=[{"start": 0, "end": 10}])
+    write_publisher_mode(str(job_dir), "manual_queue", owner="live_monitor")
+    queue = ManualPublishQueue(output, tmp_path / "data" / "manual_publish_queue.json")
+
+    _enqueue_completed_job(queue, JOB_ID, str(job_dir))
+
+    assert queue.list_entries("all") == []
+
+
+def test_hook_first_then_monitor_yields_exactly_one_composed_entry(tmp_path):
+    """Production order: the hook fires the moment the job completes; the
+    monitor's _publish_one enqueues its composed clip seconds later. The queue
+    must end with exactly ONE entry — the monitor's (template caption), never
+    a raw hook-written one."""
+    output = tmp_path / "output"
+    output.mkdir()
+    job_dir = _make_job(output, JOB_ID, clips=[{"start": 0, "end": 10}])
+    write_publisher_mode(str(job_dir), "manual_queue", owner="live_monitor")
+    queue = ManualPublishQueue(output, tmp_path / "data" / "manual_publish_queue.json")
+
+    _enqueue_completed_job(queue, JOB_ID, str(job_dir))  # hook fires first: no-op
+    # ... then the monitor enqueues its composed artifact with template caption.
+    source = job_dir / "video_clip_1.mp4"
+    queue.enqueue(
+        job_id=JOB_ID, clip_index=0, source_path=source, title="Monitor Title",
+        caption="template caption", source_platform="kick", source_channel="grenbaud",
+        source_kind="live", project_title="Stream", monitor_id="mon-1",
+    )
+
+    entries = queue.list_entries("all")
+    assert len(entries) == 1
+    assert entries[0]["monitor_id"] == "mon-1"
+    assert entries[0]["caption"] == "template caption"
+
+
 def test_no_double_enqueue_when_clip_already_queued(tmp_path):
-    """Simulates a live-monitor job: the monitor's own publish flow already
-    enqueued the clip (different title/kind) before the completion hook runs.
-    The hook must not add a second entry for the same (job_id, clip_index)."""
+    """Legacy monitor job (sidecar written before the owner field existed):
+    the monitor already enqueued the clip, then the hook runs. Dedup by
+    (job_id, clip_index) must keep it a single entry."""
     output = tmp_path / "output"
     output.mkdir()
     job_dir = _make_job(output, JOB_ID, clips=[{"start": 0, "end": 10}])

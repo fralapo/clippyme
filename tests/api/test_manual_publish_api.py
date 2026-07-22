@@ -67,6 +67,75 @@ def test_queue_routes_require_trusted_request(client_and_entry):
     assert untrusted.get(f"/api/manual-publish/{entry['id']}/video").status_code == 403
 
 
+def test_video_no_range_returns_full_200(client_and_entry):
+    client, entry = client_and_entry
+    response = client.get(f"/api/manual-publish/{entry['id']}/video")
+    assert response.status_code == 200
+    assert response.headers["accept-ranges"] == "bytes"
+    assert response.headers["content-length"] == "8"
+    assert response.content == b"mp4-data"
+
+
+def test_video_ranged_request_returns_206_slice(client_and_entry):
+    client, entry = client_and_entry
+    response = client.get(
+        f"/api/manual-publish/{entry['id']}/video", headers={"Range": "bytes=0-3"})
+    assert response.status_code == 206
+    assert response.content == b"mp4-"
+    assert response.headers["content-range"] == "bytes 0-3/8"
+    assert response.headers["content-length"] == "4"
+    assert response.headers["accept-ranges"] == "bytes"
+
+
+def test_video_open_ended_range(client_and_entry):
+    client, entry = client_and_entry
+    response = client.get(
+        f"/api/manual-publish/{entry['id']}/video", headers={"Range": "bytes=4-"})
+    assert response.status_code == 206
+    assert response.content == b"data"
+    assert response.headers["content-range"] == "bytes 4-7/8"
+
+
+def test_video_suffix_range(client_and_entry):
+    client, entry = client_and_entry
+    response = client.get(
+        f"/api/manual-publish/{entry['id']}/video", headers={"Range": "bytes=-4"})
+    assert response.status_code == 206
+    assert response.content == b"data"
+    assert response.headers["content-range"] == "bytes 4-7/8"
+
+
+def test_video_end_clamped_to_size(client_and_entry):
+    client, entry = client_and_entry
+    response = client.get(
+        f"/api/manual-publish/{entry['id']}/video", headers={"Range": "bytes=2-999"})
+    assert response.status_code == 206
+    assert response.content == b"4-data"
+    assert response.headers["content-range"] == "bytes 2-7/8"
+
+
+def test_video_invalid_range_returns_416(client_and_entry):
+    client, entry = client_and_entry
+    for bad in ("bytes=8-", "bytes=5-2", "bytes=-0", "bytes=abc", "bytes=0-1,4-5"):
+        response = client.get(
+            f"/api/manual-publish/{entry['id']}/video", headers={"Range": bad})
+        assert response.status_code == 416, bad
+        assert response.headers["content-range"] == "bytes */8"
+
+
+def test_video_exempt_from_api_token_gate(client_and_entry, monkeypatch):
+    """<video src>/download anchors can't send X-API-Token — the media route
+    stays off the token gate (like /videos) while every other queue route
+    still requires the token."""
+    client, entry = client_and_entry
+    monkeypatch.setenv("CLIPPYME_API_TOKEN", "s3cret")
+    assert client.get("/api/manual-publish").status_code == 401
+    assert client.post(f"/api/manual-publish/{entry['id']}/complete").status_code == 401
+    response = client.get(f"/api/manual-publish/{entry['id']}/video")
+    assert response.status_code == 200
+    assert response.content == b"mp4-data"
+
+
 def test_video_stream_closes_queue_opened_handle(client_and_entry, monkeypatch):
     client, entry = client_and_entry
     stream = io.BytesIO(b"streamed")

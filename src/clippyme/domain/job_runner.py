@@ -14,7 +14,7 @@ import threading
 from clippyme.domain import job_control
 from clippyme.domain.job_artifacts import relocate_root_job_artifacts
 from clippyme.domain.job_results import load_final_result, load_partial_result
-from clippyme.domain.job_submission import read_publisher_mode
+from clippyme.domain.job_submission import read_publisher_mode, read_publisher_owner
 from clippyme.domain.job_worker import enqueue_output
 from clippyme.storage.config_store import load_persistent_config
 
@@ -48,8 +48,16 @@ def _enqueue_completed_job(manual_publish_queue, job_id: str, output_dir: str) -
     Non-fatal by design (called from a try/except-free thread offload, so the
     try/except lives here): a bad metadata read or a queue-state hiccup must
     never fail the job that already finished successfully.
+
+    Monitor-owned jobs (sidecar ``owner == "live_monitor"``) are skipped: the
+    live monitor is the single queue writer for its jobs — it enqueues the
+    COMPOSED clip with template captions; enqueueing here would race it and
+    land the raw clip first. The startup importer still backstops a crash
+    between completion and the monitor's enqueue.
     """
     if read_publisher_mode(output_dir) != "manual_queue":
+        return
+    if read_publisher_owner(output_dir) == "live_monitor":
         return
     try:
         from clippyme.domain.manual_publish_queue import enqueue_job_clips
@@ -67,10 +75,12 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None, manual_publish
     ``manual_publish_queue`` (optional) is checked on successful completion:
     when the job's ``publisher_mode.json`` sidecar says "manual_queue" (or is
     missing — legacy default), the finished clips are enqueued for manual
-    review. Enqueue is idempotent (dedup by job_id+clip_index), so it is
-    harmless if it races a live-monitor job that already enqueued its own
-    clips, or an import scan. Never fatal — a failure here is logged and the
-    job still completes normally.
+    review. Monitor-owned jobs (sidecar ``owner == "live_monitor"``) are
+    skipped — the monitor enqueues its own composed clips a few seconds after
+    completion, and enqueueing here first would land the raw clip with the
+    wrong caption. Enqueue is idempotent (dedup by job_id+clip_index) against
+    an import scan. Never fatal — a failure here is logged and the job still
+    completes normally.
     """
 
     def _notify():
