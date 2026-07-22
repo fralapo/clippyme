@@ -115,6 +115,29 @@ def test_corrupt_metadata_for_one_job_does_not_abort_others(queue):
     assert imported[0]["job_id"] == JOB_B
 
 
+def test_skips_job_opted_into_zernio_via_sidecar(queue):
+    from clippyme.domain.job_submission import write_publisher_mode
+
+    job_dir = _make_job(queue, JOB_A, clips=[{"start": 0, "end": 10}])
+    write_publisher_mode(str(job_dir), "zernio")
+    _make_job(queue, JOB_B, clips=[{"start": 0, "end": 10}])
+
+    imported = import_existing_clips(queue)
+
+    assert len(imported) == 1
+    assert imported[0]["job_id"] == JOB_B
+
+
+def test_missing_sidecar_is_imported_as_legacy_default(queue):
+    _make_job(queue, JOB_A, clips=[{"start": 0, "end": 10}])
+    # No publisher_mode.json written at all — legacy job predating this feature.
+
+    imported = import_existing_clips(queue)
+
+    assert len(imported) == 1
+    assert imported[0]["job_id"] == JOB_A
+
+
 def test_missing_clip_file_is_not_imported(queue):
     job_dir = queue.output_dir / JOB_A
     job_dir.mkdir(parents=True, exist_ok=True)

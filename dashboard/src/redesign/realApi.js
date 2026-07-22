@@ -400,11 +400,9 @@ export function optsToPreselections(opts) {
     // 'object' is the legacy name for 'subject' (FrameShift face-first); the
     // backend accepts both but normalize here so new jobs persist the new name.
     reframe_mode: (opts.reframeMode === 'object' ? 'subject' : opts.reframeMode) || (opts.reframe === false ? 'disabled' : 'auto'),
-    // Publish destination the user picked for this recipe. ProcessRequest
-    // doesn't accept this field yet (Task 3a wired publisher_mode into
-    // /api/live-monitor/start only) — carried here so it round-trips through
-    // preselections (persisted per job, seeds the Edit/Publish surfaces)
-    // without requiring changes to lib/api.js's submitProcessJob whitelist.
+    // Publish destination the user picked for this recipe; forwarded to
+    // /api/process|/api/batch by lib/api.js (manual_queue → clips land in
+    // the mobile publish page; zernio → job opts out of the page).
     publisher_mode: opts.publisherMode || 'manual_queue',
     aspect: opts.aspect || '9:16',
     language: opts.language,

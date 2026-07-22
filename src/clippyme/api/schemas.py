@@ -82,6 +82,11 @@ class ProcessRequest(BaseModel):
     # appended as --model to the pipeline argv. When omitted, the pipeline uses
     # GEMINI_MODEL from env / Settings (default gemini-3.5-flash).
     model: Optional[str] = Field(None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$")
+    # Publish destination for this job's finished clips: "manual_queue" (default —
+    # land in the Manual Publish tab for hand-review) or "zernio" (opt out of the
+    # manual queue; the user will publish via the per-clip Zernio flow instead).
+    # Mirrors LiveMonitorStartRequest.publisher_mode for consistency.
+    publisher_mode: str = Field("manual_queue", pattern=r"^(manual_queue|zernio)$")
 
 
 class BatchRequest(BaseModel):
@@ -89,6 +94,7 @@ class BatchRequest(BaseModel):
     instructions: Optional[str] = Field(None, max_length=MAX_INSTRUCTIONS_LEN)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
     aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
+    publisher_mode: str = Field("manual_queue", pattern=r"^(manual_queue|zernio)$")
 
     @field_validator("urls")
     @classmethod

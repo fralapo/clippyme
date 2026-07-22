@@ -32,14 +32,86 @@ def _lock_for(path: Path) -> threading.RLock:
         return _LOCKS.setdefault(path, threading.RLock())
 
 
+def enqueue_job_clips(queue: "ManualPublishQueue", job_id: str, *, queued=None) -> list:
+    """Enqueue every unpublished, on-disk clip of one finished job.
+
+    Idempotent: skips clips already covered by a manual-queue entry for the
+    same ``(job_id, clip_index)`` — callers can invoke this more than once
+    for the same job (e.g. a job-completion hook racing an import scan)
+    without producing duplicate entries. ``queued`` optionally pre-seeds the
+    dedup set (the caller already has it loaded); otherwise it's read fresh.
+    Raises on a missing/corrupt metadata file — the caller decides whether
+    that's fatal.
+    """
+    from clippyme.domain.banner import suggest_banner
+    from clippyme.domain.clip_resolve import clip_filename_for
+    from clippyme.domain.job_artifacts import find_job_metadata_path
+
+    job_dir = queue.output_dir / job_id
+    if queued is None:
+        with queue._lock:
+            queued = {
+                (entry.get("job_id"), entry.get("clip_index"))
+                for entry in queue._load()
+            }
+
+    metadata_path = find_job_metadata_path(job_id, str(queue.output_dir))
+    metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
+    shorts = metadata.get("shorts")
+    if not isinstance(shorts, list):
+        return []
+
+    source_info = metadata.get("source_info") or {}
+    channel_url = source_info.get("channel_url") or source_info.get("webpage_url") or ""
+    suggested = suggest_banner(channel_url, channel_hint=source_info.get("uploader_id")) or {}
+    platform = suggested.get("platform") or "unknown"
+    channel = suggested.get("handle") or source_info.get("uploader_id") or "unknown"
+    project_title = Path(metadata_path).name.replace("_metadata.json", "").replace("_", " ")
+
+    enqueued = []
+    for index, clip in enumerate(shorts):
+        if not isinstance(clip, dict) or (job_id, index) in queued:
+            continue
+        if clip.get("published"):
+            continue
+        filename = clip_filename_for(metadata_path, clip, index)
+        clip_path = job_dir / filename
+        if not clip_path.is_file():
+            continue
+        title = clip.get("video_title_for_youtube_short") or clip.get("title") or "Clip"
+        try:
+            entry = queue.enqueue(
+                job_id=job_id,
+                clip_index=index,
+                source_path=clip_path,
+                title=title,
+                caption=clip.get("caption") or "",
+                source_platform=platform,
+                source_channel=channel,
+                source_kind="import",
+                project_title=project_title,
+                monitor_id=None,
+            )
+        except Exception:
+            logger.exception(
+                "manual-publish enqueue: failed for %s/%s", job_id, index)
+            continue
+        queued.add((job_id, index))
+        enqueued.append(entry)
+    return enqueued
+
+
 def import_existing_clips(queue: "ManualPublishQueue") -> list:
     """Idempotently import extant, unpublished clips into ``queue``.
 
-    Scans every job dir under ``queue.output_dir``, reads its newest
-    ``*_metadata.json`` and enqueues each clip whose render file exists on
-    disk, has no successful ``published`` record, and has no manual-queue
-    entry already covering its ``(job_id, clip_index)``. A missing/corrupt
-    metadata file skips that one job — it never aborts the scan.
+    Scans every job dir under ``queue.output_dir`` and enqueues each clip
+    whose render file exists on disk, has no successful ``published``
+    record, and has no manual-queue entry already covering its
+    ``(job_id, clip_index)`` — via :func:`enqueue_job_clips`. A missing/
+    corrupt metadata file skips that one job — it never aborts the scan. A
+    job whose ``publisher_mode.json`` sidecar says "zernio" is skipped
+    entirely: the user opted that job out of the manual queue. A missing
+    sidecar (legacy jobs, predating this feature) is imported as before.
 
     ponytail: there is no marker in job metadata distinguishing monitor-
     generated jobs from regular ones, so every job dir is scanned — the queue
@@ -48,10 +120,8 @@ def import_existing_clips(queue: "ManualPublishQueue") -> list:
     ``source_info`` sidecar (falls back to "unknown" for local-upload jobs
     that never captured one).
     """
-    from clippyme.domain.banner import suggest_banner
-    from clippyme.domain.clip_resolve import clip_filename_for
     from clippyme.domain.history_service import is_valid_job_id
-    from clippyme.domain.job_artifacts import find_job_metadata_path
+    from clippyme.domain.job_submission import read_publisher_mode
 
     with queue._lock:
         queued = {
@@ -71,49 +141,10 @@ def import_existing_clips(queue: "ManualPublishQueue") -> list:
         job_dir = queue.output_dir / job_id
         if not job_dir.is_dir():
             continue
+        if read_publisher_mode(str(job_dir)) == "zernio":
+            continue
         try:
-            metadata_path = find_job_metadata_path(job_id, str(queue.output_dir))
-            metadata = json.loads(Path(metadata_path).read_text(encoding="utf-8"))
-            shorts = metadata.get("shorts")
-            if not isinstance(shorts, list):
-                continue
-
-            source_info = metadata.get("source_info") or {}
-            channel_url = source_info.get("channel_url") or source_info.get("webpage_url") or ""
-            suggested = suggest_banner(channel_url, channel_hint=source_info.get("uploader_id")) or {}
-            platform = suggested.get("platform") or "unknown"
-            channel = suggested.get("handle") or source_info.get("uploader_id") or "unknown"
-            project_title = Path(metadata_path).name.replace("_metadata.json", "").replace("_", " ")
-
-            for index, clip in enumerate(shorts):
-                if not isinstance(clip, dict) or (job_id, index) in queued:
-                    continue
-                if clip.get("published"):
-                    continue
-                filename = clip_filename_for(metadata_path, clip, index)
-                clip_path = job_dir / filename
-                if not clip_path.is_file():
-                    continue
-                title = clip.get("video_title_for_youtube_short") or clip.get("title") or "Clip"
-                try:
-                    entry = queue.enqueue(
-                        job_id=job_id,
-                        clip_index=index,
-                        source_path=clip_path,
-                        title=title,
-                        caption=clip.get("caption") or "",
-                        source_platform=platform,
-                        source_channel=channel,
-                        source_kind="import",
-                        project_title=project_title,
-                        monitor_id=None,
-                    )
-                except Exception:
-                    logger.exception(
-                        "manual-publish import: enqueue failed for %s/%s", job_id, index)
-                    continue
-                queued.add((job_id, index))
-                imported.append(entry)
+            imported.extend(enqueue_job_clips(queue, job_id, queued=queued))
         except Exception:
             logger.exception("manual-publish import: skipping job %s (bad metadata)", job_id)
             continue

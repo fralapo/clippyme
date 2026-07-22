@@ -119,7 +119,8 @@ manual_publish_queue = ManualPublishQueue(
 
 # The per-job subprocess runner, bound to the shared jobs dict (thin-handler
 # rule: the body lives in clippyme.domain.job_runner).
-run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs)
+run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs,
+                        manual_publish_queue=manual_publish_queue)
 
 # Multi-platform content monitor registry: concurrent asyncio tasks (one per
 # platform:channel) that detect live streams / new VODs, submit them as normal
@@ -334,6 +335,7 @@ async def process_endpoint(
     no_zoom = False
     skip_analysis = False
     model = None
+    publisher_mode = "manual_queue"
     content_type = request.headers.get("content-type", "")
     if "application/json" in content_type:
         try:
@@ -351,6 +353,7 @@ async def process_endpoint(
         no_zoom = bool(validated.no_zoom)
         skip_analysis = bool(validated.skip_analysis)
         model = validated.model
+        publisher_mode = validated.publisher_mode
 
     # For multipart/form-data uploads, extract reframe_mode + language from form fields
     if "multipart/form-data" in content_type:
@@ -365,11 +368,12 @@ async def process_endpoint(
         no_zoom = str(form.get("no_zoom", "")).lower() in {"1", "true", "yes"} or no_zoom
         skip_analysis = str(form.get("skip_analysis", "")).lower() in {"1", "true", "yes"} or skip_analysis
         model = form.get("model", model) or None
+        publisher_mode = form.get("publisher_mode", publisher_mode) or "manual_queue"
         # Validate the multipart values through the same schema for
         # consistency — we drop the url requirement since we're using
         # an uploaded file path.
         try:
-            ProcessRequest.model_validate({
+            validated = ProcessRequest.model_validate({
                 "url": "https://upload.invalid/local",
                 "reframe_mode": reframe_mode or None,
                 "aspect": aspect or None,
@@ -378,9 +382,11 @@ async def process_endpoint(
                 "no_zoom": no_zoom,
                 "skip_analysis": skip_analysis,
                 "model": model or None,
+                "publisher_mode": publisher_mode,
             })
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors())
+        publisher_mode = validated.publisher_mode
 
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
@@ -438,7 +444,7 @@ async def process_endpoint(
     await submit_job(
         jobs=jobs, job_queue=job_queue, job_id=job_id,
         cmd=cmd, env=env, job_output_dir=job_output_dir,
-        on_change=persist_jobs,
+        on_change=persist_jobs, publisher_mode=publisher_mode,
     )
 
     return {"job_id": job_id, "status": "queued"}
@@ -491,7 +497,7 @@ async def batch_process(req: BatchRequest, request: Request):
             await submit_job(
                 jobs=jobs, job_queue=job_queue, job_id=job_id,
                 cmd=cmd, env=env, job_output_dir=job_output_dir, batch=True,
-                on_change=persist_jobs,
+                on_change=persist_jobs, publisher_mode=req.publisher_mode,
             )
             batch_jobs.append({"url": url, "job_id": job_id})
         except QueueFullError:
