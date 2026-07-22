@@ -1199,7 +1199,6 @@ class LiveMonitorRegistry:
                 output_dir=self._output_dir, upload_dir=self._upload_dir,
                 on_job_change=self._on_job_change, picked_slots=self._picked_slots,
                 publish_lock=self._publish_lock,
-                manual_publish_queue=self._manual_publish_queue,
                 on_state_change=self.persist)
             mon.restore(snap)
             try:

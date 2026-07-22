@@ -302,14 +302,14 @@ def test_loop_monitor_snapshot_marks_resume_on_start(tmp_path, monkeypatch):
     from clippyme.storage import config_store
 
     monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "g"})
-    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC"})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC", "api_key": "z"})
     monkeypatch.setattr(lm.LiveMonitor, "_make_strategy", lambda self, cfg, pc: object())
 
     reg = LiveMonitorRegistry(
         jobs={}, job_queue=None, output_dir=str(tmp_path),
         state_path=str(tmp_path / "state.json"))
 
-    reg.start(_base_cfg(platform="kick", mode="live", slug="foo", loop=True, platforms=[]))
+    reg.start(_base_cfg(platform="kick", mode="live", slug="foo", loop=True, platforms=[{"platform": "tiktok", "accountId": "a1"}]))
 
     assert reg._monitors["kick:foo"].snapshot()["resume_on_start"] is True
     assert reg._monitors["kick:foo"].status()["resume_on_start"] is True
@@ -394,23 +394,21 @@ def test_registry_auto_resume_starts_marked_snapshots_and_preserves_guards(tmp_p
         "monitors": {
             "kick:foo": {
                 "platform": "kick", "mode": "live", "channel": "foo",
-                "publisher_mode": "manual_queue",
                 "config": {
                     "platform": "kick", "mode": "live", "channel": "foo", "slug": "foo",
-                    "publisher_mode": "manual_queue", "platforms": [], "loop": True,
+                    "platforms": [{"platform": "tiktok", "accountId": "a1"}], "loop": True,
                     "segment_seconds": 120, "prelive_skip_seconds": 30,
                     "min_gap_seconds": 60, "poll_interval": 45, "timezone": "UTC",
                 },
                 "resume_on_start": True,
                 "seen_ids": ["vod1"], "published": ["/clips/a.mp4"],
-                "manual_queued": {"/clips/b.mp4": "entry-1"},
                 "segments_captured": 4, "clips_published": 5,
                 "covered_elapsed": 600, "covered_stream_start": "stream-start",
             }
         }
     }), encoding="utf-8")
     monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "fresh"})
-    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC"})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC", "api_key": "z"})
     monkeypatch.setattr(lm.LiveMonitor, "_make_strategy", lambda self, cfg, pc: object())
 
     reg = LiveMonitorRegistry(
@@ -430,7 +428,6 @@ def test_registry_auto_resume_starts_marked_snapshots_and_preserves_guards(tmp_p
         assert mon._gemini_key == "fresh"
         assert mon._seen_ids == {"vod1"}
         assert mon._published == {"/clips/a.mp4"}
-        assert mon._manual_queued == {"/clips/b.mp4": "entry-1"}
         assert mon.segments_captured == 4
         assert mon.clips_published == 5
         assert mon._covered_elapsed == 600
@@ -455,7 +452,7 @@ def test_registry_auto_resume_failure_is_visible_in_status(tmp_path, monkeypatch
                 "platform": "kick", "mode": "live", "channel": "foo",
                 "config": {
                     "platform": "kick", "mode": "live", "channel": "foo", "slug": "foo",
-                    "publisher_mode": "manual_queue", "platforms": [], "loop": True,
+                    "platforms": [{"platform": "tiktok", "accountId": "a1"}], "loop": True,
                 },
                 "resume_on_start": True,
             }
