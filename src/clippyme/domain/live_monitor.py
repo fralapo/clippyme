@@ -100,7 +100,8 @@ def render_template(template: str, clip: dict) -> str:
         return ""
     try:
         return template.format(
-            title=clip.get("title", "") or "",
+            title=(clip.get("video_title_for_youtube_short")
+                   or clip.get("title") or ""),
             hook=clip.get("viral_hook_text", "") or "",
         )
     except (KeyError, IndexError, ValueError):

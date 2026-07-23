@@ -142,6 +142,13 @@ def test_render_template_fills_placeholders():
     assert render_template("{title} — {hook}", clip) == "My Clip — Wait for it"
 
 
+def test_render_template_title_falls_back_to_youtube_short():
+    # Gemini stores the viral title under video_title_for_youtube_short;
+    # {title} must resolve it, not render an empty title (only the hashtag).
+    clip = {"video_title_for_youtube_short": "Litigio shock"}
+    assert render_template("{title} #tag", clip) == "Litigio shock #tag"
+
+
 def test_render_template_empty_and_bad():
     assert render_template("", {}) == ""
     # Unknown placeholder → falls back to raw template, never raises.
