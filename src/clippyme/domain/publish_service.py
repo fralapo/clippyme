@@ -33,10 +33,11 @@ async def publish_clip_flow(*, job_id: str, clip_index: int,
     if not api_key:
         raise ValidationError("Zernio API key not configured")
 
+    from clippyme.domain.clip_resolve import composed_clip_basename
     job_dir = resolved.job_dir
     base_clip = resolved.clip_path
     upload_path = base_clip
-    composed_path = os.path.join(job_dir, f"composed_clip_{clip_index}.mp4")
+    composed_path = os.path.join(job_dir, composed_clip_basename(resolved.clip_info, clip_index))
 
     toggles = req.get("toggles")
     logger.info(

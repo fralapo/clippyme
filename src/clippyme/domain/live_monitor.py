@@ -1335,7 +1335,8 @@ class LiveMonitor:
                 os.path.join(job_dir, f"{stem}_cover.jpg"),
             ]
             if idx is not None:
-                targets.append(os.path.join(job_dir, f"composed_clip_{idx}.mp4"))
+                from clippyme.domain.clip_resolve import composed_clip_basename
+                targets.append(os.path.join(job_dir, composed_clip_basename(clip, idx)))
             for path in targets:
                 _safe_remove(path)
             self._mark_clip_deleted(job_id, idx)

@@ -434,7 +434,8 @@ async def _compose_layers_impl(
 
     current_input = base_clip
     intermediate_files: list = []
-    composed_filename = f"composed_clip_{clip_index}.mp4"
+    from clippyme.domain.clip_resolve import composed_clip_basename
+    composed_filename = composed_clip_basename(clip_info, clip_index)
     composed_path = os.path.join(job_dir, composed_filename)
     # Always wipe a stale composed file from a previous compose pass so
     # we never accidentally upload yesterday's version when the user has

@@ -10,8 +10,21 @@ import time
 
 import pytest
 
-from clippyme.domain.clip_resolve import clip_filename_for, resolve_clip
+from clippyme.domain.clip_resolve import (
+    clip_filename_for, composed_clip_basename, resolve_clip,
+)
 from clippyme.domain.errors import NotFoundError
+
+
+def test_composed_clip_basename_title_based():
+    assert composed_clip_basename(
+        {"video_title_for_youtube_short": "Litigio shock! in villa"}, 0
+    ) == "Litigio shock! in villa.mp4"
+    # falls back to positional when no usable title
+    assert composed_clip_basename({"start": 0}, 2) == "composed_clip_2.mp4"
+    assert composed_clip_basename({"video_title_for_youtube_short": "***"}, 1) == "composed_clip_1.mp4"
+    # honours legacy "title" key
+    assert composed_clip_basename({"title": "Ciao mondo"}, 0) == "Ciao mondo.mp4"
 
 JOB_ID = "33333333-3333-4333-8333-333333333333"
 

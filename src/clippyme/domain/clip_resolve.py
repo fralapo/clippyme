@@ -48,6 +48,24 @@ def clip_filename_for(metadata_path: str, clip_info: dict, clip_index: int) -> s
     return filename
 
 
+def composed_clip_basename(clip_info: dict, clip_index: int) -> str:
+    """Filename for a clip's final composed (hook/subtitles/banner/…) output.
+
+    Title-based and Windows-safe (no ``_clip_N`` suffix) so a downloaded /
+    served composed clip is named meaningfully — ``<title>.mp4`` — instead of
+    ``composed_clip_1.mp4``. Falls back to the legacy positional name when the
+    title is missing/reserved/all-forbidden. Stable across re-composes of the
+    same clip (same title → same file, overwritten in place). This is the
+    SINGLE owner of the composed-file naming — the compose writer, the publish
+    lookup and the delete-after-publish target all resolve through it.
+    """
+    from clippyme.pipeline.run_ops import sanitize_windows_basename
+
+    title = (clip_info or {}).get("video_title_for_youtube_short") or (clip_info or {}).get("title")
+    base = sanitize_windows_basename(title)
+    return f"{base}.mp4" if base else f"composed_clip_{clip_index}.mp4"
+
+
 def resolve_clip(job_id: str, clip_index: int, output_root: str,
                  *, require_file: bool = True) -> ResolvedClip:
     """Resolve a job's clip to its metadata + on-disk path.
