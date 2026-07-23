@@ -12,6 +12,7 @@ from clippyme.domain.errors import ConflictError, ValidationError
 from clippyme.domain.live_monitor import (
     LiveMonitorRegistry,
     SharedGapScheduler,
+    allocate_clip_filename,
     backfill_windows,
     build_backfill_cmd,
     build_monitor_compose,
@@ -23,6 +24,33 @@ from clippyme.domain.live_monitor import (
     _hhmmss,
 )
 from clippyme.integrations.twitch_client import find_live_vod
+
+
+# --- allocate_clip_filename (title-named, continuous collision counter) ----
+
+def test_auto_title_unique_names_no_counter_bump():
+    e = set()
+    f1, c1 = allocate_clip_filename("{title}", {"title": "Litigio shock"}, e, 0)
+    e.add(f1)
+    f2, c2 = allocate_clip_filename("{title}", {"title": "Tradimento choc"}, e, c1)
+    assert f1 == "Litigio shock.mp4"
+    assert f2 == "Tradimento choc.mp4"
+    assert c2 == 0                      # distinct titles → no numbering
+
+
+def test_constant_custom_title_gets_continuous_counter():
+    e, c = set(), 0
+    names = []
+    for _ in range(3):
+        f, c = allocate_clip_filename("Clip", {"title": "x"}, e, c)
+        e.add(f); names.append(f)
+    assert names == ["Clip.mp4", "Clip_1.mp4", "Clip_2.mp4"]
+    assert c == 2                        # continuous, never reset
+
+
+def test_empty_template_falls_back_to_auto_title():
+    f, _ = allocate_clip_filename("", {"video_title_for_youtube_short": "Ciao: mondo?"}, set(), 0)
+    assert f == "Ciao mondo.mp4"
 
 
 # --- build_monitor_compose (monitor auto-publish recipe) -------------------
@@ -861,10 +889,10 @@ def test_publish_one_retries_on_429_then_succeeds(tmp_path, monkeypatch):
                "platforms": [{"platform": "tiktok", "accountId": "a"}],
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
-    # original_index missing → _compose_for_publish returns the raw path.
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
 
-    asyncio.run(mon._publish_one("job1", clip))
+    asyncio.run(mon._publish_one(entry))
 
     assert len(calls) == 3
     assert mon.clips_published == 1
@@ -901,8 +929,9 @@ def test_publish_one_rolls_start_date_on_daily_limit(tmp_path, monkeypatch):
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
 
-    asyncio.run(mon._publish_one("job1", clip))
+    asyncio.run(mon._publish_one(entry))
 
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
     day_after = (date.today() + timedelta(days=2)).isoformat()
@@ -936,8 +965,9 @@ def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
 
-    asyncio.run(mon._publish_one("job1", clip))
+    asyncio.run(mon._publish_one(entry))
 
     assert len(calls) == 1
     assert mon.clips_published == 0
@@ -962,7 +992,7 @@ def _publishing_monitor(tmp_path, monkeypatch, *, jobs=None):
 
     # Skip the real ffmpeg compose pass — publish/delete behaviour is what these
     # tests exercise; publish the raw clip path directly.
-    async def _no_compose(job_id, clip, base_path):
+    async def _no_compose(job_id, clip, base_path=None):
         return base_path
     mon._compose_for_publish = _no_compose
     return mon, calls
@@ -982,8 +1012,9 @@ def test_paused_publish_queues_instead_of_publishing(tmp_path, monkeypatch):
     mon, calls = _publishing_monitor(tmp_path, monkeypatch)
     mon.publishing_enabled = False
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
 
-    asyncio.run(mon._publish_one("job1", clip))
+    asyncio.run(mon._publish_one(entry))
 
     assert calls == []                       # nothing published while paused
     assert len(mon._pending_publish) == 1
@@ -991,12 +1022,12 @@ def test_paused_publish_queues_instead_of_publishing(tmp_path, monkeypatch):
 
     snap = mon.snapshot()
     assert snap["publishing_enabled"] is False
-    assert snap["pending_publish"] == [{"job_id": "job1", "clip": clip}]
+    assert snap["pending_publish"] == [entry]
 
     fresh = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
     fresh.restore(snap)
     assert fresh.publishing_enabled is False
-    assert fresh._pending_publish == [{"job_id": "job1", "clip": clip}]
+    assert fresh._pending_publish == [entry]
 
 
 def test_resume_drains_pending_in_order_with_spacing(tmp_path, monkeypatch):
@@ -1021,8 +1052,10 @@ def test_resume_drains_pending_in_order_with_spacing(tmp_path, monkeypatch):
     mon, calls = _publishing_monitor(tmp_path, monkeypatch)
     mon.publishing_enabled = False
     for name in ("a.mp4", "b.mp4"):
-        asyncio.run(mon._publish_one(
-            "job1", {"video_url": f"/videos/job1/{name}", "title": name}))
+        asyncio.run(mon._publish_one({
+            "job_id": "job1",
+            "clip": {"video_url": f"/videos/job1/{name}", "title": name},
+            "composed_path": str(job_dir / name)}))
     assert calls == [] and len(mon._pending_publish) == 2
 
     mon.publishing_enabled = True
@@ -1052,8 +1085,9 @@ def test_successful_publish_deletes_clip_files_and_empty_dir(tmp_path, monkeypat
     jobs = {"job1": {"status": "completed"}}
     mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
 
-    asyncio.run(mon._publish_one("job1", clip))
+    asyncio.run(mon._publish_one(entry))
 
     assert len(calls) == 1
     assert mon.clips_published == 1
@@ -1078,8 +1112,9 @@ def test_successful_publish_keeps_dir_and_marks_metadata_when_clips_remain(tmp_p
     jobs = {"job1": {"status": "completed"}}
     mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
 
-    asyncio.run(mon._publish_one("job1", clip))
+    asyncio.run(mon._publish_one(entry))
 
     assert job_dir.exists()
     assert not (job_dir / "c.mp4").exists()
@@ -1108,8 +1143,9 @@ def test_deletion_failure_does_not_raise_and_clip_stays_published(tmp_path, monk
 
     mon, calls = _publishing_monitor(tmp_path, monkeypatch)
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
 
-    asyncio.run(mon._publish_one("job1", clip))   # must not raise
+    asyncio.run(mon._publish_one(entry))   # must not raise
 
     assert len(calls) == 1
     assert mon.clips_published == 1
@@ -1148,7 +1184,8 @@ def test_restored_monitor_with_pending_and_enabled_drains_on_start(tmp_path, mon
     # exactly what LiveMonitor.restore() would produce from disk.
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
     mon.publishing_enabled = True
-    mon._pending_publish = [{"job_id": "job1", "clip": clip}]
+    mon._pending_publish = [
+        {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}]
 
     # Stub out the real live/vod loop entirely — this test only cares that
     # start() schedules the existing _drain_pending() helper, not that the

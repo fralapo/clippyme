@@ -42,6 +42,7 @@ from datetime import date, datetime, timedelta, timezone
 from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
 from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
 from clippyme.integrations.social_publisher import SmartScheduler
+from clippyme.pipeline.run_ops import sanitize_windows_basename
 
 logger = logging.getLogger("clippyme")
 
@@ -104,6 +105,23 @@ def render_template(template: str, clip: dict) -> str:
         )
     except (KeyError, IndexError, ValueError):
         return template
+
+
+def allocate_clip_filename(title_template, clip, existing, counter):
+    """``(filename.mp4, new_counter)``. Title from template → sanitized
+    Windows-safe; empty → per-clip auto viral title; collision → append a
+    monotonic counter that is never reset across segments so no two files
+    ever collide."""
+    rendered = render_template(title_template or "", clip).strip()
+    base = sanitize_windows_basename(rendered)
+    if not base:
+        auto = clip.get("video_title_for_youtube_short") or clip.get("title") or ""
+        base = sanitize_windows_basename(auto) or "clip"
+    candidate = f"{base}.mp4"
+    while candidate in existing:
+        counter += 1
+        candidate = f"{base}_{counter}.mp4"
+    return candidate, counter
 
 
 def build_monitor_compose(platform: str, channel: str, clip: dict, override=None) -> dict:
@@ -471,6 +489,12 @@ class LiveMonitor:
         self.publishing_enabled: bool = True
         self._pending_publish: list[dict] = []
         self._draining: bool = False
+        # Every good clip is composed at segment-completion and written here,
+        # title-named with a continuous (never-reset) collision counter so no
+        # two files ever collide. Folder path is derived from id (not persisted);
+        # the counter IS persisted so numbering stays monotonic across restarts.
+        self._clip_dir = os.path.join(self._output_dir, "monitor_" + self.id.replace(":", "_"))
+        self._name_counter: int = 0
         # Set when a segment's job hit Gemini exhaustion (monitor mode disables
         # fallbacks, so an exhausted quota yields an empty `shorts` list rather
         # than a degraded clip). Cleared the next time a segment publishes clips.
@@ -549,6 +573,7 @@ class LiveMonitor:
             # Paths + public clip metadata only (no secrets) — restored on resume.
             "publishing_enabled": self.publishing_enabled,
             "pending_publish": self._pending_publish,
+            "name_counter": int(self._name_counter),
             "gemini_exhausted_at": self._gemini_exhausted_at,
             "segments_captured": self.segments_captured,
             "clips_published": self.clips_published,
@@ -567,6 +592,7 @@ class LiveMonitor:
         self._published = set(snap.get("published") or [])
         self.publishing_enabled = bool(snap.get("publishing_enabled", True))
         self._pending_publish = list(snap.get("pending_publish") or [])
+        self._name_counter = int(snap.get("name_counter") or 0)
         self._gemini_exhausted_at = snap.get("gemini_exhausted_at") or None
         self.segments_captured = int(snap.get("segments_captured") or 0)
         self.clips_published = int(snap.get("clips_published") or 0)
@@ -1066,10 +1092,13 @@ class LiveMonitor:
             clips = result.get("clips") or []
             if clips:
                 self._gemini_exhausted_at = None  # a good segment clears the notice
-            for i, clip in enumerate(clips):
+            # Compose every good clip into the per-monitor folder first, then
+            # publish the consolidated files (upload matches what's on disk).
+            consolidated = await self._consolidate_clips(job_id, clips)
+            for i, entry in enumerate(consolidated):
                 if i:
                     await asyncio.sleep(PUBLISH_SPACING_SECONDS)
-                await self._publish_one(job_id, clip)
+                await self._publish_one(entry)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -1077,16 +1106,44 @@ class LiveMonitor:
         finally:
             _safe_remove(seg_path)
 
-    async def _compose_for_publish(self, job_id: str, clip: dict, base_path: str) -> str:
+    async def _consolidate_clips(self, job_id: str, clips: list[dict]) -> list[dict]:
+        """Compose every good clip of a finished job into ``self._clip_dir``,
+        title-named with the continuous collision counter, and return
+        ``[{"job_id", "clip", "composed_path"}]`` for the ones that composed."""
+        os.makedirs(self._clip_dir, exist_ok=True)
+        existing = set(os.listdir(self._clip_dir))
+        out = []
+        for clip in clips:
+            idx = clip.get("original_index", clip.get("index"))
+            fname, self._name_counter = allocate_clip_filename(
+                self.cfg.get("title_template", ""), clip, existing, self._name_counter)
+            existing.add(fname)
+            dest = os.path.join(self._clip_dir, fname)
+            try:
+                composed = await self._compose_for_publish(job_id, clip, None)
+                await asyncio.to_thread(shutil.copyfile, composed, dest)
+                out.append({"job_id": job_id, "clip": clip, "composed_path": dest})
+            except Exception:
+                logger.exception("LiveMonitor %s: consolidate/compose failed for %s/%s",
+                                 self.id, job_id, idx)
+        self._persist()
+        return out
+
+    async def _compose_for_publish(self, job_id: str, clip: dict, base_path: str | None = None) -> str:
         """Burn the monitor recipe (hook top → banner attached → subtitles
-        bottom-left) onto the clip and return the composed path. Falls back to
-        ``base_path`` (raw clip) on any resolution/compose failure so a publish
-        is never lost to a compose hiccup."""
+        bottom-left) onto the raw clip and return the composed path.
+
+        ``base_path is None`` → resolve the raw clip and compose it, RAISING on
+        failure (the consolidation caller handles per-clip). Otherwise falls
+        back to ``base_path`` (raw clip) on any resolution/compose failure so a
+        (recompose-on-drain) publish is never lost to a compose hiccup."""
         from clippyme.domain.clip_resolve import resolve_clip
         from clippyme.domain.compose import compose_layers
 
         idx = clip.get("original_index")
         if idx is None:
+            if base_path is None:
+                raise ValueError("clip has no original_index")
             return base_path
         try:
             resolved = await asyncio.to_thread(
@@ -1100,25 +1157,33 @@ class LiveMonitor:
         except Exception:
             logger.exception("LiveMonitor %s: compose-before-publish failed for %s/%s",
                              self.id, job_id, idx)
+            if base_path is None:
+                raise
             return base_path
 
-    async def _publish_one(self, job_id: str, clip: dict) -> None:
+    async def _publish_one(self, entry: dict) -> None:
+        """Publish one consolidated entry ``{"job_id", "clip", "composed_path"}``
+        — uploads the composed file directly (no re-compose), dedupes on the RAW
+        clip path, and queues when paused."""
         from clippyme.integrations.social_publisher import ZernioError, publish_clip
 
+        job_id = entry["job_id"]
+        clip = entry["clip"]
         video_url = clip.get("video_url") or ""
         clip_path = os.path.join(self._output_dir, job_id, os.path.basename(video_url))
-        if not os.path.isfile(clip_path):
-            logger.warning("LiveMonitor %s: clip file missing, skipping: %s", self.id, clip_path)
-            return
-        # Dedupe on the BASE clip path (stable), then compose the publish recipe.
+        # Dedupe on the BASE clip path (stable across compose/consolidate).
         if clip_path in self._published:
             return
-        # Paused: queue the clip (public metadata only) and drain it on resume.
+        # Paused: queue the entry (public metadata + composed path only) and
+        # drain it on resume.
         if not self.publishing_enabled:
-            self._pending_publish.append({"job_id": job_id, "clip": clip})
+            self._pending_publish.append(entry)
             self._persist()
             return
-        upload_path = await self._compose_for_publish(job_id, clip, clip_path)
+        upload_path = entry.get("composed_path")
+        if not upload_path or not os.path.isfile(upload_path):
+            # Restored pending entry whose composed file vanished → recompose.
+            upload_path = await self._compose_for_publish(job_id, clip)
 
         title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
         caption = render_template(self.cfg["caption_template"], clip)
@@ -1172,8 +1237,11 @@ class LiveMonitor:
         self._published.add(clip_path)
         self.clips_published += 1
         self._persist()
-        # Clip is published → it's done; free the disk (best-effort, never raises).
-        self._delete_clip_artifacts(job_id, clip, clip_path, upload_path)
+        # Clip is published → free the job-dir artifacts (best-effort, never
+        # raises). The consolidated composed file (upload_path, in the per-monitor
+        # folder) is the durable deliverable and is deliberately KEPT — pass
+        # clip_path so it's never a deletion target.
+        self._delete_clip_artifacts(job_id, clip, clip_path, clip_path)
 
     # -- pause / resume auto-publish -------------------------------------
 
@@ -1207,7 +1275,7 @@ class LiveMonitor:
                 first = False
                 entry = self._pending_publish.pop(0)
                 self._persist()
-                await self._publish_one(entry["job_id"], entry["clip"])
+                await self._publish_one(entry)
         finally:
             self._draining = False
 
