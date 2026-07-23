@@ -523,6 +523,11 @@ class LiveMonitor:
             "resume_on_start": self.resume_on_start,
             "publishing_enabled": self.publishing_enabled,
             "pending_publish": len(self._pending_publish),
+            # Same allow-list snapshot() persists — no secrets by construction
+            # (validate_monitor_config never puts any in cfg). Lets the
+            # frontend Settings drawer seed from the monitor's current config
+            # instead of opening blank.
+            "config": {k: self.cfg.get(k) for k in _SNAPSHOT_CONFIG_FIELDS},
         }
 
     def snapshot(self) -> dict:

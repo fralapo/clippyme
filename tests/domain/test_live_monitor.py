@@ -330,6 +330,22 @@ def test_monitor_update_config_swaps_cfg_and_persists(tmp_path):
     assert set(result) == set(_SNAPSHOT_CONFIG_FIELDS)
 
 
+def test_monitor_status_includes_config_allow_list(tmp_path):
+    from clippyme.domain.live_monitor import _SNAPSHOT_CONFIG_FIELDS, LiveMonitor
+
+    mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(slug="foo")
+
+    status = mon.status()
+
+    assert "config" in status
+    # Same allow-list snapshot() uses — no secrets by construction, and no
+    # extra keys leaking through beyond what's explicitly allow-listed.
+    assert set(status["config"]) == set(_SNAPSHOT_CONFIG_FIELDS)
+    for key in _SNAPSHOT_CONFIG_FIELDS:
+        assert status["config"][key] == mon.cfg.get(key)
+
+
 def test_registry_update_config_not_found(tmp_path):
     reg = LiveMonitorRegistry(
         jobs={}, job_queue=None, output_dir=str(tmp_path),
