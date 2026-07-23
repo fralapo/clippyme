@@ -81,3 +81,19 @@ def test_set_publishing_malformed_json_400():
     )
 
     assert r.status_code == 400, r.text
+
+
+
+def test_stop_malformed_json_400():
+    fake = _FakeMonitor()
+    app_module.live_monitor._monitors["kick:foo"] = fake
+    client = TestClient(app_module.app, headers=ORIGIN)
+
+    r = client.post(
+        "/api/live-monitor/stop",
+        content=b"{not json",
+        headers={**ORIGIN, "Content-Type": "application/json"},
+    )
+
+    assert r.status_code == 400, r.text
+    assert app_module.live_monitor._monitors["kick:foo"] is fake

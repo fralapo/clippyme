@@ -1,9 +1,8 @@
 name: CI
 
-# Runs the host-runnable (non-integration) test suite, a dependency
-# vulnerability scan, and the frontend build on every push and PR.
-# Heavy CV/ML integration tests (cv2/mediapipe/scenedetect) run in Docker
-# and are intentionally excluded here (`-m "not integration"`).
+# Host tests, dependency audits and frontend verification run on every push/PR.
+# The Docker integration suite also runs on PRs so CV/ML regressions are caught
+# before merge rather than only after they reach main.
 
 on:
   push:
@@ -11,6 +10,9 @@ on:
   pull_request:
     branches: ["**"]
   workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -20,6 +22,7 @@ jobs:
   backend:
     name: Backend (pytest + pip-audit)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -31,51 +34,30 @@ jobs:
       - name: Install package (editable) + host-test deps + audit tooling
         run: |
           python -m pip install --upgrade pip
-          # `.[host-tests]` pulls the light runtime subset the non-integration
-          # suite imports (numpy/pydantic/fastapi/yt-dlp/…). `pip install -e .`
-          # alone installs no runtime deps; the heavy CV/ML stack stays in Docker.
           pip install -e ".[host-tests]"
           pip install pytest pytest-cov pip-audit ruff
 
-      # Lint for real bugs only — undefined names (F82, the class behind the
-      # silently-swallowed MAR NameError regression), syntax errors (E9),
-      # logic mistakes (F7) and assert/comparison bugs (F63). Style/unused-import
-      # noise (F401/F841) is intentionally NOT gated to keep this green + signal.
       - name: Lint (ruff — bug-class rules)
         run: ruff check src/clippyme tests --select E9,F63,F7,F82
 
-      # Coverage is report-only (visible in the job log) — no external
-      # service, no threshold gate. The percentages under-count modules that
-      # only run in the Docker integration tier (reframe/detect and friends).
       - name: Run host test suite (excludes integration)
-        run: pytest -m "not integration" -q --cov=clippyme --cov-report=term
+        id: host-tests
+        continue-on-error: true
+        run: >-
+          pytest -m "not integration" -q
+          --cov=clippyme --cov-report=term
+          --junitxml=pytest-report.xml
 
-      # Audit the pinned tree for known CVEs. Now BLOCKING (we're on a lock
-      # file): a newly-disclosed CVE in any pinned dep fails CI so it gets
-      # reviewed before merge. Ignored IDs, each with rationale:
-      #   - CVE-2025-3000 (torch): fixed in 2.7.0; we pin 2.11.0 > fix, so the
-      #     pip-audit hit is a stale/over-broad OSV range (false positive).
-      #   - CVE-2026-24049 (wheel): build-time-only ReDoS in metadata parsing,
-      #     not reachable at runtime.
-      #   - PYSEC-2026-1805 (protobuf 4.25.9): DoS via deeply-nested Any in
-      #     json_format.ParseDict(). Unreachable: ClippyMe never parses
-      #     attacker-controlled protobuf JSON — protobuf is a mediapipe
-      #     transitive used only for its bundled model/graph configs. The fix
-      #     versions (5.29.6/6.33.5) violate mediapipe 0.10.14's protobuf<5
-      #     constraint; drop this ignore when the documented mediapipe/torch
-      #     upgrade procedure (requirements.txt header) is executed.
-      #   - PYSEC-2026-2132 (click 8.2.1): command injection in
-      #     click.edit() (opens $EDITOR with attacker-influenced content).
-      #     ClippyMe never calls click.edit() — click is a transitive of
-      #     scenedetect/typer used only for their CLI arg parsing. Fix
-      #     (8.3.3) violates scenedetect==0.6.7.1's click<8.3.0 constraint;
-      #     drop this ignore when scenedetect is upgraded to 0.7.
-      #   - PYSEC-2026-3447 (setuptools 81.0.0): NFD/NFC filename bypass of
-      #     MANIFEST.in excludes when BUILDING an sdist on macOS APFS/HFS+.
-      #     Unreachable: we never build sdists, and the Docker build runs on
-      #     Linux. Fix (83.0.0) violates torch==2.11.0's setuptools<82
-      #     constraint; drop this ignore on the next torch upgrade.
-      - name: Dependency vulnerability scan (full pinned tree)
+      - name: Upload backend test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-report
+          path: pytest-report.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Dependency vulnerability scan (core pinned tree)
         run: >-
           pip-audit -r requirements.lock --desc
           --ignore-vuln CVE-2025-3000
@@ -84,9 +66,52 @@ jobs:
           --ignore-vuln PYSEC-2026-2132
           --ignore-vuln PYSEC-2026-3447
 
+      - name: Dependency vulnerability scan (runtime tools)
+        run: pip-audit -r requirements-runtime-tools.txt --desc
+
+      - name: Enforce backend test result
+        if: steps.host-tests.outcome != 'success'
+        run: exit 1
+
+  frontend-audit:
+    name: Frontend production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate production audit report
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --package-lock-only --omit=dev --audit-level=high --json > npm-audit.json
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload production audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-production-audit
+          path: dashboard/npm-audit.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce production audit
+        if: steps.audit.outputs.exit_code != '0'
+        run: |
+          node -e "const r=require('./npm-audit.json'); for (const [n,v] of Object.entries(r.vulnerabilities||{})) console.error(n, v.severity, v.via);"
+          exit 1
+
   frontend:
     name: Frontend (test + build + lint)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: dashboard
@@ -100,52 +125,38 @@ jobs:
           cache-dependency-path: dashboard/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Lint
         run: npm run lint
 
-      # Vitest (jsdom): the pure-function suites + the component tests for the
-      # edit/compose flows. Coverage (v8) is report-only, in the job log.
       - name: Test
         run: npm test -- --coverage
 
       - name: Build
         run: npm run build
 
-  # Heavy CV/ML integration suite (cv2 + mediapipe + scenedetect + the reframe
-  # render path). Too slow/large for every PR, so it's gated to main pushes and
-  # manual runs. Mirrors the documented local command in CLAUDE.md.
   integration:
     name: Integration (Docker — reframe/pipeline)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 90
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      # Pre-build the backend image with GitHub Actions layer caching and tag
-      # it exactly as docker-compose.yml names it (image: clippyme-backend),
-      # so the compose run below reuses it instead of rebuilding the heavy
-      # CV/ML image from scratch on every run. Cache scope is repo-wide; a
-      # Dockerfile/requirements change invalidates only the layers below it.
       - name: Build backend image (GHA layer cache)
         uses: docker/build-push-action@v6
         with:
           context: .
           load: true
           tags: clippyme-backend:latest
-          # Mirror docker-compose.yml's defaults so the prebuilt image is
-          # byte-equivalent to what `docker compose run` would have built.
           build-args: |
             GPU_RUNTIME=cpu
             ENABLE_WHISPER_DIARIZE=0
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # No --no-build (the runner's compose predates the flag): compose only
-      # builds when the service image is missing, and the step above just
-      # loaded clippyme-backend:latest, so this reuses it as-is.
       - name: Run integration suite in the backend image
         run: docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"

@@ -352,7 +352,7 @@ export async function getLiveMonitorStatus() {
 }
 
 export async function updateMonitorConfig(monitorId, partial) {
-  const res = await apiFetch(getApiUrl(`/api/live-monitor/${monitorId}/config`), {
+  const res = await apiFetch(getApiUrl(`/api/live-monitor/${encodeURIComponent(monitorId)}/config`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(partial),
@@ -365,7 +365,7 @@ export async function updateMonitorConfig(monitorId, partial) {
 }
 
 export async function setMonitorPublishing(monitorId, enabled) {
-  const res = await apiFetch(getApiUrl(`/api/live-monitor/${monitorId}/publishing`), {
+  const res = await apiFetch(getApiUrl(`/api/live-monitor/${encodeURIComponent(monitorId)}/publishing`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ enabled }),

@@ -13,6 +13,11 @@ __pycache__/
 *.pyc
 *.egg-info/
 
+# Node / frontend build artifacts
+node_modules/
+**/node_modules/
+dashboard/dist/
+
 # graphify knowledge-graph output
 graphify-out/
 

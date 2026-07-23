@@ -77,7 +77,7 @@ While a job runs you stay in control:
 | Backend | Python 3.11, FastAPI, Pydantic v2, asyncio queue |
 | Pipeline | yt-dlp · Deepgram REST · ElevenLabs Scribe REST · Faster-Whisper · PySceneDetect · YOLOv8 (Ultralytics) · MediaPipe · ffmpeg · auto-editor (Nim binary) · Pillow |
 | AI | Google Gemini (viral detection) · Deepgram Nova-3 / ElevenLabs Scribe (transcription) |
-| Frontend | React 18 · Vite 5 · Tailwind CSS v4 · lucide-react · custom toasts/primitives |
+| Frontend | React 18 · Vite 6 · Tailwind CSS v4 · lucide-react · custom toasts/primitives |
 | Publishing | Zernio multi-platform API |
 | Deploy | Docker Compose (CPU multi-arch + optional NVIDIA GPU profile) |
 

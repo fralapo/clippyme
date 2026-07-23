@@ -47,7 +47,9 @@ from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
     EditAIRequest,
+    LiveMonitorPublishingRequest,
     LiveMonitorStartRequest,
+    LiveMonitorStopRequest,
     ProcessRequest,
     PublishRequest,
     ReframeRequest,
@@ -807,17 +809,21 @@ async def live_monitor_start(req: LiveMonitorStartRequest, request: Request):
 
 @app.post("/api/live-monitor/stop")
 async def live_monitor_stop(request: Request):
-    """Stop one monitor (body ``{"monitor_id": "..."}``) or ALL monitors (no
-    body). Lets in-flight publishes drain first."""
+    """Stop one monitor, or all monitors only when the body is truly absent."""
     require_trusted_config_request(request)
-    monitor_id = None
-    try:
-        body = await request.json()
-        if isinstance(body, dict):
-            monitor_id = body.get("monitor_id")
-    except Exception:
-        pass  # no/invalid body → stop all
-    return await live_monitor.stop(monitor_id)
+    raw = await request.body()
+    req = None
+    if raw:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Malformed JSON body")
+        try:
+            req = LiveMonitorStopRequest.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=422, detail=exc.errors(include_context=False))
+    return await live_monitor.stop(req.monitor_id if req else None)
 
 
 @app.post("/api/live-monitor/{monitor_id}/config")
@@ -836,17 +842,19 @@ async def live_monitor_update_config(monitor_id: str, request: Request):
 
 @app.post("/api/live-monitor/{monitor_id}/publishing")
 async def live_monitor_set_publishing(monitor_id: str, request: Request):
-    """Pause/resume auto-publishing for a running monitor (body:
-    ``{"enabled": bool}``). While paused, finished clips accumulate and are
-    drained through the normal publish path on resume."""
+    """Pause/resume auto-publishing with a strict boolean request body."""
     require_trusted_config_request(request)
     enforce_rate_limit(request, "livemonitor", capacity=10, refill_per_sec=10 / 60)
     try:
         body = await request.json()
     except Exception:
         raise HTTPException(status_code=400, detail="Malformed JSON body")
-    enabled = bool(body.get("enabled")) if isinstance(body, dict) else False
-    return {"monitor": live_monitor.set_publishing(monitor_id, enabled)}
+    try:
+        req = LiveMonitorPublishingRequest.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422, detail=exc.errors(include_context=False))
+    return {"monitor": live_monitor.set_publishing(monitor_id, req.enabled)}
 
 
 @app.get("/api/live-monitor/status")

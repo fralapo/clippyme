@@ -18,6 +18,7 @@ from clippyme.domain.live_monitor import (
     build_monitor_compose,
     remaining_prelive,
     render_template,
+    monitor_id_for,
     should_process_segment,
     validate_monitor_config,
     validate_monitor_partial_update,
@@ -1333,3 +1334,38 @@ def test_restored_monitor_with_pending_and_enabled_drains_on_start(tmp_path, mon
     assert mon._pending_publish == []
     assert mon.clips_published == 1
     assert mon._draining is False   # guard released, not left stuck
+
+
+def test_validate_config_malformed_max_clips_uses_default():
+    cfg = validate_monitor_config(_base_cfg(max_clips="not-an-int"))
+    assert cfg["max_clips"] == 5
+
+
+def test_monitor_snapshot_restores_pending_backfill(tmp_path):
+    import json
+    from clippyme.domain.live_monitor import LiveMonitor
+    original = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    original._missed_windows = [(1800, 3600), (3600, 5400)]
+    original._vod_baseline_ids = {"old-vod"}
+    original._backfill_baseline_ready = True
+    snap = json.loads(json.dumps(original.snapshot()))
+    restored = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    restored.restore(snap)
+    assert restored._missed_windows == [(1800, 3600), (3600, 5400)]
+    assert restored.backfill_pending == 2
+    assert restored._vod_baseline_ids == {"old-vod"}
+    assert restored._backfill_baseline_ready is True
+
+
+
+def test_youtube_monitor_id_is_stable_and_path_safe():
+    channel = "https://www.youtube.com/@ExampleCreator"
+    first = monitor_id_for("youtube", channel)
+    assert first == monitor_id_for("youtube", channel)
+    assert first.startswith("youtube:")
+    assert "/" not in first
+    assert len(first) == len("youtube:") + 20
+
+
+def test_non_youtube_monitor_id_remains_human_readable():
+    assert monitor_id_for("kick", "creator") == "kick:creator"

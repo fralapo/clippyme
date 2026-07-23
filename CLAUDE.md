@@ -7,7 +7,7 @@ design history and rationale live in `docs/` (see the pointers at the bottom).
 
 ClippyMe is a self-hosted AI video platform that turns long-form videos
 (YouTube or local uploads) into viral 9:16 vertical shorts. Fork of OpenShorts.
-Backend: FastAPI + a subprocess video pipeline. Frontend: React 18 + Vite 5 +
+Backend: FastAPI + a subprocess video pipeline. Frontend: React 18 + Vite 6 +
 Tailwind v4.
 
 ## Repo layout
