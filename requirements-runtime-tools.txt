@@ -1,0 +1,5 @@
+# Runtime-only tools invoked by the live monitor / banner renderer.
+# Kept separate from requirements.lock because they are CLI/system-integrated
+# extras rather than imports required by the core host test suite.
+streamlink==7.6.0
+CairoSVG==2.9.0
