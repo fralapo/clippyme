@@ -37,16 +37,12 @@ jobs:
           pip install -e ".[host-tests]"
           pip install pytest pytest-cov pip-audit ruff
 
-      # Gate bug-class failures without turning formatting churn into a blocker.
       - name: Lint (ruff — bug-class rules)
         run: ruff check src/clippyme tests --select E9,F63,F7,F82
 
       - name: Run host test suite (excludes integration)
         run: pytest -m "not integration" -q --cov=clippyme --cov-report=term
 
-      # Blocking audit of the fully pinned core dependency tree. Ignored IDs are
-      # documented reachability false positives or fixes blocked by the pinned
-      # CV/ML stack; remove them with the corresponding dependency upgrades.
       - name: Dependency vulnerability scan (core pinned tree)
         run: >-
           pip-audit -r requirements.lock --desc
@@ -58,6 +54,20 @@ jobs:
 
       - name: Dependency vulnerability scan (runtime tools)
         run: pip-audit -r requirements-runtime-tools.txt --desc
+
+  frontend-audit:
+    name: Frontend production dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      # npm audit only needs package.json/package-lock.json. Keeping this job
+      # separate means a disclosed advisory does not hide lint/test/build output.
+      - name: Audit production dependencies
+        run: npm audit --package-lock-only --omit=dev --audit-level=high
 
   frontend:
     name: Frontend (test + build + lint)
@@ -76,10 +86,7 @@ jobs:
           cache-dependency-path: dashboard/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
-
-      - name: Audit production dependencies
-        run: npm audit --omit=dev --audit-level=high
+        run: npm ci --no-audit --no-fund
 
       - name: Lint
         run: npm run lint
