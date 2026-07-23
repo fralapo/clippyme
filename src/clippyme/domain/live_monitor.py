@@ -603,6 +603,14 @@ class LiveMonitor:
             logger.warning(
                 "LiveMonitor %s: no running event loop, task not scheduled", self.id)
             self._task = None
+        else:
+            # A restored snapshot can carry non-empty pending publishes with
+            # publishing_enabled=True (e.g. crash mid-drain). Without this,
+            # the queue is durably stuck until someone manually toggles
+            # pause/resume. _drain_pending's own _draining guard still
+            # applies, so this can never interleave with the toggle path.
+            if self.publishing_enabled and self._pending_publish:
+                self._track_task(asyncio.create_task(self._drain_pending()))
         logger.info("LiveMonitor started: %s (mode=%s)", self.id, self.mode)
         return self.status()
 

@@ -192,3 +192,21 @@ def test_build_clips_partial_job_mid_processing_first_clip_ready(tmp_path):
     assert len(result) == 1
     assert result[0]["video_url"] == "/videos/job1/Ready Clip Title_clip_1.mp4"
     assert result[0]["original_index"] == 0
+
+
+def test_build_clips_skips_deleted_after_publish_even_in_final_result(tmp_path):
+    # Regression for I1: only_ready=False (the /api/status final-result path,
+    # via load_final_result) must never resurface a clip that was deliberately
+    # deleted after a confirmed Zernio publish — even though its file is gone,
+    # the file-missing skip only fires under only_ready=True. Siblings keep
+    # their absolute original_index; the skip must not renumber them.
+    (tmp_path / "vid_clip_1.mp4").write_bytes(b"\x00")
+    (tmp_path / "vid_clip_3.mp4").write_bytes(b"\x00")
+    data = {"shorts": [
+        {"start": 0, "end": 5},
+        {"start": 5, "end": 10, "deleted_after_publish": True},
+        {"start": 10, "end": 15},
+    ]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=False)
+    assert [c["original_index"] for c in result] == [0, 2]
+    assert all(not c.get("deleted_after_publish") for c in result)

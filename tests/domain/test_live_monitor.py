@@ -1098,3 +1098,55 @@ def test_registry_set_publishing_unknown_id_raises_not_found(tmp_path):
                               state_path=str(tmp_path / "state.json"))
     with pytest.raises(NotFoundError):
         reg.set_publishing("kick:nope", False)
+
+
+def test_restored_monitor_with_pending_and_enabled_drains_on_start(tmp_path, monkeypatch):
+    """Regression for I2: a snapshot taken mid-drain (publishing_enabled=True,
+    non-empty pending) must not sit stuck after restart until someone toggles
+    pause/resume — start() must kick the existing drain helper itself."""
+    import asyncio
+
+    from clippyme.domain import live_monitor as lm
+    from clippyme.storage import config_store
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+
+    monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "g"})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC", "api_key": "z"})
+    monkeypatch.setattr(lm.LiveMonitor, "_make_strategy", lambda self, cfg, pc: object())
+
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+
+    # Simulate a snapshot restored mid-drain: enabled, with a queued clip —
+    # exactly what LiveMonitor.restore() would produce from disk.
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+    mon.publishing_enabled = True
+    mon._pending_publish = [{"job_id": "job1", "clip": clip}]
+
+    # Stub out the real live/vod loop entirely — this test only cares that
+    # start() schedules the existing _drain_pending() helper, not that the
+    # monitor loop runs.
+    async def fake_run():
+        return None
+    mon._run = fake_run
+
+    cfg = validate_monitor_config(_base_cfg(
+        platform="kick", mode="live", slug="chan",
+        platforms=[{"platform": "tiktok", "accountId": "a"}]))
+
+    async def go():
+        mon.start(cfg)
+        # Let the scheduled drain task (and the stubbed _run task) complete.
+        for _ in range(20):
+            await asyncio.sleep(0)
+        if mon._publish_tasks:
+            await asyncio.gather(*mon._publish_tasks)
+
+    asyncio.run(go())
+
+    assert len(calls) == 1
+    assert mon._pending_publish == []
+    assert mon.clips_published == 1
+    assert mon._draining is False   # guard released, not left stuck

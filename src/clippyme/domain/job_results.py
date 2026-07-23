@@ -139,6 +139,12 @@ def _build_clips(data: dict, base_name: str, job_id: str, output_dir: str, only_
     # "") — the file doesn't need to exist on disk for that string op.
     fake_metadata_path = f"{base_name}_metadata.json"
     for i, clip in enumerate(clips):
+        if clip.get('deleted_after_publish'):
+            # Deleted after a confirmed publish: never resurface it, even in
+            # the final-result path (only_ready=False) where the file-missing
+            # skip below doesn't apply. Skipping does NOT renumber siblings —
+            # original_index below stays the absolute position in `shorts`.
+            continue
         clip_filename = clip_filename_for(fake_metadata_path, clip, i)
         clip_path = os.path.join(output_dir, clip_filename)
         exists = os.path.exists(clip_path) and os.path.getsize(clip_path) > 0

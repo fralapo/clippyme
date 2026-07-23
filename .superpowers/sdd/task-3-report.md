@@ -74,4 +74,39 @@ New tests:
 - `_await_and_publish` still sleeps `PUBLISH_SPACING_SECONDS` between clips even while paused (each
   `_publish_one` just appends). Harmless (delays queueing only); left as-is to avoid complicating the
   loop.
+
+## Fix wave
+
+Addressed the two Important findings from `task-3-review.md`.
+
+- **I1** — `job_results._build_clips`: added `if clip.get("deleted_after_publish"): continue`
+  before filename resolution, so a deleted-after-publish entry is skipped unconditionally —
+  including the `only_ready=False` final-result path that previously returned it with a dead
+  `video_url`. The skip happens before `original_index` is assigned, so surviving clips keep
+  their absolute position in `shorts` (no renumbering).
+- **I2** — `live_monitor.LiveMonitor.start()`: after the run-loop task is created, if
+  `publishing_enabled and self._pending_publish` it now schedules `_drain_pending()` via the
+  existing `_track_task` helper. Reuses the existing drain path (no second interleave path);
+  `_draining` guard still applies, so a concurrent `set_publishing(True)` toggle can't
+  double-drain. `auto_resume()` and the registry's `start()` both call `mon.restore(snap)` then
+  `mon.start(cfg)`, so a snapshot taken mid-drain now resumes draining automatically instead of
+  sitting stuck until a manual pause→resume.
+
+Files touched: `src/clippyme/domain/job_results.py`, `src/clippyme/domain/live_monitor.py`,
+`tests/domain/test_job_results.py`, `tests/domain/test_live_monitor.py`.
+
+New tests:
+- `test_build_clips_skips_deleted_after_publish_even_in_final_result` — `only_ready=False` skips
+  the deleted entry; siblings keep `original_index` 0 and 2 (no renumbering).
+- `test_restored_monitor_with_pending_and_enabled_drains_on_start` — a monitor with
+  `publishing_enabled=True` and a restored non-empty `_pending_publish` drains its one queued
+  clip when `start()` runs (loop stubbed out), and `_draining` is released afterward.
+
+### Test evidence
+Command (in container `clippyme-revert-test`, `/workspace`):
+`python -m pytest -m 'not integration' -q` → **960 passed, 34 deselected** (958 baseline + 2 new).
+`ruff check src/clippyme tests --select E9,F63,F7,F82` → **All checks passed!**
+
+### Concerns
+- None new. M1–M4 from the review remain unaddressed (out of scope — Minor, not requested).
 - Frontend wiring for the new toggle is out of scope (backend + route only).
