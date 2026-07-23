@@ -2,7 +2,7 @@ from clippyme.pipeline.run_ops import sanitize_windows_basename, clip_output_bas
 
 
 def test_sanitize_strips_forbidden_and_reserved():
-    assert sanitize_windows_basename('Litigio: shock! <in> villa?') == 'Litigio shock in villa'
+    assert sanitize_windows_basename('Litigio: shock! <in> villa?') == 'Litigio shock! in villa'
     assert sanitize_windows_basename('   ') is None
     assert sanitize_windows_basename('CON') is None          # reserved
     assert sanitize_windows_basename('***') is None          # all-forbidden
