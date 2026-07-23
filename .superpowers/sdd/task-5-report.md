@@ -101,3 +101,72 @@ wasn't rendered there before.)
   values to push. If a future task exposes `config` via `status()`, the
   drawer should be seeded from it instead of starting blank (noted inline
   in the component's comment).
+
+## Fix wave
+
+Addressed the review's one Important finding plus the drawer-blank note.
+
+1. **Classic-mode subtitle key translation** (`live.jsx:231,250`). Both call
+   sites sent the raw `SubtitleControls` value straight through as
+   `compose.subtitle_params`, but `compose.py`'s classic branch
+   (`_apply_subtitles`) reads `border_color`/`bg_opacity`/`bg_color`, not
+   `outline_color`/the boolean `bg`. In classic mode this made the
+   Background-box switch a silent no-op and dropped any stroke-color
+   override. Extracted the translation that already existed inline in
+   `captions.jsx:147-154` / `realApi.js:412-419` into a single new helper,
+   `dashboard/src/lib/subtitleComposeParams.js` (`toComposeSubtitleParams`),
+   and pointed both `live.jsx` call sites (start payload + config Applica) at
+   it. Left `captions.jsx`/`realApi.js` untouched — their option shapes
+   differ enough (pre-seeded base object / individual `opts.subX` fields vs.
+   a single `SubtitleControls` value) that folding them in wasn't a trivial,
+   risk-free diff; not worth it under the Important finding's scope.
+   Karaoke mode was already correct and is unaffected (pass-through, same as
+   before).
+
+2. **`status()` config + drawer seeding.** Added the same allow-list
+   snapshot() uses (`_SNAPSHOT_CONFIG_FIELDS`, no secrets by construction) to
+   `LiveMonitor.status()` in `src/clippyme/domain/live_monitor.py`. The
+   Settings drawer (`MonitorSettings` in `live.jsx`) now seeds its fields —
+   instructions/title/caption templates, the three minute inputs, and the
+   subtitle override switch + value — from `monitor.config` when it mounts
+   (drawer only mounts on open, so a `useState` lazy initializer is enough;
+   no extra effect needed). Added `fromComposeSubtitleParams` (reverse of
+   `toComposeSubtitleParams`, same new lib file) to map a persisted
+   classic-mode `compose.subtitle_params` back onto the `SubtitleControls`
+   vocabulary for editing. "Apply" behaviour is unchanged — it still sends
+   only the touched fields (now pre-filled with the current values rather
+   than blank, so re-applying an untouched field is a same-value no-op, not
+   a fabricated one).
+
+### Files changed
+- `src/clippyme/domain/live_monitor.py` — `LiveMonitor.status()` gained a
+  `config` key.
+- `dashboard/src/lib/subtitleComposeParams.js` — new. `toComposeSubtitleParams`
+  / `fromComposeSubtitleParams`.
+- `dashboard/src/redesign/live.jsx` — both compose-payload call sites route
+  through `toComposeSubtitleParams`; `MonitorSettings` seeds from
+  `monitor.config` via `fromComposeSubtitleParams` + a `secToMin` helper.
+- `dashboard/src/redesign/live.test.jsx` — 3 new tests: classic-mode
+  translation in the start payload, classic-mode translation in the config
+  Applica payload, drawer prefilled from `status().config`.
+- `tests/domain/test_live_monitor.py` — 1 new test:
+  `test_monitor_status_includes_config_allow_list` (asserts `status()`'s
+  `config` is exactly `_SNAPSHOT_CONFIG_FIELDS`, nothing more).
+
+### Verification
+- Frontend (host): `npm test` — 21 files / 152 tests passed (incl. the 3
+  new). `npm run lint` — clean, 0 warnings. `npm run build` — succeeded.
+- Backend (container, run from the `/workspace` bind mount, not the stale
+  `/app` image copy): `python -m pytest -m "not integration" -q` — 961
+  passed, 34 deselected. `ruff check src/clippyme tests --select
+  E9,F63,F7,F82` — all checks passed.
+
+### Concerns
+- None outstanding for the Important finding. The two Minor notes from the
+  review (the `clampMonitorTimings` triple-call shape, the hook's tuple
+  return-shape change) were informational/non-blocking and out of this fix
+  wave's scope — left as-is.
+- `fromComposeSubtitleParams` is a best-effort reverse mapping for UI
+  seeding only (never sent back to the server verbatim — Apply always
+  re-translates through `toComposeSubtitleParams`), so there's no risk of a
+  stale/lossy round-trip reaching the backend.

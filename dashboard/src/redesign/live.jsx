@@ -9,6 +9,7 @@ import { getZernio, startLiveMonitor, stopLiveMonitor, updateMonitorConfig, setM
 import { PLAT } from './publish';
 import { validateSlug, buildPlatformTargets, classifyStartError, clampMonitorTimings } from '../lib/liveMonitorForm';
 import { buildMonitorBannerPayload } from '../lib/liveMonitorBanner';
+import { toComposeSubtitleParams, fromComposeSubtitleParams } from '../lib/subtitleComposeParams';
 import { BannerControls } from './bannerControls';
 import { SubtitleControls } from './subtitleControls';
 import { useLiveMonitorStatus } from '../hooks/useLiveMonitorStatus';
@@ -50,19 +51,26 @@ const SLUG_PLACEHOLDER = {
   youtube: '@handle or https://youtube.com/@handle',
 };
 
-// Local-only settings-drawer state, seeded blank: the running-monitor status
-// payload doesn't echo back its live `config` (see task-5-brief), so "Apply"
-// sends only the fields the user actually touches — untouched fields stay
-// omitted rather than clobbering server state with blanks.
+// Seconds → minutes for the drawer's minute inputs; '' (blank) when unset so
+// "Apply" still treats an untouched field as untouched.
+const secToMin = (s) => (typeof s === 'number' ? String(Math.round(s / 60)) : '');
+
+// Settings-drawer state, seeded from the running monitor's `status().config`
+// (the same allow-list snapshot() persists) — the drawer used to always open
+// blank because status() didn't echo config back (see task-5-brief); it now
+// does. "Apply" still sends only the fields the user actually touches —
+// untouched fields stay omitted rather than clobbering server state with
+// blanks, even though they're now prefilled for editing.
 function MonitorSettings({ monitor, onApply, applying }) {
-  const [instructions, setInstructions] = useState('');
-  const [captionTemplate, setCaptionTemplate] = useState('');
-  const [titleTemplate, setTitleTemplate] = useState('');
-  const [segmentMin, setSegmentMin] = useState('');
-  const [preliveMin, setPreliveMin] = useState('');
-  const [minGapMin, setMinGapMin] = useState('');
-  const [subOn, setSubOn] = useState(false);
-  const [sub, setSub] = useState(SUB_DEFAULTS);
+  const cfg = monitor.config || {};
+  const [instructions, setInstructions] = useState(cfg.instructions || '');
+  const [captionTemplate, setCaptionTemplate] = useState(cfg.caption_template || '');
+  const [titleTemplate, setTitleTemplate] = useState(cfg.title_template || '');
+  const [segmentMin, setSegmentMin] = useState(secToMin(cfg.segment_seconds));
+  const [preliveMin, setPreliveMin] = useState(secToMin(cfg.prelive_skip_seconds));
+  const [minGapMin, setMinGapMin] = useState(secToMin(cfg.min_gap_seconds));
+  const [subOn, setSubOn] = useState(!!cfg.compose?.subtitle_params);
+  const [sub, setSub] = useState(() => fromComposeSubtitleParams(cfg.compose?.subtitle_params, SUB_DEFAULTS));
 
   const apply = () => {
     const partial = {};
@@ -72,7 +80,7 @@ function MonitorSettings({ monitor, onApply, applying }) {
     if (segmentMin !== '') partial.segment_seconds = clampMonitorTimings(segmentMin, 0, 0).segment_seconds;
     if (preliveMin !== '') partial.prelive_skip_seconds = clampMonitorTimings(0, preliveMin, 0).prelive_skip_seconds;
     if (minGapMin !== '') partial.min_gap_seconds = clampMonitorTimings(0, 0, minGapMin).min_gap_seconds;
-    if (subOn) partial.compose = { subtitle_params: sub };
+    if (subOn) partial.compose = { subtitle_params: toComposeSubtitleParams(sub) };
     onApply(monitor.id, partial);
   };
 
@@ -228,7 +236,7 @@ export function LiveMonitorView({ pushToast }) {
         title_template: titleTemplate,
         instructions,
         banner: buildMonitorBannerPayload(bannerMode, { platform: bannerPlatform, handle: bannerHandle, y_pct: bannerYPct }),
-        ...(subOn ? { compose: { subtitle_params: sub } } : {}),
+        ...(subOn ? { compose: { subtitle_params: toComposeSubtitleParams(sub) } } : {}),
       });
       pushToast?.('success', `Monitoring ${slug.trim()}…`);
       setSlug('');
