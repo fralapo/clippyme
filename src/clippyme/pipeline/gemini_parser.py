@@ -355,11 +355,25 @@ def drop_wordless_clips(clips: list[dict], words: list[dict]) -> list[dict]:
     A clip with zero words in range is either a Gemini hallucination (empty
     transcript) or would crash subtitle compose ("No words found") — drop it.
     Same half-open overlap test as generate_ass_karaoke.
+
+    Accepts both word shapes the pipeline uses: the transcript's
+    ``{"start","end",...}`` and the TOON-encoded prompt payload's
+    ``{"s","e",...}`` (``build_viral_prompt``). Words missing a start/end are
+    skipped, never raised on.
     """
     kept = []
     for c in clips:
         cs, ce = float(c.get("start", 0)), float(c.get("end", 0))
-        if any(w["end"] > cs and w["start"] < ce for w in words):
+        hit = False
+        for w in words:
+            ws = w.get("start", w.get("s"))
+            we = w.get("end", w.get("e"))
+            if ws is None or we is None:
+                continue
+            if we > cs and ws < ce:
+                hit = True
+                break
+        if hit:
             kept.append(c)
     return kept
 
