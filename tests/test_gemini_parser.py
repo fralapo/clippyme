@@ -1,4 +1,17 @@
-from clippyme.pipeline.gemini_parser import drop_wordless_clips
+from clippyme.pipeline.gemini_parser import drop_wordless_clips, cap_clips_by_score
+
+
+def test_cap_keeps_top_n_by_score():
+    clips = [{"viral_score": s, "id": s} for s in (81, 91, 85, 88, 70)]
+    out = cap_clips_by_score(clips, 3)
+    assert [c["viral_score"] for c in out] == [91, 88, 85]
+
+
+def test_cap_noop_when_under_limit_or_zero():
+    clips = [{"viral_score": 90}, {"viral_score": 80}]
+    assert cap_clips_by_score(clips, 5) == clips
+    assert cap_clips_by_score(clips, 0) == clips
+    assert cap_clips_by_score(clips, -1) == clips
 
 WORDS = [{"start": 10.0, "end": 10.5, "word": "ciao"},
          {"start": 11.0, "end": 11.4, "word": "mondo"}]

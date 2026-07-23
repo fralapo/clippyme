@@ -349,6 +349,19 @@ def backfill_hook_text(
     return clips
 
 
+def cap_clips_by_score(clips: list[dict], max_clips: int) -> list[dict]:
+    """Keep only the top ``max_clips`` clips by ``viral_score`` (desc).
+
+    Used to bound a segment's output for a publish-limited monitor. A
+    non-positive ``max_clips`` (or a count already at/under the cap) is a no-op.
+    Ties keep their original relative order (stable sort).
+    """
+    if not max_clips or max_clips <= 0 or len(clips) <= max_clips:
+        return clips
+    ranked = sorted(clips, key=lambda c: c.get("viral_score", 0), reverse=True)
+    return ranked[:max_clips]
+
+
 def drop_wordless_clips(clips: list[dict], words: list[dict]) -> list[dict]:
     """Keep only clips whose [start,end] overlaps at least one transcript word.
 

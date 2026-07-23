@@ -456,6 +456,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     try:
         from clippyme.pipeline.gemini_parser import (
             parse_gemini_response, validate_and_dedupe, backfill_hook_text, drop_wordless_clips,
+            cap_clips_by_score,
         )
         from pydantic import ValidationError
 
@@ -526,6 +527,18 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         if not clips:
             print("❌ No clips with transcript words in range (hallucination/empty transcript guard)")
             return None
+
+        # Bound a publish-limited monitor's output to the top-N by viral_score.
+        # Unset/0 (manual jobs) → keep them all.
+        _max_clips = os.getenv("CLIPPYME_MAX_CLIPS")
+        if _max_clips:
+            try:
+                _n = int(_max_clips)
+            except ValueError:
+                _n = 0
+            if _n > 0 and len(clips) > _n:
+                clips = cap_clips_by_score(clips, _n)
+                print(f"✂️  Capped to top {_n} clips by viral_score (was more).")
 
         # Ensure every clip has a viral_hook_text. Logic lives in
         # gemini_parser.backfill_hook_text so both the main pipeline AND

@@ -276,6 +276,9 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
         # manual QA/re-edit at the cost of storage.
         "delete_after_publish": _validate_bool(
             config.get("delete_after_publish", True), "delete_after_publish"),
+        # Max clips kept per segment (top-N by viral_score) — bounds a
+        # publish-limited monitor's output. Clamped to [1, 50], default 5.
+        "max_clips": max(1, min(50, int(config.get("max_clips", 5) or 5))),
     }
 
 
@@ -285,7 +288,7 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
 _UPDATABLE_CONFIG_FIELDS = (
     "instructions", "caption_template", "title_template", "min_gap_seconds",
     "segment_seconds", "prelive_skip_seconds", "platforms", "banner", "compose",
-    "poll_interval", "delete_after_publish",
+    "poll_interval", "delete_after_publish", "max_clips",
 )
 
 # The full set of cfg keys worth persisting/restoring (mirrors
@@ -294,7 +297,7 @@ _SNAPSHOT_CONFIG_FIELDS = (
     "platform", "mode", "channel", "slug", "platforms", "segment_seconds",
     "prelive_skip_seconds", "min_gap_seconds", "poll_interval", "loop",
     "instructions", "caption_template", "title_template", "timezone",
-    "banner", "compose", "catchup", "delete_after_publish",
+    "banner", "compose", "catchup", "delete_after_publish", "max_clips",
 )
 
 
@@ -1045,6 +1048,9 @@ class LiveMonitor:
         os.makedirs(job_dir, exist_ok=True)
         env = os.environ.copy()
         env["GEMINI_API_KEY"] = self._gemini_key
+        # Bound each segment's clip count for the publish-limited monitor —
+        # the pipeline keeps the top-N by viral_score (get_viral_clips).
+        env["CLIPPYME_MAX_CLIPS"] = str(self.cfg.get("max_clips") or 5)
         return job_id, job_dir, env
 
     async def _submit_segment_job(self, seg_path: str) -> str:
