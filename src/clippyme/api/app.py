@@ -808,11 +808,21 @@ async def live_monitor_start(req: LiveMonitorStartRequest, request: Request):
 
 
 @app.post("/api/live-monitor/stop")
-async def live_monitor_stop(
-    request: Request, req: LiveMonitorStopRequest | None = None
-):
+async def live_monitor_stop(request: Request):
     """Stop one monitor, or all monitors only when the body is truly absent."""
     require_trusted_config_request(request)
+    raw = await request.body()
+    req = None
+    if raw:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Malformed JSON body")
+        try:
+            req = LiveMonitorStopRequest.model_validate(body)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=422, detail=exc.errors(include_context=False))
     return await live_monitor.stop(req.monitor_id if req else None)
 
 
@@ -831,12 +841,19 @@ async def live_monitor_update_config(monitor_id: str, request: Request):
 
 
 @app.post("/api/live-monitor/{monitor_id}/publishing")
-async def live_monitor_set_publishing(
-    monitor_id: str, req: LiveMonitorPublishingRequest, request: Request
-):
+async def live_monitor_set_publishing(monitor_id: str, request: Request):
     """Pause/resume auto-publishing with a strict boolean request body."""
     require_trusted_config_request(request)
     enforce_rate_limit(request, "livemonitor", capacity=10, refill_per_sec=10 / 60)
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed JSON body")
+    try:
+        req = LiveMonitorPublishingRequest.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422, detail=exc.errors(include_context=False))
     return {"monitor": live_monitor.set_publishing(monitor_id, req.enabled)}
 
 
