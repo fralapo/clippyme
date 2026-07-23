@@ -1,4 +1,8 @@
-from clippyme.pipeline.run_ops import sanitize_windows_basename, clip_output_basename
+from clippyme.pipeline.run_ops import (
+    sanitize_windows_basename,
+    clip_output_basename,
+    should_use_fallback,
+)
 
 
 def test_sanitize_strips_forbidden_and_reserved():
@@ -21,3 +25,11 @@ def test_clip_output_basename_unchanged_contract():
     assert clip_output_basename('Hello', 0, 'base') == 'Hello_clip_1'
     assert clip_output_basename('   ', 2, 'base') == 'base_clip_3'
     assert clip_output_basename('CON', 0, 'base') == 'base_clip_1'
+
+
+def test_fallback_enabled_for_normal_jobs():
+    assert should_use_fallback(False) is True
+
+
+def test_fallback_disabled_in_monitor_mode():
+    assert should_use_fallback(True) is False

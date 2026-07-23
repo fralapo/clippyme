@@ -80,6 +80,16 @@ def resolve_output_dir(out: str | None, default: str) -> str:
     return out
 
 
+def should_use_fallback(monitor_mode: bool) -> bool:
+    """Whether to use the no-AI fallbacks (TextTiling / whole-video).
+
+    Monitor jobs must NEVER publish fallback clips (topic "part N" chunks or a
+    30-min whole-video render), so they get zero clips instead. Normal jobs
+    keep the fallbacks.
+    """
+    return not monitor_mode
+
+
 def build_cut_command(input_video: str, start: float, end: float, dest: str) -> list[str]:
     """ffmpeg argv for cutting the 16:9 source slice of one clip.
 

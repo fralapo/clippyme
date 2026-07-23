@@ -400,7 +400,8 @@ def transcribe_video(video_path):
 
 def get_viral_clips(transcript_result, video_duration, instructions=None):
     print("🤖  Analyzing with Gemini...")
-    
+    get_viral_clips._last_gemini_exhausted = False
+
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         print("❌ Error: GEMINI_API_KEY not found in environment variables.")
@@ -430,6 +431,9 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
         response, model_name = generate_with_model_fallback(
             client, prompt, model_chain, max_attempts=max_attempts)
     except Exception as e:
+        if is_rate_limit_error(e):
+            get_viral_clips._last_gemini_exhausted = True
+            print("🚫 All Gemini models rate-limited — no clips this run.")
         print(f"❌ Gemini API failed across model chain: {e}")
         return None
 
@@ -601,6 +605,9 @@ if __name__ == '__main__':
                              "transcription accuracy AND speaker diarization reliability.")
     parser.add_argument('--aspect', choices=['9:16', '1:1', '16:9'], default='9:16',
                         help="Output aspect ratio: 9:16 vertical (default), 1:1 square, or 16:9 horizontal.")
+    parser.add_argument('--monitor', action='store_true',
+                        help='Live-monitor job: never use TextTiling/whole-video '
+                             'fallbacks; empty transcript or Gemini exhaustion → zero clips.')
     parser.add_argument('--model', type=str, default=None,
                         help="Override the Gemini model for viral detection on THIS job (e.g. "
                              "'gemini-2.5-pro', 'gemini-3.1-pro-preview'). When unset, the pipeline uses "
@@ -696,7 +703,9 @@ if __name__ == '__main__':
 
     script_start_time = time.time()
 
-    from clippyme.pipeline.run_ops import build_cut_command, clip_output_basename, resolve_output_dir
+    from clippyme.pipeline.run_ops import (
+        build_cut_command, clip_output_basename, resolve_output_dir, should_use_fallback,
+    )
 
     # 1. Get Input Video
     if args.url:
@@ -758,13 +767,27 @@ if __name__ == '__main__':
         # original whole-video render. (Ported from ClipsAI — see
         # docs/clipsai-analysis.md.)
         if not clips_data or 'shorts' not in clips_data:
-            clips_data = build_texttiling_fallback(transcript, video_title)
+            if should_use_fallback(args.monitor):
+                clips_data = build_texttiling_fallback(transcript, video_title)
 
         if not clips_data or not clips_data.get('shorts'):
-            print("❌ Failed to identify clips. Converting whole video as fallback.")
-            output_file = os.path.join(output_dir, f"{video_title}_vertical.mp4")
-            process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode,
-                                      aspect_ratio=aspect_ratio)
+            if not should_use_fallback(args.monitor):
+                # Monitor: no hallucinated/fallback clips — write empty metadata
+                # (+ exhaustion marker if Gemini ran out of models) and exit clean.
+                empty = {'shorts': [], 'transcript': transcript, 'aspect': args.aspect}
+                if getattr(get_viral_clips, '_last_gemini_exhausted', False):
+                    empty['gemini_exhausted'] = True
+                _meta = os.path.join(output_dir, f"{video_title}_metadata.json")
+                _tmp = _meta + '.tmp'
+                with open(_tmp, 'w') as f:
+                    json.dump(empty, f, indent=2)
+                os.replace(_tmp, _meta)
+                print("🚫 Monitor: no valid clips this segment — skipping.")
+            else:
+                print("❌ Failed to identify clips. Converting whole video as fallback.")
+                output_file = os.path.join(output_dir, f"{video_title}_vertical.mp4")
+                process_video_to_vertical(input_video, output_file, reframe_mode=args.reframe_mode,
+                                          aspect_ratio=aspect_ratio)
         else:
             print(f"🔥 Found {len(clips_data['shorts'])} viral clips!")
             
