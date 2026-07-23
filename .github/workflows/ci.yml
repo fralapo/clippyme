@@ -163,7 +163,7 @@ jobs:
 
   round2-diagnostics:
     name: Round 2 static diagnostics
-    if: github.event_name == 'push' && github.ref == 'refs/heads/audit/round2-2026-07-23'
+    if: github.event_name == 'pull_request' && github.head_ref == 'audit/round2-2026-07-23'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
