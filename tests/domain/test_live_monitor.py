@@ -22,6 +22,7 @@ from clippyme.domain.live_monitor import (
     validate_monitor_config,
     validate_monitor_partial_update,
     _hhmmss,
+    _SNAPSHOT_CONFIG_FIELDS,
 )
 from clippyme.integrations.twitch_client import find_live_vod
 
@@ -335,6 +336,23 @@ def test_partial_update_allows_banner_and_compose():
         {"banner": {"enabled": False}, "compose": {"toggles": {"hook": False}}}, current)
     assert new_cfg["banner"] == {"enabled": False}
     assert new_cfg["compose"] == {"toggles": {"hook": False}}
+
+
+def test_delete_after_publish_defaults_on():
+    assert validate_monitor_config(_base_cfg())["delete_after_publish"] is True
+
+
+def test_delete_after_publish_is_updatable_and_snapshotted():
+    assert "delete_after_publish" in _SNAPSHOT_CONFIG_FIELDS
+    current = _running_cfg()
+    assert current["delete_after_publish"] is True
+    new_cfg = validate_monitor_partial_update({"delete_after_publish": False}, current)
+    assert new_cfg["delete_after_publish"] is False
+
+
+def test_delete_after_publish_rejects_non_bool():
+    with pytest.raises(ValidationError):
+        validate_monitor_partial_update({"delete_after_publish": "yes"}, _running_cfg())
 
 
 # --- LiveMonitor.update_config / LiveMonitorRegistry.update_config ---------
@@ -1169,6 +1187,42 @@ def test_successful_publish_keeps_dir_and_marks_metadata_when_clips_remain(tmp_p
     data = json.loads(meta.read_text())
     assert data["shorts"][0].get("deleted_after_publish") is True
     assert "deleted_after_publish" not in data["shorts"][1]
+
+
+def test_delete_after_publish_false_keeps_artifacts_but_marks_published(tmp_path, monkeypatch):
+    """delete_after_publish=False: clip is recorded as published (no
+    re-publish) but its raw artifacts + metadata are left untouched."""
+    import asyncio
+    import json
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+    (job_dir / "source_c.mp4").write_bytes(b"x")
+    meta = job_dir / "run_metadata.json"
+    meta.write_text(json.dumps({"shorts": [{"video_url": "/videos/job1/c.mp4"}]}))
+
+    jobs = {"job1": {"status": "completed"}}
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
+    mon.cfg["delete_after_publish"] = False
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+    clip_path = os.path.join(str(tmp_path), "job1", "c.mp4")
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
+
+    asyncio.run(mon._publish_one(entry))
+
+    assert len(calls) == 1
+    assert mon.clips_published == 1
+    assert clip_path in mon._published        # dedupe still recorded
+    assert (job_dir / "c.mp4").exists()        # artifacts kept
+    assert (job_dir / "source_c.mp4").exists()
+    data = json.loads(meta.read_text())
+    assert "deleted_after_publish" not in data["shorts"][0]
+
+    # Re-publishing the same entry is a no-op (dedupe holds even without deletion).
+    calls.clear()
+    asyncio.run(mon._publish_one(entry))
+    assert calls == []
 
 
 def test_deletion_failure_does_not_raise_and_clip_stays_published(tmp_path, monkeypatch):

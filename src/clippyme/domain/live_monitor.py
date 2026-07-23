@@ -204,6 +204,12 @@ def _validate_catchup(value) -> str:
     return catchup
 
 
+def _validate_bool(value, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValidationError(f"{field} must be a boolean")
+    return value
+
+
 def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome") -> dict:
     """Coerce + bound a raw start payload into the monitor's config dict.
 
@@ -265,6 +271,11 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
         # semantics. The API schema already bounds them.
         "banner": config.get("banner") if isinstance(config.get("banner"), dict) else None,
         "compose": config.get("compose") if isinstance(config.get("compose"), dict) else None,
+        # Whether a confirmed Zernio publish deletes the job's raw clip
+        # artifacts. Default ON (frees disk); flip off to keep them for
+        # manual QA/re-edit at the cost of storage.
+        "delete_after_publish": _validate_bool(
+            config.get("delete_after_publish", True), "delete_after_publish"),
     }
 
 
@@ -274,7 +285,7 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
 _UPDATABLE_CONFIG_FIELDS = (
     "instructions", "caption_template", "title_template", "min_gap_seconds",
     "segment_seconds", "prelive_skip_seconds", "platforms", "banner", "compose",
-    "poll_interval",
+    "poll_interval", "delete_after_publish",
 )
 
 # The full set of cfg keys worth persisting/restoring (mirrors
@@ -283,7 +294,7 @@ _SNAPSHOT_CONFIG_FIELDS = (
     "platform", "mode", "channel", "slug", "platforms", "segment_seconds",
     "prelive_skip_seconds", "min_gap_seconds", "poll_interval", "loop",
     "instructions", "caption_template", "title_template", "timezone",
-    "banner", "compose", "catchup",
+    "banner", "compose", "catchup", "delete_after_publish",
 )
 
 
@@ -1241,6 +1252,10 @@ class LiveMonitor:
         self._published.add(clip_path)
         self.clips_published += 1
         self._persist()
+        if not self.cfg.get("delete_after_publish", True):
+            # User opted to keep raw artifacts around (QA/re-edit) — clip is
+            # still recorded as published above so it's never re-published.
+            return
         # Clip is published → free the job-dir artifacts (best-effort, never
         # raises). The consolidated composed file (upload_path, in the per-monitor
         # folder) is the durable deliverable and is deliberately KEPT — pass
