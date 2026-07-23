@@ -89,17 +89,3 @@ test('grade row: preset segments (with the extra Off entry) patch gradePreset', 
   fireEvent.click(row.getByRole('button', { name: 'Off' }));
   expect(set).toHaveBeenLastCalledWith({ gradePreset: 'none' });
 });
-
-test('publish destination row defaults to Manual queue and patches publisherMode', () => {
-  const set = mount();
-  const row = within(screen.getByText('Publish destination').closest('.opt'));
-  expect(row.getByRole('button', { name: 'Manual queue' })).toHaveClass('on');
-  fireEvent.click(row.getByRole('button', { name: 'Zernio automatic' }));
-  expect(set).toHaveBeenLastCalledWith({ publisherMode: 'zernio' });
-});
-
-test('publish destination row reflects an already-zernio opts.publisherMode', () => {
-  mount({ publisherMode: 'zernio' });
-  const row = within(screen.getByText('Publish destination').closest('.opt'));
-  expect(row.getByRole('button', { name: 'Zernio automatic' })).toHaveClass('on');
-});

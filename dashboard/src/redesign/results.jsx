@@ -84,7 +84,7 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, 
             }}><Icon n="copy" /></button>
         )}
         <button type="button" className="mini" title="Download (applies your edits)" aria-label="Download clip" onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></button>
-        <button type="button" className="mini" title="Publish" aria-label="Publish clip" onClick={(e) => { e.stopPropagation(); onPublish({ ...clip, _idx: index }); }}><Icon n="send" /></button>
+        <button type="button" className="mini" title="Publish" aria-label="Publish clip" onClick={(e) => { e.stopPropagation(); onPublish({ ...clip, _idx: index, _apiIdx: clip.original_index ?? index }); }}><Icon n="send" /></button>
         <button type="button" className="mini" title="Remove clip from the grid (file stays on disk)" aria-label="Remove clip" onClick={(e) => {
           e.stopPropagation();
           if (window.confirm('Remove this clip from the grid? The file stays on disk.')) {
@@ -108,7 +108,7 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
 
   const allSelected = visible.length > 0 && selectedIdx.length === visible.length;
   const setSelectedAll = (sel) => visible.forEach(({ i }) => onUpdateClipState(i, { selected: sel }));
-  const publishMany = (list) => onPublishAll(list.map(({ c, i }) => ({ ...c, _idx: i })));
+  const publishMany = (list) => onPublishAll(list.map(({ c, i }) => ({ ...c, _idx: i, _apiIdx: c.original_index ?? i })));
   // Bulk export composes each clip (applying its toggles) just like the single
   // download, sequentially so we don't spawn N ffmpeg jobs at once.
   const exportMany = async (list) => {

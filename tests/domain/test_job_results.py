@@ -7,7 +7,7 @@ input validation are security-relevant, so they get explicit coverage.
 """
 import pytest
 
-from clippyme.domain.job_results import build_main_cmd, MAX_INSTRUCTIONS_LEN
+from clippyme.domain.job_results import _build_clips, build_main_cmd, MAX_INSTRUCTIONS_LEN
 
 
 # --- happy path / flag assembly --------------------------------------------
@@ -147,3 +147,66 @@ def test_url_with_leading_whitespace_dash_rejected():
 def test_input_path_starting_with_dash_rejected():
     with pytest.raises(ValueError, match="input_path must not start with '-'"):
         build_main_cmd(input_path="-rf", output_dir="o")
+
+
+# --- _build_clips: task 4b clip_filename resolution -------------------------
+
+def test_build_clips_uses_clip_filename_from_metadata(tmp_path):
+    (tmp_path / "My Title_clip_1.mp4").write_bytes(b"\x00")
+    data = {"shorts": [{"clip_filename": "My Title_clip_1.mp4", "start": 0, "end": 5}]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
+    assert len(result) == 1
+    assert result[0]["video_url"] == "/videos/job1/My Title_clip_1.mp4"
+
+
+def test_build_clips_legacy_metadata_positional_unchanged(tmp_path):
+    # No clip_filename key → byte-identical to pre-task-4b positional naming.
+    (tmp_path / "vid_clip_1.mp4").write_bytes(b"\x00")
+    data = {"shorts": [{"start": 0, "end": 5}]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
+    assert len(result) == 1
+    assert result[0]["video_url"] == "/videos/job1/vid_clip_1.mp4"
+
+
+@pytest.mark.parametrize("bad", ["../evil.mp4", "sub/dir_clip_1.mp4", "sub\\dir_clip_1.mp4"])
+def test_build_clips_ignores_tampered_clip_filename(tmp_path, bad):
+    (tmp_path / "vid_clip_1.mp4").write_bytes(b"\x00")
+    data = {"shorts": [{"clip_filename": bad, "start": 0, "end": 5}]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
+    assert len(result) == 1
+    assert result[0]["video_url"] == "/videos/job1/vid_clip_1.mp4"
+
+
+def test_build_clips_partial_job_mid_processing_first_clip_ready(tmp_path):
+    # Mid-job snapshot (per-iteration metadata re-dump, task 4b follow-up):
+    # clip 1 already has clip_filename + is on disk under the new sanitized
+    # name; clip 2 hasn't been cut yet (no clip_filename key, no file).
+    # only_ready=True (the /api/status partial-result path) must return the
+    # first clip and skip the second — not show zero clips for the job.
+    (tmp_path / "Ready Clip Title_clip_1.mp4").write_bytes(b"\x00")
+    data = {"shorts": [
+        {"clip_filename": "Ready Clip Title_clip_1.mp4", "start": 0, "end": 5},
+        {"start": 5, "end": 10},
+    ]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
+    assert len(result) == 1
+    assert result[0]["video_url"] == "/videos/job1/Ready Clip Title_clip_1.mp4"
+    assert result[0]["original_index"] == 0
+
+
+def test_build_clips_skips_deleted_after_publish_even_in_final_result(tmp_path):
+    # Regression for I1: only_ready=False (the /api/status final-result path,
+    # via load_final_result) must never resurface a clip that was deliberately
+    # deleted after a confirmed Zernio publish — even though its file is gone,
+    # the file-missing skip only fires under only_ready=True. Siblings keep
+    # their absolute original_index; the skip must not renumber them.
+    (tmp_path / "vid_clip_1.mp4").write_bytes(b"\x00")
+    (tmp_path / "vid_clip_3.mp4").write_bytes(b"\x00")
+    data = {"shorts": [
+        {"start": 0, "end": 5},
+        {"start": 5, "end": 10, "deleted_after_publish": True},
+        {"start": 10, "end": 15},
+    ]}
+    result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=False)
+    assert [c["original_index"] for c in result] == [0, 2]
+    assert all(not c.get("deleted_after_publish") for c in result)

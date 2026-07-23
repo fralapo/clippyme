@@ -38,10 +38,14 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   letterbox positioning), `live_monitor.py` (`LiveMonitorRegistry` +
   per-platform strategies: multi-channel Kick/Twitch/YouTube monitor, live +
   vod modes, global `picked_slots` publish spacing, state in
-  `data/live_monitor.json`, durable auto-resume via `resume_on_start`),
-  `manual_publish_queue.py` (persistent manual-publish queue: validated,
-  locked, atomic-write CRUD over `data/manual_publish_queue.json`; frozen
-  artifacts live under each job dir's `manual_queue/` subdir),
+  `data/live_monitor.json`; durable auto-resume via `resume_on_start`;
+  runtime config updates `POST /api/live-monitor/{id}/config` (allow-listed
+  fields, apply to future clips); start-time `catchup: backfill|live_only`;
+  publishing pause/resume `POST /api/live-monitor/{id}/publishing` with a
+  persisted pending queue that auto-drains on resume/restart; after a
+  confirmed Zernio publish the clip's artifacts are deleted and its metadata
+  entry marked `deleted_after_publish` — positions in `shorts` stay stable,
+  consumers pass `original_index`),
   `grade.py`, `clip_qa.py`, `clip_edit_ai.py`, `history_service.py`,
   `encode.py` (single source of x264 settings for every render pass),
   `errors.py` (domain exceptions mapped to HTTP by one app-level handler).
@@ -136,7 +140,12 @@ render as the last resort) → per-clip edge snapping (word → sentence →
 waveform-silence, `cut_ops.py`) → 9:16 reframe → Ken Burns zoom (folded into
 the master encode) → EBU R128 loudnorm → cover frame. The 16:9 source slice
 per clip is preserved on disk (`source_*.mp4`) to enable post-hoc reframe
-switching.
+switching. Clip files are named from the sanitized Gemini viral title
+(`run_ops.clip_output_basename`: Windows-forbidden chars/reserved names
+handled, always suffixed `_clip_{i+1}`); the basename is persisted per clip
+as `clip_filename` in metadata (re-dumped atomically per cut iteration) and
+every consumer resolves through `clip_resolve.clip_filename_for`
+(clip_filename → video_url → positional legacy fallback).
 
 **Transcription**: `TRANSCRIPTION_PROVIDER` = `deepgram` (default, Nova-3
 REST) | `elevenlabs` (Scribe; audio-event tags feed the Gemini prompt) |
@@ -181,21 +190,6 @@ optionally re-composes first so uploads match the preview; `SmartScheduler`
 picks Italian-prime-time slots with anti-collision. Zernio error bodies pass
 through verbatim (the frontend parses per-platform 429 daily limits).
 
-**Manual publish queue**: `publisher_mode` (`manual_queue` default | `zernio`,
-set per job on `/api/process`/`/api/batch`/`/api/live-monitor/start`, recorded
-in a per-job `publisher_mode.json` sidecar with an `owner` field) decides who
-writes a finished job's clips to the persistent queue
-(`manual_publish_queue.py`, `data/manual_publish_queue.json` + frozen
-`manual_queue/` artifacts per job dir). Regular jobs enqueue via a
-completion hook; monitor-owned jobs (`owner="live_monitor"`) are the single
-writer for their own composed clips — the hook skips them to avoid a
-double-enqueue of the raw + composed artifact. A startup importer
-(`import_existing_clips`) backfills pre-existing unpublished clips, skipping
-zernio-opted jobs. The live monitor itself durably auto-resumes: each
-snapshot persists `resume_on_start`, and `LiveMonitorRegistry.auto_resume()`
-restarts monitors at startup (`shutdown()` preserves the flag at teardown), so
-coverage survives a backend restart.
-
 ## Code rules
 
 - **Thin handlers**: validate → call a `clippyme.domain.*` helper → return
@@ -225,10 +219,6 @@ coverage survives a backend restart.
   With `TRUST_PROXY=1`, `client_ip` reads the **last** `X-Forwarded-For`
   hop (the shipped nginx APPENDS via `$proxy_add_x_forwarded_for` — the
   first hop is client-forgeable); keep append+last-hop in sync.
-  `GET /api/manual-publish/{id}/video` is deliberately exempt from
-  `CLIPPYME_API_TOKEN` (media elements can't send custom headers, same
-  rationale as the static mounts) but still requires a trusted-origin/
-  private-network client and validates the entry id and artifact path.
 
 ## API endpoints
 
@@ -245,10 +235,6 @@ coverage survives a backend restart.
 | POST | `/api/publish/{job_id}/{clip_index}` | Upload + schedule via Zernio |
 | GET/POST/DELETE | `/api/config*` | Keys, cookies, logo, fonts, Zernio (trusted clients) |
 | GET | `/api/history` · POST `/api/history/{id}/restore` · DELETE `/api/history/{id}` | Past jobs |
-| DELETE | `/api/history/{job_id}/clips/{clip_index}` | Delete one clip (transactional, tombstone retry; last clip deletes the project) |
-| GET | `/api/manual-publish?status=pending\|completed\|all` | List manual-publish queue entries |
-| POST | `/api/manual-publish/{id}/complete` · `/api/manual-publish/{id}/restore` | Mark queue entry published / undo |
-| GET | `/api/manual-publish/{id}/video` | Stream a queued clip (HTTP Range 206; exempt from `CLIPPYME_API_TOKEN`, still trusted-origin gated) |
 
 ## Configuration
 

@@ -5,28 +5,30 @@
 // only mounts while the Live Monitor tab is open, and an all-idle list still
 // needs to be observable (e.g. after a reload); add a backoff-when-idle if
 // the poll ever becomes a real cost concern.
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { getLiveMonitorStatus } from '../redesign/realApi';
 
 export function useLiveMonitorStatus(intervalMs = 5000) {
   const [monitors, setMonitors] = useState([]);
   const timerRef = useRef(null);
+  const cancelledRef = useRef(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await getLiveMonitorStatus();
+      if (!cancelledRef.current) setMonitors(Array.isArray(s?.monitors) ? s.monitors : []);
+    } catch {
+      // Backend unreachable — keep the last known list rather than
+      // flashing to an error state on a transient blip.
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const s = await getLiveMonitorStatus();
-        if (!cancelled) setMonitors(Array.isArray(s?.monitors) ? s.monitors : []);
-      } catch {
-        // Backend unreachable — keep the last known list rather than
-        // flashing to an error state on a transient blip.
-      }
-    };
-    poll();
-    timerRef.current = setInterval(poll, intervalMs);
-    return () => { cancelled = true; clearInterval(timerRef.current); };
-  }, [intervalMs]);
+    cancelledRef.current = false;
+    refresh();
+    timerRef.current = setInterval(refresh, intervalMs);
+    return () => { cancelledRef.current = true; clearInterval(timerRef.current); };
+  }, [intervalMs, refresh]);
 
-  return monitors;
+  return [monitors, refresh];
 }

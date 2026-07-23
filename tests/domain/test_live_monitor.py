@@ -3,6 +3,7 @@
 No curl_cffi / ffmpeg / event loop needed — LiveMonitor.__init__ is cheap and
 the helpers under test are pure.
 """
+import os
 from datetime import date, datetime, timezone
 
 import pytest
@@ -18,6 +19,7 @@ from clippyme.domain.live_monitor import (
     render_template,
     should_process_segment,
     validate_monitor_config,
+    validate_monitor_partial_update,
     _hhmmss,
 )
 from clippyme.integrations.twitch_client import find_live_vod
@@ -174,15 +176,9 @@ def test_validate_config_rejects_bad_slug(bad):
         validate_monitor_config(_base_cfg(slug=bad))
 
 
-def test_validate_config_manual_queue_allows_no_platforms_by_default():
-    cfg = validate_monitor_config({"slug": "chan", "platforms": []})
-    assert cfg["publisher_mode"] == "manual_queue"
-    assert cfg["platforms"] == []
-
-
-def test_validate_config_zernio_requires_platforms():
+def test_validate_config_requires_platforms():
     with pytest.raises(ValidationError):
-        validate_monitor_config({"slug": "chan", "publisher_mode": "zernio", "platforms": []})
+        validate_monitor_config({"slug": "chan", "platforms": []})
 
 
 def test_validate_config_rejects_incomplete_platform():
@@ -206,6 +202,23 @@ def test_validate_config_instructions_trimmed_and_capped():
 def test_validate_config_instructions_defaults_empty():
     cfg = validate_monitor_config(_base_cfg())
     assert cfg["instructions"] == ""
+
+
+# --- catchup (backfill vs live_only) ----------------------------------------
+
+def test_validate_config_catchup_defaults_backfill():
+    cfg = validate_monitor_config(_base_cfg())
+    assert cfg["catchup"] == "backfill"
+
+
+def test_validate_config_catchup_accepts_live_only():
+    cfg = validate_monitor_config(_base_cfg(catchup="live_only"))
+    assert cfg["catchup"] == "live_only"
+
+
+def test_validate_config_catchup_rejects_bad_value():
+    with pytest.raises(ValidationError):
+        validate_monitor_config(_base_cfg(catchup="rewind"))
 
 
 # --- multi-platform config -------------------------------------------------
@@ -245,6 +258,134 @@ def test_validate_config_youtube_channel_forms(chan):
 def test_validate_config_youtube_rejects_junk_channel():
     with pytest.raises(ValidationError):
         validate_monitor_config(_base_cfg(platform="youtube", mode="vod", slug="not a handle"))
+
+
+# --- validate_monitor_partial_update (runtime config updates) --------------
+
+def _running_cfg(**over):
+    return validate_monitor_config(_base_cfg(**over))
+
+
+def test_partial_update_rejects_empty():
+    with pytest.raises(ValidationError):
+        validate_monitor_partial_update({}, _running_cfg())
+
+
+def test_partial_update_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        validate_monitor_partial_update({"min_gap_seconds": 60, "channel": "other"}, _running_cfg())
+
+
+@pytest.mark.parametrize(
+    "field", ["platform", "mode", "channel", "slug", "loop", "publisher_mode", "catchup"])
+def test_partial_update_rejects_identity_lifecycle_fields(field):
+    with pytest.raises(ValidationError):
+        validate_monitor_partial_update({field: "x"}, _running_cfg())
+
+
+def test_partial_update_allows_updatable_fields_and_merges():
+    current = _running_cfg(slug="grenbaud")
+    new_cfg = validate_monitor_partial_update(
+        {"min_gap_seconds": 120, "instructions": "focus on jokes"}, current)
+    # unchanged fields carry over from current_cfg
+    assert new_cfg["channel"] == "grenbaud"
+    assert new_cfg["platform"] == "kick"
+    # updated fields applied
+    assert new_cfg["min_gap_seconds"] == 120
+    assert new_cfg["instructions"] == "focus on jokes"
+
+
+def test_partial_update_clamps_numeric_knobs_like_full_validation():
+    current = _running_cfg()
+    new_cfg = validate_monitor_partial_update({"segment_seconds": 99999}, current)
+    assert new_cfg["segment_seconds"] == 3600  # clamped to max, same as validate_monitor_config
+
+
+def test_partial_update_allows_banner_and_compose():
+    current = _running_cfg()
+    new_cfg = validate_monitor_partial_update(
+        {"banner": {"enabled": False}, "compose": {"toggles": {"hook": False}}}, current)
+    assert new_cfg["banner"] == {"enabled": False}
+    assert new_cfg["compose"] == {"toggles": {"hook": False}}
+
+
+# --- LiveMonitor.update_config / LiveMonitorRegistry.update_config ---------
+
+def test_monitor_update_config_swaps_cfg_and_persists(tmp_path):
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    persisted = []
+    mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path),
+                      on_state_change=lambda: persisted.append(True))
+    mon.cfg = _running_cfg(slug="foo")
+
+    result = mon.update_config({"min_gap_seconds": 42})
+
+    assert mon.cfg["min_gap_seconds"] == 42
+    assert result["min_gap_seconds"] == 42
+    assert persisted  # _persist() called
+
+    # returned dict is snapshot-shaped: only _SNAPSHOT_CONFIG_FIELDS keys
+    from clippyme.domain.live_monitor import _SNAPSHOT_CONFIG_FIELDS
+    assert set(result) == set(_SNAPSHOT_CONFIG_FIELDS)
+
+
+def test_monitor_status_includes_config_allow_list(tmp_path):
+    from clippyme.domain.live_monitor import _SNAPSHOT_CONFIG_FIELDS, LiveMonitor
+
+    mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(slug="foo")
+
+    status = mon.status()
+
+    assert "config" in status
+    # Same allow-list snapshot() uses — no secrets by construction, and no
+    # extra keys leaking through beyond what's explicitly allow-listed.
+    assert set(status["config"]) == set(_SNAPSHOT_CONFIG_FIELDS)
+    for key in _SNAPSHOT_CONFIG_FIELDS:
+        assert status["config"][key] == mon.cfg.get(key)
+
+
+def test_registry_update_config_not_found(tmp_path):
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+    with pytest.raises(__import__("clippyme.domain.errors", fromlist=["NotFoundError"]).NotFoundError):
+        reg.update_config("kick:nope", {"min_gap_seconds": 60})
+
+
+def test_registry_update_config_delegates_and_persists(tmp_path):
+    reg = LiveMonitorRegistry(
+        jobs={}, job_queue=None, output_dir=str(tmp_path),
+        state_path=str(tmp_path / "state.json"))
+
+    class _FakeMon:
+        id = "kick:foo"
+
+        def update_config(self, partial):
+            self.updated = partial
+            return {"min_gap_seconds": partial["min_gap_seconds"]}
+
+        def snapshot(self):
+            return {"platform": "kick", "channel": "foo"}
+
+    fake = _FakeMon()
+    reg._monitors["kick:foo"] = fake
+
+    result = reg.update_config("kick:foo", {"min_gap_seconds": 60})
+
+    assert fake.updated == {"min_gap_seconds": 60}
+    assert result == {"min_gap_seconds": 60}
+
+
+def test_snapshot_includes_config_for_restart_survival(tmp_path):
+    from clippyme.domain.live_monitor import LiveMonitor
+    mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(slug="foo", banner={"enabled": False}, compose={"toggles": {}})
+    snap = mon.snapshot()
+    assert snap["config"]["banner"] == {"enabled": False}
+    assert snap["config"]["compose"] == {"toggles": {}}
+    assert snap["config"]["min_gap_seconds"] == mon.cfg["min_gap_seconds"]
 
 
 # --- global slot sharing across monitors -----------------------------------
@@ -308,14 +449,14 @@ def test_loop_monitor_snapshot_marks_resume_on_start(tmp_path, monkeypatch):
     from clippyme.storage import config_store
 
     monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "g"})
-    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC"})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC", "api_key": "z"})
     monkeypatch.setattr(lm.LiveMonitor, "_make_strategy", lambda self, cfg, pc: object())
 
     reg = LiveMonitorRegistry(
         jobs={}, job_queue=None, output_dir=str(tmp_path),
         state_path=str(tmp_path / "state.json"))
 
-    reg.start(_base_cfg(platform="kick", mode="live", slug="foo", loop=True, platforms=[]))
+    reg.start(_base_cfg(platform="kick", mode="live", slug="foo", loop=True, platforms=[{"platform": "tiktok", "accountId": "a1"}]))
 
     assert reg._monitors["kick:foo"].snapshot()["resume_on_start"] is True
     assert reg._monitors["kick:foo"].status()["resume_on_start"] is True
@@ -400,23 +541,21 @@ def test_registry_auto_resume_starts_marked_snapshots_and_preserves_guards(tmp_p
         "monitors": {
             "kick:foo": {
                 "platform": "kick", "mode": "live", "channel": "foo",
-                "publisher_mode": "manual_queue",
                 "config": {
                     "platform": "kick", "mode": "live", "channel": "foo", "slug": "foo",
-                    "publisher_mode": "manual_queue", "platforms": [], "loop": True,
+                    "platforms": [{"platform": "tiktok", "accountId": "a1"}], "loop": True,
                     "segment_seconds": 120, "prelive_skip_seconds": 30,
                     "min_gap_seconds": 60, "poll_interval": 45, "timezone": "UTC",
                 },
                 "resume_on_start": True,
                 "seen_ids": ["vod1"], "published": ["/clips/a.mp4"],
-                "manual_queued": {"/clips/b.mp4": "entry-1"},
                 "segments_captured": 4, "clips_published": 5,
                 "covered_elapsed": 600, "covered_stream_start": "stream-start",
             }
         }
     }), encoding="utf-8")
     monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "fresh"})
-    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC"})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC", "api_key": "z"})
     monkeypatch.setattr(lm.LiveMonitor, "_make_strategy", lambda self, cfg, pc: object())
 
     reg = LiveMonitorRegistry(
@@ -436,7 +575,6 @@ def test_registry_auto_resume_starts_marked_snapshots_and_preserves_guards(tmp_p
         assert mon._gemini_key == "fresh"
         assert mon._seen_ids == {"vod1"}
         assert mon._published == {"/clips/a.mp4"}
-        assert mon._manual_queued == {"/clips/b.mp4": "entry-1"}
         assert mon.segments_captured == 4
         assert mon.clips_published == 5
         assert mon._covered_elapsed == 600
@@ -461,7 +599,7 @@ def test_registry_auto_resume_failure_is_visible_in_status(tmp_path, monkeypatch
                 "platform": "kick", "mode": "live", "channel": "foo",
                 "config": {
                     "platform": "kick", "mode": "live", "channel": "foo", "slug": "foo",
-                    "publisher_mode": "manual_queue", "platforms": [], "loop": True,
+                    "platforms": [{"platform": "tiktok", "accountId": "a1"}], "loop": True,
                 },
                 "resume_on_start": True,
             }
@@ -597,52 +735,89 @@ def test_snapshot_restore_roundtrips_coverage(tmp_path):
     assert mon2._covered_stream_start == "2026-07-20T10:00:00+00:00"
 
 
-def test_snapshot_roundtrips_allowlisted_start_config_and_manual_guards(tmp_path):
-    from clippyme.domain.live_monitor import LiveMonitor, validate_monitor_config
+# --- catchup="live_only" never recovers pre-start footage -------------------
 
-    cfg = validate_monitor_config({
-        "slug": "grenbaud", "platform": "kick", "mode": "live",
-        "publisher_mode": "manual_queue", "platforms": [],
-        "segment_seconds": 120, "prelive_skip_seconds": 30,
-        "min_gap_seconds": 60, "poll_interval": 45, "loop": True,
-        "instructions": "Find gaming clips", "caption_template": "{hook}",
-        "title_template": "{title}", "timezone": "UTC",
-        "banner": {"handle": "@grenbaud"},
-        "compose": {"toggles": {"subtitles": False}},
-    })
-    cfg["api_key"] = "must-not-persist"
-    cfg["GEMINI_API_KEY"] = "must-not-persist"
-    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
-                      output_dir=str(tmp_path))
-    mon.cfg = cfg
-    mon.platform = cfg["platform"]
-    mon.mode = cfg["mode"]
-    mon._manual_queued["/clips/one.mp4"] = "manual-entry-1"
+def test_schedule_backfill_live_only_skips_windows_and_tasks(tmp_path):
+    """live_only must never queue missed windows, a kick VOD baseline, or a
+    Twitch in-progress-VOD backfill task — only bookkeep 'now' as covered."""
+    import asyncio
 
-    snap = mon.snapshot()
+    from clippyme.domain.live_monitor import LiveMonitor
 
-    assert snap["publisher_mode"] == "manual_queue"
-    assert snap["config"] == {
-        key: cfg[key] for key in (
-            "platform", "mode", "channel", "slug", "publisher_mode", "platforms",
-            "segment_seconds", "prelive_skip_seconds", "min_gap_seconds", "poll_interval",
-            "loop", "instructions", "caption_template", "title_template", "timezone",
-            "banner", "compose",
-        )
-    }
-    assert snap["manual_queued"] == {"/clips/one.mp4": "manual-entry-1"}
-    assert "must-not-persist" not in __import__("json").dumps(snap)
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(catchup="live_only")
+    mon.platform = "kick"
+    started_at = datetime(2026, 7, 20, 10, 0, 0, tzinfo=timezone.utc)
 
-    restored = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
-                           output_dir=str(tmp_path))
-    restored.restore(snap)
+    def boom(*a, **k):
+        raise AssertionError("backfill fetch_vods must not be called in live_only")
 
-    assert restored.cfg == snap["config"]
-    assert restored.platform == "kick"
-    assert restored.mode == "live"
-    assert restored._manual_queued == {"/clips/one.mp4": "manual-entry-1"}
-    assert restored._gemini_key is None
-    assert restored._zernio_key is None
+    mon._strategy = type("S", (), {"fetch_vods": boom})()
+
+    asyncio.run(mon._schedule_backfill(started_at))
+
+    assert mon._missed_windows == []
+    assert mon._vod_baseline_ids == set()
+    assert mon.backfill_pending == 0
+    assert mon._covered_stream_start == started_at.isoformat()
+    assert mon._covered_elapsed > 0  # "now", not the prelive-skip offset
+    # no backfill task was ever scheduled
+    assert not mon._publish_tasks
+
+
+def test_schedule_backfill_backfill_mode_still_queues_kick_windows(tmp_path):
+    """Unchanged default behaviour: catchup='backfill' still queues windows."""
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg()  # default catchup="backfill"
+    mon.platform = "kick"
+    from datetime import timedelta
+    started_at = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    mon._strategy = type("S", (), {"fetch_vods": lambda self: []})()
+
+    asyncio.run(mon._schedule_backfill(started_at))
+
+    assert mon._missed_windows  # windows queued, unlike live_only
+    assert mon.backfill_pending == len(mon._missed_windows)
+
+
+def test_recover_kick_backfill_noop_in_live_only(tmp_path):
+    """Defence-in-depth: even if _missed_windows were somehow non-empty,
+    _recover_kick_backfill must not submit a job when catchup='live_only'."""
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(catchup="live_only")
+    mon._missed_windows = [(0, 100)]
+
+    def boom(*a, **k):
+        raise AssertionError("must not run when catchup='live_only'")
+
+    mon._backfill_windows = boom
+
+    asyncio.run(mon._recover_kick_backfill())  # returns immediately, no error
+
+
+def test_backfill_from_vod_noop_in_live_only(tmp_path):
+    import asyncio
+
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = _running_cfg(catchup="live_only")
+
+    def boom(*a, **k):
+        raise AssertionError("must not run when catchup='live_only'")
+
+    mon._backfill_windows = boom
+
+    asyncio.run(mon._backfill_from_vod([(0, 100)]))
 
 
 # --- _publish_one: 429 backoff + retry -------------------------------------
@@ -673,7 +848,7 @@ def test_publish_one_retries_on_429_then_succeeds(tmp_path, monkeypatch):
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
                       output_dir=str(tmp_path))
-    mon.cfg = {"publisher_mode": "zernio", "title_template": "{title}", "caption_template": "{hook}",
+    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
                "platforms": [{"platform": "tiktok", "accountId": "a"}],
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
@@ -712,7 +887,7 @@ def test_publish_one_rolls_start_date_on_daily_limit(tmp_path, monkeypatch):
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
                       output_dir=str(tmp_path))
-    mon.cfg = {"publisher_mode": "zernio", "title_template": "{title}", "caption_template": "{hook}",
+    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
                "platforms": [{"platform": "tiktok", "accountId": "a"}],
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
@@ -747,7 +922,7 @@ def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
                       output_dir=str(tmp_path))
-    mon.cfg = {"publisher_mode": "zernio", "title_template": "{title}", "caption_template": "{hook}",
+    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
                "platforms": [{"platform": "tiktok", "accountId": "a"}],
                "timezone": "Europe/Rome"}
     mon._zernio_key = "sk_test"
@@ -760,151 +935,234 @@ def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
     assert "HTTP 500" in (mon.last_error or "")
 
 
-# --- manual-queue dispatch -------------------------------------------------
+# --- pause / resume auto-publish -------------------------------------------
 
-class _RecordingManualQueue:
-    def __init__(self, *, fail_first=False):
-        self.calls = []
-        self.fail_first = fail_first
-
-    def enqueue(self, **kwargs):
-        self.calls.append(kwargs)
-        if self.fail_first and len(self.calls) == 1:
-            raise OSError("disk full")
-        return {"id": f"entry-{len(self.calls)}"}
-
-
-def test_manual_dispatch_composes_renders_templates_and_enqueues_without_zernio(tmp_path, monkeypatch):
-    import asyncio
+def _publishing_monitor(tmp_path, monkeypatch, *, jobs=None):
+    """A LiveMonitor wired with a fake publish_clip (records calls, succeeds)."""
     from clippyme.domain.live_monitor import LiveMonitor
     from clippyme.integrations import social_publisher as sp
 
-    job_id = "11111111-1111-4111-8111-111111111111"
-    job_dir = tmp_path / job_id
-    job_dir.mkdir()
-    base = job_dir / "clip.mp4"
-    composed = job_dir / "composed.mp4"
-    base.write_bytes(b"base")
-    composed.write_bytes(b"composed")
-    queue = _RecordingManualQueue()
-    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
-                      output_dir=str(tmp_path), manual_publish_queue=queue)
-    mon.cfg = {
-        "publisher_mode": "manual_queue", "title_template": "Title: {title}",
-        "caption_template": "Hook: {hook}", "platforms": [],
-        "timezone": "Europe/Rome", "channel": "grenbaud", "mode": "live",
-    }
+    calls = []
+    monkeypatch.setattr(sp, "publish_clip", lambda **kw: calls.append(kw))
+    mon = LiveMonitor(id="kick:chan", jobs=jobs if jobs is not None else {},
+                      job_queue=None, output_dir=str(tmp_path))
+    mon.cfg = {"title_template": "{title}", "caption_template": "{hook}",
+               "platforms": [{"platform": "tiktok", "accountId": "a"}],
+               "timezone": "Europe/Rome"}
+    mon._zernio_key = "sk_test"
 
-    async def compose(*_args):
-        return str(composed)
-
-    def no_zernio(*_args, **_kwargs):
-        pytest.fail("manual delivery must never call Zernio")
-
-    monkeypatch.setattr(mon, "_compose_for_publish", compose)
-    monkeypatch.setattr(sp, "publish_clip", no_zernio)
-
-    asyncio.run(mon._publish_one(job_id, {
-        "video_url": f"/videos/{job_id}/clip.mp4", "original_index": 2,
-        "title": "A title", "viral_hook_text": "A hook", "project_title": "Live 42",
-    }))
-
-    assert queue.calls == [{
-        "job_id": job_id, "clip_index": 2, "source_path": str(composed),
-        "title": "Title: A title", "caption": "Hook: A hook",
-        "source_platform": "kick", "source_channel": "grenbaud", "source_kind": "live",
-        "project_title": "Live 42", "monitor_id": "kick:grenbaud",
-    }]
-    assert mon._published == set()
-    assert mon._manual_queued[str(base)] == "entry-1"
+    # Skip the real ffmpeg compose pass — publish/delete behaviour is what these
+    # tests exercise; publish the raw clip path directly.
+    async def _no_compose(job_id, clip, base_path):
+        return base_path
+    mon._compose_for_publish = _no_compose
+    return mon, calls
 
 
-def test_manual_enqueue_failure_is_retryable_and_duplicate_callback_is_not(tmp_path, monkeypatch):
+def test_paused_publish_queues_instead_of_publishing(tmp_path, monkeypatch):
+    """publishing_enabled=False → clip goes to pending, publish_clip NOT called,
+    and the flag + pending round-trip through snapshot/restore."""
     import asyncio
-    from clippyme.domain.live_monitor import LiveMonitor
-    from clippyme.integrations import social_publisher as sp
 
-    job_id = "11111111-1111-4111-8111-111111111111"
-    job_dir = tmp_path / job_id
-    job_dir.mkdir()
-    (job_dir / "clip.mp4").write_bytes(b"base")
-    queue = _RecordingManualQueue(fail_first=True)
-    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
-                      output_dir=str(tmp_path), manual_publish_queue=queue)
-    mon.cfg = {
-        "publisher_mode": "manual_queue", "title_template": "", "caption_template": "",
-        "platforms": [], "timezone": "Europe/Rome", "channel": "grenbaud", "mode": "live",
-    }
-
-    def no_zernio(*_args, **_kwargs):
-        pytest.fail("manual delivery must never call Zernio")
-
-    monkeypatch.setattr(sp, "publish_clip", no_zernio)
-    clip = {"video_url": f"/videos/{job_id}/clip.mp4", "original_index": 0, "title": "T"}
-    asyncio.run(mon._publish_one(job_id, clip))
-    assert str(job_dir / "clip.mp4") not in mon._manual_queued
-
-    asyncio.run(mon._publish_one(job_id, clip))
-    asyncio.run(mon._publish_one(job_id, clip))
-    assert len(queue.calls) == 2
-    assert mon._manual_queued[str(job_dir / "clip.mp4")] == "entry-2"
-
-
-def test_concurrent_manual_callbacks_claim_before_await_and_enqueue_once(tmp_path):
-    import asyncio
     from clippyme.domain.live_monitor import LiveMonitor
 
-    job_id = "11111111-1111-4111-8111-111111111111"
-    job_dir = tmp_path / job_id
+    job_dir = tmp_path / "job1"
     job_dir.mkdir()
-    clip_path = job_dir / "clip.mp4"
-    clip_path.write_bytes(b"base")
-    queue = _RecordingManualQueue()
-    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
-                      output_dir=str(tmp_path), manual_publish_queue=queue)
-    mon.cfg = {
-        "publisher_mode": "manual_queue", "title_template": "", "caption_template": "",
-        "platforms": [], "timezone": "Europe/Rome", "channel": "grenbaud", "mode": "live",
-    }
+    (job_dir / "c.mp4").write_bytes(b"x")
 
-    async def compose(*_args):
-        await asyncio.sleep(0)
-        return str(clip_path)
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+    mon.publishing_enabled = False
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "viral_hook_text": "H"}
 
-    mon._compose_for_publish = compose
-    clip = {"video_url": f"/videos/{job_id}/clip.mp4", "original_index": 0, "title": "T"}
+    asyncio.run(mon._publish_one("job1", clip))
 
-    async def publish_duplicates():
-        await asyncio.gather(mon._publish_one(job_id, clip), mon._publish_one(job_id, clip))
+    assert calls == []                       # nothing published while paused
+    assert len(mon._pending_publish) == 1
+    assert mon.clips_published == 0
 
-    asyncio.run(publish_duplicates())
+    snap = mon.snapshot()
+    assert snap["publishing_enabled"] is False
+    assert snap["pending_publish"] == [{"job_id": "job1", "clip": clip}]
 
-    assert len(queue.calls) == 1
-    assert mon._manual_queued[str(clip_path)] == "entry-1"
+    fresh = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    fresh.restore(snap)
+    assert fresh.publishing_enabled is False
+    assert fresh._pending_publish == [{"job_id": "job1", "clip": clip}]
 
 
-def test_delivery_uses_publisher_mode_current_at_callback_time(tmp_path, monkeypatch):
+def test_resume_drains_pending_in_order_with_spacing(tmp_path, monkeypatch):
+    """Resume drains queued clips through the publish path, in order, spacing
+    consecutive publishes."""
     import asyncio
-    from clippyme.domain.live_monitor import LiveMonitor
-    from clippyme.integrations import social_publisher as sp
 
-    job_id = "11111111-1111-4111-8111-111111111111"
-    job_dir = tmp_path / job_id
+    from clippyme.domain import live_monitor as lm
+
+    job_dir = tmp_path / "job1"
     job_dir.mkdir()
-    (job_dir / "clip.mp4").write_bytes(b"base")
-    queue = _RecordingManualQueue()
-    mon = LiveMonitor(id="kick:grenbaud", jobs={}, job_queue=None,
-                      output_dir=str(tmp_path), manual_publish_queue=queue)
-    mon.cfg = {
-        "publisher_mode": "zernio", "title_template": "", "caption_template": "",
-        "platforms": [{"platform": "tiktok", "accountId": "account"}],
-        "timezone": "Europe/Rome", "channel": "grenbaud", "mode": "live",
-    }
-    mon.cfg["publisher_mode"] = "manual_queue"
+    (job_dir / "a.mp4").write_bytes(b"x")
+    (job_dir / "b.mp4").write_bytes(b"x")
 
-    monkeypatch.setattr(sp, "publish_clip", lambda **_kwargs: pytest.fail("must queue manually"))
-    asyncio.run(mon._publish_one(job_id, {
-        "video_url": f"/videos/{job_id}/clip.mp4", "original_index": 0, "title": "T",
-    }))
+    sleeps = []
 
-    assert len(queue.calls) == 1
+    async def fake_sleep(secs):
+        sleeps.append(secs)
+
+    monkeypatch.setattr(lm.asyncio, "sleep", fake_sleep)
+
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+    mon.publishing_enabled = False
+    for name in ("a.mp4", "b.mp4"):
+        asyncio.run(mon._publish_one(
+            "job1", {"video_url": f"/videos/job1/{name}", "title": name}))
+    assert calls == [] and len(mon._pending_publish) == 2
+
+    mon.publishing_enabled = True
+    asyncio.run(mon._drain_pending())
+
+    published_paths = [os.path.basename(c["clip_path"]) for c in calls]
+    assert published_paths == ["a.mp4", "b.mp4"]           # order preserved
+    assert lm.PUBLISH_SPACING_SECONDS in sleeps             # spacing applied
+    assert mon._pending_publish == []
+    assert mon.clips_published == 2
+
+
+def test_successful_publish_deletes_clip_files_and_empty_dir(tmp_path, monkeypatch):
+    """A published clip's artifacts are removed; when it was the last clip the
+    whole job dir goes away."""
+    import asyncio
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+    (job_dir / "source_c.mp4").write_bytes(b"x")
+    (job_dir / "c_cover.jpg").write_bytes(b"x")
+    (job_dir / "composed_clip_0.mp4").write_bytes(b"x")
+    (job_dir / "run_metadata.json").write_text(
+        '{"shorts": [{"video_url": "/videos/job1/c.mp4"}]}')
+
+    jobs = {"job1": {"status": "completed"}}
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+
+    asyncio.run(mon._publish_one("job1", clip))
+
+    assert len(calls) == 1
+    assert mon.clips_published == 1
+    assert not job_dir.exists()          # last clip → job dir removed
+
+
+def test_successful_publish_keeps_dir_and_marks_metadata_when_clips_remain(tmp_path, monkeypatch):
+    """Deleting one clip marks its metadata entry and leaves siblings intact."""
+    import asyncio
+    import json
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+    (job_dir / "d.mp4").write_bytes(b"x")   # sibling clip stays
+    meta = job_dir / "run_metadata.json"
+    meta.write_text(json.dumps({"shorts": [
+        {"video_url": "/videos/job1/c.mp4"},
+        {"video_url": "/videos/job1/d.mp4"},
+    ]}))
+
+    jobs = {"job1": {"status": "completed"}}
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+
+    asyncio.run(mon._publish_one("job1", clip))
+
+    assert job_dir.exists()
+    assert not (job_dir / "c.mp4").exists()
+    assert (job_dir / "d.mp4").exists()
+    data = json.loads(meta.read_text())
+    assert data["shorts"][0].get("deleted_after_publish") is True
+    assert "deleted_after_publish" not in data["shorts"][1]
+
+
+def test_deletion_failure_does_not_raise_and_clip_stays_published(tmp_path, monkeypatch):
+    """os.remove blowing up must not surface — the publish already succeeded."""
+    import asyncio
+
+    from clippyme.domain import live_monitor as lm
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+
+    # RuntimeError escapes _safe_remove's OSError guard → exercises the outer
+    # best-effort try/except in _delete_clip_artifacts.
+    def boom(path):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(lm.os, "remove", boom)
+
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+
+    asyncio.run(mon._publish_one("job1", clip))   # must not raise
+
+    assert len(calls) == 1
+    assert mon.clips_published == 1
+
+
+def test_registry_set_publishing_unknown_id_raises_not_found(tmp_path):
+    from clippyme.domain.errors import NotFoundError
+    from clippyme.domain.live_monitor import LiveMonitorRegistry
+
+    reg = LiveMonitorRegistry(jobs={}, job_queue=None, output_dir=str(tmp_path),
+                              state_path=str(tmp_path / "state.json"))
+    with pytest.raises(NotFoundError):
+        reg.set_publishing("kick:nope", False)
+
+
+def test_restored_monitor_with_pending_and_enabled_drains_on_start(tmp_path, monkeypatch):
+    """Regression for I2: a snapshot taken mid-drain (publishing_enabled=True,
+    non-empty pending) must not sit stuck after restart until someone toggles
+    pause/resume — start() must kick the existing drain helper itself."""
+    import asyncio
+
+    from clippyme.domain import live_monitor as lm
+    from clippyme.storage import config_store
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "c.mp4").write_bytes(b"x")
+
+    monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "g"})
+    monkeypatch.setattr(config_store, "load_zernio_config", lambda: {"timezone": "UTC", "api_key": "z"})
+    monkeypatch.setattr(lm.LiveMonitor, "_make_strategy", lambda self, cfg, pc: object())
+
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+
+    # Simulate a snapshot restored mid-drain: enabled, with a queued clip —
+    # exactly what LiveMonitor.restore() would produce from disk.
+    clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
+    mon.publishing_enabled = True
+    mon._pending_publish = [{"job_id": "job1", "clip": clip}]
+
+    # Stub out the real live/vod loop entirely — this test only cares that
+    # start() schedules the existing _drain_pending() helper, not that the
+    # monitor loop runs.
+    async def fake_run():
+        return None
+    mon._run = fake_run
+
+    cfg = validate_monitor_config(_base_cfg(
+        platform="kick", mode="live", slug="chan",
+        platforms=[{"platform": "tiktok", "accountId": "a"}]))
+
+    async def go():
+        mon.start(cfg)
+        # Let the scheduled drain task (and the stubbed _run task) complete.
+        for _ in range(20):
+            await asyncio.sleep(0)
+        if mon._publish_tasks:
+            await asyncio.gather(*mon._publish_tasks)
+
+    asyncio.run(go())
+
+    assert len(calls) == 1
+    assert mon._pending_publish == []
+    assert mon.clips_published == 1
+    assert mon._draining is False   # guard released, not left stuck

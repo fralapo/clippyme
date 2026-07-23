@@ -65,15 +65,6 @@ PUBLISH_429_BACKOFF_SECONDS = 90
 # day with a free slot; these rolls are free (no sleep) and capped separately.
 PUBLISH_MAX_DAY_ROLLS = 7
 
-# Persist only validated, non-secret start fields.  Snapshotting ``self.cfg``
-# directly would make a future config addition capable of leaking a credential.
-_SNAPSHOT_CONFIG_FIELDS = (
-    "platform", "mode", "channel", "slug", "publisher_mode", "platforms",
-    "segment_seconds", "prelive_skip_seconds", "min_gap_seconds", "poll_interval",
-    "loop", "instructions", "caption_template", "title_template", "timezone",
-    "banner", "compose",
-)
-
 
 # ---------------------------------------------------------------------------
 # Pure helpers (host-testable, no I/O)
@@ -188,6 +179,13 @@ def _validate_channel(platform: str, raw) -> str:
     return ch
 
 
+def _validate_catchup(value) -> str:
+    catchup = str(value or "backfill").strip().lower()
+    if catchup not in ("backfill", "live_only"):
+        raise ValidationError("catchup must be 'backfill' or 'live_only'")
+    return catchup
+
+
 def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome") -> dict:
     """Coerce + bound a raw start payload into the monitor's config dict.
 
@@ -205,13 +203,8 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
 
     channel = _validate_channel(platform, config.get("channel") or config.get("slug"))
 
-    publisher_mode = str(config.get("publisher_mode") or "manual_queue").strip().lower()
-    if publisher_mode not in ("manual_queue", "zernio"):
-        raise ValidationError("publisher_mode must be 'manual_queue' or 'zernio'")
     platforms = config.get("platforms") or []
-    if not isinstance(platforms, list):
-        raise ValidationError("platforms must be a list")
-    if publisher_mode == "zernio" and not platforms:
+    if not isinstance(platforms, list) or not platforms:
         raise ValidationError("at least one platform target is required")
     for entry in platforms:
         if not isinstance(entry, dict) or not entry.get("platform") or not entry.get("accountId"):
@@ -231,7 +224,6 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
         "mode": mode,
         "channel": channel,
         "slug": channel,  # back-compat alias
-        "publisher_mode": publisher_mode,
         "platforms": platforms,
         "segment_seconds": _clamp_int(config.get("segment_seconds"), 1800, 60, 3600),
         "prelive_skip_seconds": _clamp_int(config.get("prelive_skip_seconds"), 1800, 0, 7200),
@@ -245,12 +237,52 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
         "caption_template": str(config.get("caption_template") or "")[:2200],
         "title_template": str(config.get("title_template") or "")[:500],
         "timezone": str(config.get("timezone") or default_timezone or "Europe/Rome")[:64],
+        # "backfill" (default) recovers footage missed before capture started
+        # (prelive window, kick/twitch missed-window recovery). "live_only"
+        # never recovers pre-start footage — coverage begins at launch. This is
+        # a start-time choice, not runtime-updatable (see _UPDATABLE_CONFIG_FIELDS).
+        "catchup": _validate_catchup(config.get("catchup")),
         # Banner + compose overrides for the auto-publish flow (None = defaults).
         # Kept as-is here; build_monitor_compose / monitor_banner_params own the
         # semantics. The API schema already bounds them.
         "banner": config.get("banner") if isinstance(config.get("banner"), dict) else None,
         "compose": config.get("compose") if isinstance(config.get("compose"), dict) else None,
     }
+
+
+# Fields a running monitor's config may be safely mutated to at runtime.
+# platform/mode/channel/slug/loop are identity/lifecycle knobs — changing them
+# mid-run would need a restart, not a config patch.
+_UPDATABLE_CONFIG_FIELDS = (
+    "instructions", "caption_template", "title_template", "min_gap_seconds",
+    "segment_seconds", "prelive_skip_seconds", "platforms", "banner", "compose",
+    "poll_interval",
+)
+
+# The full set of cfg keys worth persisting/restoring (mirrors
+# validate_monitor_config's return shape). No secrets ever live in cfg.
+_SNAPSHOT_CONFIG_FIELDS = (
+    "platform", "mode", "channel", "slug", "platforms", "segment_seconds",
+    "prelive_skip_seconds", "min_gap_seconds", "poll_interval", "loop",
+    "instructions", "caption_template", "title_template", "timezone",
+    "banner", "compose", "catchup",
+)
+
+
+def validate_monitor_partial_update(partial: dict, current_cfg: dict) -> dict:
+    """Validate a runtime config-update payload against a running monitor's
+    current config. Only ``_UPDATABLE_CONFIG_FIELDS`` may be changed; anything
+    else (platform/mode/channel/slug/loop/...) is rejected. Returns the fully
+    re-validated merged config (same shape as ``validate_monitor_config``'s
+    return)."""
+    if not isinstance(partial, dict) or not partial:
+        raise ValidationError("no updatable fields provided")
+    bad = set(partial) - set(_UPDATABLE_CONFIG_FIELDS)
+    if bad:
+        raise ValidationError(f"cannot update field(s): {sorted(bad)}")
+    merged = dict(current_cfg)
+    merged.update(partial)
+    return validate_monitor_config(merged, default_timezone=current_cfg.get("timezone"))
 
 
 def _hhmmss(seconds: int) -> str:
@@ -413,7 +445,6 @@ class LiveMonitor:
                  upload_dir: str = "uploads", on_job_change=None,
                  picked_slots: list | None = None,
                  publish_lock: asyncio.Lock | None = None,
-                 manual_publish_queue=None,
                  on_state_change=None):
         self.id = id
         self._jobs = jobs
@@ -423,7 +454,6 @@ class LiveMonitor:
         self._on_job_change = on_job_change
         self._picked_slots = picked_slots if picked_slots is not None else []
         self._publish_lock = publish_lock or asyncio.Lock()
-        self._manual_publish_queue = manual_publish_queue
         self._on_state_change = on_state_change
 
         self._task: asyncio.Task | None = None
@@ -434,9 +464,13 @@ class LiveMonitor:
         self._strategy = None
         self._scheduler: SharedGapScheduler | None = None
         self._published: set[str] = set()
-        self._manual_queued: dict[str, str] = {}
-        self._manual_in_flight: set[str] = set()
         self._seen_ids: set[str] = set()
+        # Runtime auto-publish toggle. While False, finished clips accumulate in
+        # _pending_publish (paths + public clip metadata only — never secrets)
+        # and drain through the normal publish path when flipped back True.
+        self.publishing_enabled: bool = True
+        self._pending_publish: list[dict] = []
+        self._draining: bool = False
         self._gemini_key = None
         self._zernio_key = None
 
@@ -487,22 +521,29 @@ class LiveMonitor:
             "backfill_pending": self.backfill_pending,
             "last_error": self.last_error,
             "resume_on_start": self.resume_on_start,
+            "publishing_enabled": self.publishing_enabled,
+            "pending_publish": len(self._pending_publish),
+            # Same allow-list snapshot() persists — no secrets by construction
+            # (validate_monitor_config never puts any in cfg). Lets the
+            # frontend Settings drawer seed from the monitor's current config
+            # instead of opening blank.
+            "config": {k: self.cfg.get(k) for k in _SNAPSHOT_CONFIG_FIELDS},
         }
 
     def snapshot(self) -> dict:
         """Persistable per-monitor state (never secrets / Popen / logs)."""
-        config = {
-            key: self.cfg[key] for key in _SNAPSHOT_CONFIG_FIELDS if key in self.cfg
-        }
         return {
             "platform": self.platform,
             "mode": self.mode,
             "channel": self.cfg.get("channel"),
-            "publisher_mode": config.get("publisher_mode", "manual_queue"),
-            "config": config,
+            # Full cfg (no secrets — validate_monitor_config never puts any
+            # in there) so a restart/auto-resume picks up runtime updates too.
+            "config": {k: self.cfg.get(k) for k in _SNAPSHOT_CONFIG_FIELDS} if self.cfg else None,
             "seen_ids": sorted(self._seen_ids),
             "published": sorted(self._published),
-            "manual_queued": dict(self._manual_queued),
+            # Paths + public clip metadata only (no secrets) — restored on resume.
+            "publishing_enabled": self.publishing_enabled,
+            "pending_publish": self._pending_publish,
             "segments_captured": self.segments_captured,
             "clips_published": self.clips_published,
             "covered_elapsed": int(self._covered_elapsed),
@@ -516,21 +557,10 @@ class LiveMonitor:
         """Rehydrate the double-publish / already-seen guards from disk."""
         if not snap:
             return
-        saved_config = snap.get("config")
-        if isinstance(saved_config, dict):
-            self.cfg = {
-                key: saved_config[key] for key in _SNAPSHOT_CONFIG_FIELDS if key in saved_config
-            }
-            self.platform = self.cfg.get("platform") or self.platform
-            self.mode = self.cfg.get("mode") or self.mode
         self._seen_ids = set(snap.get("seen_ids") or [])
         self._published = set(snap.get("published") or [])
-        manual_queued = snap.get("manual_queued")
-        if isinstance(manual_queued, dict):
-            self._manual_queued = {
-                path: entry_id for path, entry_id in manual_queued.items()
-                if isinstance(path, str) and isinstance(entry_id, str)
-            }
+        self.publishing_enabled = bool(snap.get("publishing_enabled", True))
+        self._pending_publish = list(snap.get("pending_publish") or [])
         self.segments_captured = int(snap.get("segments_captured") or 0)
         self.clips_published = int(snap.get("clips_published") or 0)
         self._covered_elapsed = int(snap.get("covered_elapsed") or 0)
@@ -550,10 +580,9 @@ class LiveMonitor:
         self._gemini_key = pc.get("GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not self._gemini_key:
             raise ValidationError("Gemini API key not configured")
-        if cfg["publisher_mode"] == "zernio":
-            self._zernio_key = load_zernio_config().get("api_key")
-            if not self._zernio_key:
-                raise ValidationError("Zernio API key not configured")
+        self._zernio_key = load_zernio_config().get("api_key")
+        if not self._zernio_key:
+            raise ValidationError("Zernio API key not configured")
 
         self.cfg = cfg
         self.platform = cfg["platform"]
@@ -579,8 +608,28 @@ class LiveMonitor:
             logger.warning(
                 "LiveMonitor %s: no running event loop, task not scheduled", self.id)
             self._task = None
+        else:
+            # A restored snapshot can carry non-empty pending publishes with
+            # publishing_enabled=True (e.g. crash mid-drain). Without this,
+            # the queue is durably stuck until someone manually toggles
+            # pause/resume. _drain_pending's own _draining guard still
+            # applies, so this can never interleave with the toggle path.
+            if self.publishing_enabled and self._pending_publish:
+                self._track_task(asyncio.create_task(self._drain_pending()))
         logger.info("LiveMonitor started: %s (mode=%s)", self.id, self.mode)
         return self.status()
+
+    def update_config(self, partial: dict) -> dict:
+        """Apply a validated partial config update while running.
+
+        Swaps ``self.cfg`` in one atomic assignment — every per-segment /
+        per-publish read site reads ``self.cfg[...]`` at use time, so the new
+        values apply to the NEXT segment/publish only, never retroactively.
+        """
+        new_cfg = validate_monitor_partial_update(partial, self.cfg)
+        self.cfg = new_cfg
+        self._persist()
+        return {k: new_cfg.get(k) for k in _SNAPSHOT_CONFIG_FIELDS}
 
     def _make_strategy(self, cfg: dict, pc: dict):
         platform, channel = cfg["platform"], cfg["channel"]
@@ -773,6 +822,15 @@ class LiveMonitor:
             return
         started_iso = started_at.isoformat()
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+        if self.cfg.get("catchup") == "live_only":
+            # No historical recovery — coverage starts at "now" (current
+            # stream elapsed), never before this monitor session started.
+            if self._covered_stream_start != started_iso:
+                self._covered_elapsed = 0
+            self._covered_stream_start = started_iso
+            self._covered_elapsed = max(self._covered_elapsed, int(elapsed))
+            self._persist()
+            return
         start = effective_backfill_start(
             self.cfg["prelive_skip_seconds"], self._covered_elapsed,
             self._covered_stream_start, started_iso)
@@ -802,6 +860,8 @@ class LiveMonitor:
 
     async def _backfill_from_vod(self, windows) -> None:
         """Twitch: resolve the in-progress VOD url and process each missed window."""
+        if self.cfg.get("catchup") == "live_only":
+            return  # ponytail: defence-in-depth — _schedule_backfill never calls us in this mode
         if not hasattr(self._strategy, "live_vod_url"):
             return
         try:
@@ -820,6 +880,8 @@ class LiveMonitor:
     async def _recover_kick_backfill(self) -> None:
         """Kick: poll for the replay VOD that appears after the session ends
         (an id not in the pre-session baseline), then process the missed windows."""
+        if self.cfg.get("catchup") == "live_only":
+            return  # ponytail: defence-in-depth — _schedule_backfill never calls us in this mode
         windows = self._missed_windows
         for _ in range(30):  # ponytail: fixed cap; replay usually lands in minutes
             if self._stop.is_set():
@@ -953,9 +1015,7 @@ class LiveMonitor:
                              reframe_mode="disabled", instructions=self.cfg.get("instructions") or None)
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
-            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change,
-            publisher_mode=self.cfg.get("publisher_mode", "manual_queue"),
-            publisher_owner="live_monitor")
+            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
         logger.info("LiveMonitor %s submitted segment job %s", self.id, job_id)
         return job_id
 
@@ -969,9 +1029,7 @@ class LiveMonitor:
                              reframe_mode="disabled", instructions=self.cfg.get("instructions") or None)
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
-            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change,
-            publisher_mode=self.cfg.get("publisher_mode", "manual_queue"),
-            publisher_owner="live_monitor")
+            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
         logger.info("LiveMonitor %s submitted url job %s (%s)", self.id, job_id, url)
         return job_id
 
@@ -1028,57 +1086,25 @@ class LiveMonitor:
             return base_path
 
     async def _publish_one(self, job_id: str, clip: dict) -> None:
+        from clippyme.integrations.social_publisher import ZernioError, publish_clip
+
         video_url = clip.get("video_url") or ""
         clip_path = os.path.join(self._output_dir, job_id, os.path.basename(video_url))
         if not os.path.isfile(clip_path):
             logger.warning("LiveMonitor %s: clip file missing, skipping: %s", self.id, clip_path)
             return
         # Dedupe on the BASE clip path (stable), then compose the publish recipe.
-        publisher_mode = self.cfg.get("publisher_mode", "manual_queue")
-        if publisher_mode == "manual_queue":
-            if (clip_path in self._manual_queued or
-                    clip_path in self._manual_in_flight):
-                return
-            if self._manual_publish_queue is None:
-                self.last_error = "manual publish queue not configured"
-                return
-            # Claim before the compose await so duplicate callbacks cannot both
-            # enqueue the same final MP4.  A failed attempt releases the claim.
-            self._manual_in_flight.add(clip_path)
-            try:
-                upload_path = await self._compose_for_publish(job_id, clip, clip_path)
-                title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
-                caption = render_template(self.cfg["caption_template"], clip)
-                entry = await asyncio.to_thread(
-                    self._manual_publish_queue.enqueue,
-                    job_id=job_id,
-                    clip_index=int(clip.get("original_index") or 0),
-                    source_path=upload_path,
-                    title=title,
-                    caption=caption,
-                    source_platform=self.platform,
-                    source_channel=self.cfg["channel"],
-                    source_kind=self.mode,
-                    project_title=clip.get("project_title") or "",
-                    monitor_id=self.id,
-                )
-            except Exception as exc:
-                logger.exception("LiveMonitor %s: manual enqueue failed for %s", self.id, clip_path)
-                self.last_error = f"manual enqueue failed: {exc}"
-                return
-            finally:
-                self._manual_in_flight.discard(clip_path)
-            self._manual_queued[clip_path] = entry["id"]
-            self._persist()
+        if clip_path in self._published:
             return
-        if publisher_mode == "zernio" and clip_path in self._published:
+        # Paused: queue the clip (public metadata only) and drain it on resume.
+        if not self.publishing_enabled:
+            self._pending_publish.append({"job_id": job_id, "clip": clip})
+            self._persist()
             return
         upload_path = await self._compose_for_publish(job_id, clip, clip_path)
 
         title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
         caption = render_template(self.cfg["caption_template"], clip)
-
-        from clippyme.integrations.social_publisher import ZernioError, publish_clip
         # Serialise publishes GLOBALLY (shared lock) so the shared scheduler's
         # picked_slots list (mutated inside publish_clip's worker thread) stays
         # race-free across every monitor.
@@ -1129,6 +1155,95 @@ class LiveMonitor:
         self._published.add(clip_path)
         self.clips_published += 1
         self._persist()
+        # Clip is published → it's done; free the disk (best-effort, never raises).
+        self._delete_clip_artifacts(job_id, clip, clip_path, upload_path)
+
+    # -- pause / resume auto-publish -------------------------------------
+
+    def set_publishing(self, enabled: bool) -> dict:
+        """Flip the runtime auto-publish toggle. Flipping to True schedules a
+        drain of any clips that accumulated while paused, through the normal
+        publish path (spacing + global slot logic preserved)."""
+        self.publishing_enabled = bool(enabled)
+        self._persist()
+        if self.publishing_enabled and self._pending_publish:
+            try:
+                self._track_task(asyncio.create_task(self._drain_pending()))
+            except RuntimeError:
+                logger.warning("LiveMonitor %s: no running loop for pending drain", self.id)
+        return {"publishing_enabled": self.publishing_enabled,
+                "pending_publish": len(self._pending_publish)}
+
+    async def _drain_pending(self) -> None:
+        """Publish every queued clip in order. Guarded by ``_draining`` so two
+        concurrent drains can't interleave; the actual publishes are serialised
+        globally by ``_publish_one``'s ``_publish_lock``, so spacing holds."""
+        if self._draining:
+            return
+        self._draining = True
+        try:
+            first = True
+            while (self._pending_publish and self.publishing_enabled
+                   and not self._stop.is_set()):
+                if not first:
+                    await asyncio.sleep(PUBLISH_SPACING_SECONDS)
+                first = False
+                entry = self._pending_publish.pop(0)
+                self._persist()
+                await self._publish_one(entry["job_id"], entry["clip"])
+        finally:
+            self._draining = False
+
+    # -- delete published clip artifacts ---------------------------------
+
+    def _delete_clip_artifacts(self, job_id: str, clip: dict, clip_path: str,
+                               upload_path: str) -> None:
+        """Best-effort removal of a published clip's on-disk artifacts + a
+        metadata mark. Never raises — the publish already succeeded."""
+        try:
+            job_dir = os.path.join(self._output_dir, job_id)
+            clip_filename = os.path.basename(clip_path)
+            stem = os.path.splitext(clip_filename)[0]
+            idx = clip.get("original_index")
+            targets = [
+                clip_path,
+                upload_path,
+                os.path.join(job_dir, f"source_{clip_filename}"),
+                os.path.join(job_dir, f"{stem}_cover.jpg"),
+            ]
+            if idx is not None:
+                targets.append(os.path.join(job_dir, f"composed_clip_{idx}.mp4"))
+            for path in targets:
+                _safe_remove(path)
+            self._mark_clip_deleted(job_id, idx)
+            self._maybe_remove_empty_job_dir(job_id, job_dir)
+        except Exception:
+            logger.warning("LiveMonitor %s: artifact cleanup failed for %s",
+                           self.id, job_id, exc_info=True)
+
+    def _mark_clip_deleted(self, job_id: str, idx) -> None:
+        """Mark the clip entry deleted instead of removing it. resolve_clip /
+        _build_clips key clips by list POSITION (original_index == index in
+        ``shorts``), so dropping an entry would shift every later clip's index
+        and break their per-clip endpoints. Marking keeps positions stable."""
+        if idx is None:
+            return
+        from clippyme.domain.job_artifacts import load_job_metadata, save_job_metadata
+        metadata_path, data = load_job_metadata(job_id, self._output_dir)
+        shorts = data.get("shorts", [])
+        if 0 <= idx < len(shorts):
+            shorts[idx]["deleted_after_publish"] = True
+            save_job_metadata(metadata_path, data)
+
+    def _maybe_remove_empty_job_dir(self, job_id: str, job_dir: str) -> None:
+        """Drop the whole job dir once no clip (.mp4) files remain — but only
+        for a finished job, never one still processing."""
+        import glob
+        if self._jobs.get(job_id, {}).get("status") not in ("completed", "stopped"):
+            return
+        if glob.glob(os.path.join(job_dir, "*.mp4")):
+            return  # other clips still on disk
+        shutil.rmtree(job_dir, ignore_errors=True)
 
     # -- misc ------------------------------------------------------------
 
@@ -1165,14 +1280,12 @@ class LiveMonitorRegistry:
 
     def __init__(self, *, jobs: dict, job_queue, output_dir: str,
                  upload_dir: str = "uploads", on_job_change=None,
-                 manual_publish_queue=None,
                  state_path: str = os.path.join("data", STATE_FILENAME)):
         self._jobs = jobs
         self._job_queue = job_queue
         self._output_dir = output_dir
         self._upload_dir = upload_dir
         self._on_job_change = on_job_change
-        self._manual_publish_queue = manual_publish_queue
         self._state_path = state_path
 
         self._monitors: dict[str, LiveMonitor] = {}
@@ -1196,9 +1309,7 @@ class LiveMonitorRegistry:
             id=mid, jobs=self._jobs, job_queue=self._job_queue,
             output_dir=self._output_dir, upload_dir=self._upload_dir,
             on_job_change=self._on_job_change, picked_slots=self._picked_slots,
-            publish_lock=self._publish_lock,
-            manual_publish_queue=self._manual_publish_queue,
-            on_state_change=self.persist)
+            publish_lock=self._publish_lock, on_state_change=self.persist)
         mon.restore(self._snapshots.get(mid) or {})
         self._monitors[mid] = mon
         try:
@@ -1283,7 +1394,6 @@ class LiveMonitorRegistry:
                 output_dir=self._output_dir, upload_dir=self._upload_dir,
                 on_job_change=self._on_job_change, picked_slots=self._picked_slots,
                 publish_lock=self._publish_lock,
-                manual_publish_queue=self._manual_publish_queue,
                 on_state_change=self.persist)
             mon.restore(snap)
             try:
@@ -1300,6 +1410,26 @@ class LiveMonitorRegistry:
             resumed.append(mid)
         self.persist()
         return {"resumed": resumed, "failed": failed}
+
+    def update_config(self, monitor_id: str, partial: dict) -> dict:
+        """Apply a runtime config patch to a running monitor; persists the
+        new state so it survives restart/auto-resume."""
+        mon = self._monitors.get(monitor_id)
+        if mon is None:
+            raise NotFoundError(f"no such monitor: {monitor_id}")
+        result = mon.update_config(partial)
+        self.persist()
+        return result
+
+    def set_publishing(self, monitor_id: str, enabled: bool) -> dict:
+        """Pause/resume auto-publishing for a running monitor; persists the flag
+        so it survives restart/auto-resume, and drains pending clips on resume."""
+        mon = self._monitors.get(monitor_id)
+        if mon is None:
+            raise NotFoundError(f"no such monitor: {monitor_id}")
+        result = mon.set_publishing(enabled)
+        self.persist()
+        return result
 
     def status(self, monitor_id: str | None = None) -> dict:
         if monitor_id:

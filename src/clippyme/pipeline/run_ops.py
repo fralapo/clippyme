@@ -5,10 +5,55 @@ cv2/torch/mediapipe at module top and therefore can't run on the dev host.
 Only stdlib + ``domain.encode`` here.
 """
 import os
+import re
 
 from clippyme.domain.encode import x264_video_args
 
 _VIDEO_SUFFIXES = {".mp4", ".mkv", ".mov", ".webm", ".avi"}
+
+# Windows-forbidden filename characters + ASCII control chars.
+_FORBIDDEN_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_WHITESPACE_RE = re.compile(r"\s+")
+_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+
+def clip_output_basename(
+    title: str | None, index: int, fallback_base: str, max_len: int = 80
+) -> str:
+    """Windows-safe on-disk basename (no extension) for one clip.
+
+    Prefers the clip's Gemini title, sanitized for Windows filesystems;
+    falls back to the legacy ``{fallback_base}_clip_{index+1}`` convention
+    for a missing/empty/reserved/all-forbidden title. Every result — title-
+    or fallback-derived — carries the ``_clip_{index+1}`` suffix, so
+    filenames stay unique across a job's clips.
+    """
+    fallback = f"{fallback_base}_clip_{index + 1}"
+    if not title or not isinstance(title, str):
+        return fallback
+
+    cleaned = _FORBIDDEN_CHARS_RE.sub("", title)
+    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
+    cleaned = cleaned.strip(". ")
+    if not cleaned:
+        return fallback
+    if cleaned.upper() in _RESERVED_NAMES:
+        return fallback
+
+    if len(cleaned) > max_len:
+        cut = cleaned[:max_len]
+        boundary, _, _ = cut.rpartition(" ")
+        if boundary:
+            cut = boundary
+        cleaned = cut.strip(". ")
+        if not cleaned:
+            return fallback
+
+    return f"{cleaned}_clip_{index + 1}"
 
 
 def resolve_output_dir(out: str | None, default: str) -> str:

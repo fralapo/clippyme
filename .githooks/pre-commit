@@ -52,7 +52,9 @@ for f in $staged_files; do
     .githooks/pre-commit) continue ;;
   esac
   git show ":$f" 2>/dev/null | grep -Iq . || continue   # -I: skip if binary
-  added=$(git diff --cached -U0 -- "$f" | grep '^+' | grep -v '^+++')
+  # `|| true`: with pipefail, zero added lines (pure deletions/renames) would
+  # otherwise kill the whole hook silently via grep's exit 1.
+  added=$(git diff --cached -U0 -- "$f" | grep '^+' | grep -v '^+++' || true)
   [ -z "$added" ] && continue
   for p in "${patterns[@]}"; do
     if printf '%s\n' "$added" | grep -Eq "$p"; then

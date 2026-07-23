@@ -108,8 +108,11 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   );
 
   // Manual trim (flycut-style) — transcript load + dropped set + AI trim.
+  // Resolve to the backend's ABSOLUTE `shorts` position, not the array
+  // position `idx` — they diverge once a manual-publish gap skips a
+  // deleted_after_publish clip (see job_results._build_clips).
   const trim = useManualTrim({
-    jobId, idx,
+    jobId, idx: clip.original_index ?? idx,
     active: !bulk && tab === 'trim',
     initialDropRanges: initial?.dropRanges,
   });

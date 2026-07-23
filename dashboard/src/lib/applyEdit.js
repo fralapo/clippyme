@@ -5,7 +5,7 @@
 // `api` is injected ({ reframeClip, composeClip }) — production passes the
 // realApi functions, tests pass fakes.
 
-export async function runApplyEdit({ jobId, idx, params, api, updateClipState, pushToast, now = Date.now }) {
+export async function runApplyEdit({ jobId, idx, apiIdx = idx, params, api, updateClipState, pushToast, now = Date.now }) {
   const { reframeMode, baseMode, toggles, subtitleParams, hookParams, logoParams, gradeParams, bannerParams, dropRanges } = params;
   const reframeChanged = reframeMode !== baseMode;
   const anyCompose = !!(toggles.smartcut || toggles.subtitles || toggles.hook || toggles.logo || toggles.grade || toggles.banner);
@@ -23,14 +23,14 @@ export async function runApplyEdit({ jobId, idx, params, api, updateClipState, p
   let reframeApplied = false;
   try {
     if (reframeChanged) {
-      await api.reframeClip(jobId, idx, reframeMode);
+      await api.reframeClip(jobId, apiIdx, reframeMode);
       reframeApplied = true;
       // Reframe overwrites the clip on disk → bust the cache + drop any stale
       // composed preview so the card re-fetches the freshly framed clip.
       updateClipState(idx, { reframeBust: now(), previewUrl: undefined });
     }
     if (anyCompose) {
-      const { composed_url } = await api.composeClip(jobId, idx, {
+      const { composed_url } = await api.composeClip(jobId, apiIdx, {
         toggles,
         hook_params: toggles.hook ? hookParams : {},
         subtitle_params: toggles.subtitles ? subtitleParams : {},

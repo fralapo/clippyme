@@ -501,8 +501,3 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
   .sw i{width:22px;height:22px}
   .sw.on i{left:22px}
 }
-/* Manual-publish surface only (task 4 brief mandates 44px touch targets
-   here) — scoped classes so the shared .tab/.tabs (TopNav, edit-tabs) and
-   .mini (used elsewhere for compact icon buttons) are untouched. */
-.mp-tab{min-height:44px}
-.mp-mini{width:44px;height:44px}

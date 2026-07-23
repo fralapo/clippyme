@@ -115,6 +115,24 @@ test('partial failure: reframe ok + compose fail keeps the reframe cache-bust', 
   expect(calls.toasts.at(-1)[1]).toMatch(/reframed, but composing/);
 });
 
+test('apiIdx resolves the backend call independently of the local idx (I-1 gap)', async () => {
+  // idx=2 is the local array position (used to key clipStates); apiIdx=5 is
+  // clip.original_index — the backend's ABSOLUTE `shorts` position, which
+  // diverges once a manual-publish gap skips a deleted_after_publish clip.
+  const { calls, args } = makeCtx();
+  await runApplyEdit({
+    ...args, apiIdx: 5,
+    params: baseParams({
+      reframeMode: 'subject',
+      toggles: { smartcut: false, subtitles: true, hook: false, logo: false, grade: false },
+    }),
+  });
+  expect(args.api.reframeClip).toHaveBeenCalledWith(JOB, 5, 'subject');
+  expect(args.api.composeClip.mock.calls[0][1]).toBe(5);
+  // Local state/toast messaging still keys off the array position (idx=2).
+  expect(calls.toasts.at(-1)).toEqual(['success', 'Clip 3 updated']);
+});
+
 test('409 from reframe → "too old to reframe" toast', async () => {
   const err = Object.assign(new Error('conflict'), { status: 409 });
   const { calls, args } = makeCtx({ reframeImpl: async () => { throw err; } });

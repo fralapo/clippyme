@@ -5,7 +5,7 @@ where no unit test could reach it.
 """
 import os
 
-from clippyme.pipeline.run_ops import build_cut_command, resolve_output_dir
+from clippyme.pipeline.run_ops import build_cut_command, clip_output_basename, resolve_output_dir
 
 
 # --- resolve_output_dir -------------------------------------------------------
@@ -56,3 +56,63 @@ def test_cut_command_uses_shared_x264_settings():
     cmd = build_cut_command("/in.mp4", 0, 10, "/out.mp4")
     for arg in x264_video_args(faststart=False):
         assert arg in cmd
+
+
+# --- clip_output_basename -----------------------------------------------------
+
+def test_basename_uses_sanitized_title():
+    assert clip_output_basename("My Viral Clip", 0, "source") == "My Viral Clip_clip_1"
+
+
+def test_forbidden_chars_stripped():
+    assert clip_output_basename('a<b>c:d"e/f\\g|h?i*j', 0, "source") == "abcdefghij_clip_1"
+
+
+def test_control_chars_stripped():
+    assert clip_output_basename("hello\x00\x1fworld", 0, "source") == "helloworld_clip_1"
+
+
+def test_leading_trailing_dots_and_spaces_stripped():
+    assert clip_output_basename("  ..title..  ", 0, "source") == "title_clip_1"
+
+
+def test_whitespace_runs_collapsed_but_spaces_kept():
+    # tabs/newlines are ASCII control chars (0-31) and get stripped outright;
+    # only literal space runs collapse to a single space.
+    assert clip_output_basename("a   b    c", 0, "source") == "a b c_clip_1"
+
+
+def test_reserved_names_fall_back():
+    for name in ("CON", "con", "PRN", "AUX", "NUL", "COM1", "com9", "LPT1", "lpt9"):
+        assert clip_output_basename(name, 2, "source") == "source_clip_3"
+
+
+def test_empty_or_none_falls_back():
+    assert clip_output_basename(None, 4, "source") == "source_clip_5"
+    assert clip_output_basename("", 4, "source") == "source_clip_5"
+    assert clip_output_basename("   ", 4, "source") == "source_clip_5"
+
+
+def test_only_forbidden_chars_falls_back():
+    assert clip_output_basename('<>:"/\\|?*', 0, "source") == "source_clip_1"
+
+
+def test_long_title_truncated_at_boundary():
+    title = "word " * 40  # 200 chars, well over max_len
+    result = clip_output_basename(title, 1, "source", max_len=80)
+    stem = result.removesuffix("_clip_2")
+    assert len(stem) <= 80
+    assert result.endswith("_clip_2")
+    # cut on a word boundary, not mid-word
+    assert stem == stem.strip()
+    assert "word" in stem and not stem.endswith("wor")
+
+
+def test_suffix_always_matches_index():
+    assert clip_output_basename("Title", 0, "source").endswith("_clip_1")
+    assert clip_output_basename("Title", 9, "source").endswith("_clip_10")
+    assert clip_output_basename(None, 9, "source").endswith("_clip_10")
+
+
+def test_unicode_preserved():
+    assert clip_output_basename("Café Émoji 🎬 Clip", 0, "source") == "Café Émoji 🎬 Clip_clip_1"

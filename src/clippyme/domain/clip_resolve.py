@@ -32,8 +32,15 @@ class ResolvedClip:
 
 
 def clip_filename_for(metadata_path: str, clip_info: dict, clip_index: int) -> str:
-    """Clip filename from its metadata ``video_url``, or the positional
-    ``<base>_clip_{i+1}.mp4`` convention when the URL is absent/unparseable."""
+    """Clip filename, preferring (a) the ``clip_filename`` basename the
+    pipeline persists into metadata (pipeline/main.py, task 4b) when it is a
+    non-empty string with no path separators or ``..`` (defence against a
+    tampered/legacy metadata file smuggling a path), then (b) the legacy
+    metadata ``video_url``, then (c) the positional ``<base>_clip_{i+1}.mp4``
+    convention when neither is present."""
+    raw = clip_info.get("clip_filename")
+    if isinstance(raw, str) and raw and "/" not in raw and "\\" not in raw and ".." not in raw:
+        return raw
     filename = filename_from_video_url(clip_info.get("video_url"))
     if not filename:
         base_name = os.path.basename(metadata_path).replace("_metadata.json", "")

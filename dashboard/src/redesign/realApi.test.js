@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 // Vitest runs with a jsdom environment, so window.location.origin is real —
 // the old plain-Node `globalThis.window` stub is gone.
-import { optsToPreselections, clipVideoSrc, clipPreviewSrc, fmtDuration } from './realApi.js';
+import { optsToPreselections, clipVideoSrc, clipPreviewSrc, fmtDuration, exportClip } from './realApi.js';
 
 // --- optsToPreselections: the Create-tab → backend translation layer --------
 
@@ -93,4 +93,29 @@ test('fmtDuration renders m:ss with zero-padded seconds', () => {
   assert.equal(fmtDuration(0, 65), '1:05');
   assert.equal(fmtDuration(10, 10), '0:00');
   assert.equal(fmtDuration(0, 599.6), '10:00');
+});
+
+// --- I-1 regression: per-clip endpoints must resolve by the backend's
+// ABSOLUTE `shorts` position (`original_index`), not the frontend array
+// position — they diverge once a manual-publish gap skips a
+// deleted_after_publish clip (job_results._build_clips).
+
+test('exportClip composes against clip.original_index, not the array position', async () => {
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (url) => {
+    calls.push(url);
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({ composed_url: '/videos/j/composed.mp4' }) });
+  };
+  try {
+    // Clip B sits at array position 1 but is absolute shorts position 2 (a
+    // deleted_after_publish clip at position 1 was skipped upstream).
+    const clip = { original_index: 2, video_url: '/videos/j/clip_3.mp4' };
+    const state = { toggles: { subtitles: true } };
+    await exportClip('job-1', 1, clip, state, {});
+    assert.equal(calls.length, 1);
+    assert.match(String(calls[0]), /\/api\/compose\/job-1\/2$/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

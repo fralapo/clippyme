@@ -54,9 +54,6 @@ export async function submitProcessJob(data, apiKey) {
   // Per-job Gemini model override (optional). Validated server-side against the
   // gemini- family prefix; omitted → backend uses the global Settings model.
   const model = (data.preselections?.model || '').trim();
-  // Publish destination: manual_queue (default, clips land in the mobile
-  // publish page) or zernio (auto-scheduling; job opts out of the page).
-  const publisherMode = data.preselections?.publisher_mode;
 
   if (data.type === 'url') {
     headers['Content-Type'] = 'application/json';
@@ -68,7 +65,6 @@ export async function submitProcessJob(data, apiKey) {
     if (noZoom) jsonBody.no_zoom = true;
     if (skipAnalysis) jsonBody.skip_analysis = true;
     if (model) jsonBody.model = model;
-    if (publisherMode) jsonBody.publisher_mode = publisherMode;
     body = JSON.stringify(jsonBody);
   } else {
     if (data.payload?.size > 16384 * 1024 * 1024) {
@@ -82,7 +78,6 @@ export async function submitProcessJob(data, apiKey) {
     if (noZoom) formData.append('no_zoom', 'true');
     if (skipAnalysis) formData.append('skip_analysis', 'true');
     if (model) formData.append('model', model);
-    if (publisherMode) formData.append('publisher_mode', publisherMode);
     body = formData;
   }
 
@@ -111,7 +106,6 @@ export async function submitBatchJob(data, apiKey) {
   if (data.preselections?.no_zoom === true) batchBody.no_zoom = true;
   if (data.preselections?.skip_analysis === true) batchBody.skip_analysis = true;
   if ((data.preselections?.model || '').trim()) batchBody.model = data.preselections.model.trim();
-  if (data.preselections?.publisher_mode) batchBody.publisher_mode = data.preselections.publisher_mode;
   const res = await apiFetch(getApiUrl('/api/batch'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },

@@ -1,7 +1,7 @@
 // LiveMonitorView — pins: per-platform channel validation gates Start, the
 // monitor list renders multiple concurrent monitors, and youtube forces VOD.
 import { test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { LiveMonitorView } from './live.jsx';
 
 const mockStatus = vi.fn();
@@ -14,6 +14,9 @@ vi.mock('./realApi', () => ({
   startLiveMonitor: vi.fn(async () => ({ id: 'kick:xqc', running: true, state: 'waiting_live' })),
   stopLiveMonitor: vi.fn(async () => ({ running: false, state: 'idle' })),
   getLiveMonitorStatus: (...args) => mockStatus(...args),
+  updateMonitorConfig: vi.fn(async () => ({ monitor: {} })),
+  setMonitorPublishing: vi.fn(async () => ({ publishing_enabled: true })),
+  listFonts: vi.fn(async () => ({ fonts: [] })),
 }));
 
 beforeEach(() => {
@@ -142,31 +145,150 @@ test('banner Custom reveals platform+handle and sends the override', async () =>
   expect(startLiveMonitor.mock.calls[0][0].banner).toEqual({ platform: 'twitch', handle: 'xqc', y_pct: 0.85 });
 });
 
-test('defaults to Manual queue: start needs no Zernio targets/config and hides the Platforms picker', async () => {
+test('catchup select value rides the start payload', async () => {
   const { startLiveMonitor } = await import('./realApi');
   render(<LiveMonitorView />);
-  expect(screen.queryByText('Platforms')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'From now only' }));
   fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
   await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
   await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
-  const body = startLiveMonitor.mock.calls[0][0];
-  expect(body.publisher_mode).toBe('manual_queue');
-  expect(body.platforms).toBeUndefined();
+  expect(startLiveMonitor.mock.calls[0][0].catchup).toBe('live_only');
 });
 
-test('switching to Zernio automatic reveals the Platforms picker and requires targets + config', async () => {
+test('catchup defaults to backfill', async () => {
   const { startLiveMonitor } = await import('./realApi');
   render(<LiveMonitorView />);
-  fireEvent.click(screen.getByRole('button', { name: 'Zernio automatic' }));
-  expect(screen.getByText('Platforms')).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
   await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
   fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
   await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
-  const body = startLiveMonitor.mock.calls[0][0];
-  expect(body.publisher_mode).toBe('zernio');
-  expect(body.platforms.length).toBeGreaterThan(0);
+  expect(startLiveMonitor.mock.calls[0][0].catchup).toBe('backfill');
+});
+
+test('subtitle override section untouched → start payload has no compose key', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  expect(startLiveMonitor.mock.calls[0][0].compose).toBeUndefined();
+});
+
+test('subtitle override section switched on → start payload carries a compose.subtitle_params key', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  fireEvent.click(screen.getByRole('switch', { name: 'Customize subtitles' }));
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  expect(startLiveMonitor.mock.calls[0][0].compose).toEqual({ subtitle_params: expect.objectContaining({ position: 'bottom' }) });
+});
+
+test('classic-mode subtitle override translates keys in the start payload (bg_opacity/bg_color/border_color, no bg/outline_color)', async () => {
+  const { startLiveMonitor } = await import('./realApi');
+  render(<LiveMonitorView />);
+  fireEvent.click(screen.getByRole('switch', { name: 'Customize subtitles' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Classic' }));
+  const bgRow = screen.getByText('Background box').closest('.opt');
+  fireEvent.click(within(bgRow).getByRole('switch'));
+  fireEvent.change(screen.getByLabelText('Channel'), { target: { value: 'xqc' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: /Start monitor/ })).not.toBeDisabled());
+  fireEvent.click(screen.getByRole('button', { name: /Start monitor/ }));
+  await waitFor(() => expect(startLiveMonitor).toHaveBeenCalled());
+  const params = startLiveMonitor.mock.calls[0][0].compose.subtitle_params;
+  expect(params.bg_opacity).toBe(0.6);
+  expect(params.bg_color).toBe('#000000');
+  expect(params.border_color).toBe('#000000');
+  expect(params.bg).toBeUndefined();
+  expect(params.outline_color).toBeUndefined();
+});
+
+test('classic-mode subtitle override translates keys in the config Applica payload too', async () => {
+  const { updateMonitorConfig } = await import('./realApi');
+  mockStatus.mockResolvedValue({
+    monitors: [{ id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing', channel: 'xqc' }],
+  });
+  render(<LiveMonitorView />);
+  await screen.findByText('xqc');
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  const overridesRow = screen.getByText('Subtitle overrides').closest('.opt');
+  fireEvent.click(within(overridesRow).getByRole('switch'));
+  fireEvent.click(screen.getByRole('button', { name: 'Classic' }));
+  const bgRow = screen.getByText('Background box').closest('.opt');
+  fireEvent.click(within(bgRow).getByRole('switch'));
+  fireEvent.click(screen.getByRole('button', { name: /Apply/ }));
+  await waitFor(() => expect(updateMonitorConfig).toHaveBeenCalled());
+  const params = updateMonitorConfig.mock.calls[0][1].compose.subtitle_params;
+  expect(params.bg_opacity).toBe(0.6);
+  expect(params.bg_color).toBe('#000000');
+  expect(params.border_color).toBe('#000000');
+  expect(params.bg).toBeUndefined();
+  expect(params.outline_color).toBeUndefined();
+});
+
+test('Settings drawer prefills from the running monitor status().config', async () => {
+  mockStatus.mockResolvedValue({
+    monitors: [{
+      id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing', channel: 'xqc',
+      config: {
+        instructions: 'find hype moments', caption_template: '{hook}', title_template: '{title}',
+        segment_seconds: 900, prelive_skip_seconds: 60, min_gap_seconds: 300,
+        compose: {
+          subtitle_params: {
+            mode: 'classic', preset: 'classic_white', font: 'Montserrat-Black', font_color: '#FFFFFF',
+            border_color: '#111111', border_width: 3, bg_opacity: 0.6, bg_color: '#000000',
+            position: 'top', align: 'left', offset_y: 10,
+          },
+        },
+      },
+    }],
+  });
+  render(<LiveMonitorView />);
+  await screen.findByText('xqc');
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  expect(screen.getByLabelText('Settings instructions kick:xqc')).toHaveValue('find hype moments');
+  expect(screen.getByLabelText('Settings caption template kick:xqc')).toHaveValue('{hook}');
+  expect(screen.getByLabelText('Settings title template kick:xqc')).toHaveValue('{title}');
+  expect(screen.getByLabelText('Settings segment minutes kick:xqc')).toHaveValue(15);
+  expect(screen.getByLabelText('Settings prelive skip minutes kick:xqc')).toHaveValue(1);
+  expect(screen.getByLabelText('Settings min gap minutes kick:xqc')).toHaveValue(5);
+  // Subtitle override drawer already open in classic mode with Background box on
+  // (proves fromComposeSubtitleParams seeded mode/bg from the persisted config).
+  expect(screen.getByText('Background box')).toBeInTheDocument();
+  const bgRow = screen.getByText('Background box').closest('.opt');
+  expect(within(bgRow).getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+});
+
+test('publishing toggle calls setMonitorPublishing with the flipped value', async () => {
+  const { setMonitorPublishing } = await import('./realApi');
+  mockStatus.mockResolvedValue({
+    monitors: [{ id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing',
+      channel: 'xqc', publishing_enabled: false, pending_publish: 3 }],
+  });
+  render(<LiveMonitorView />);
+  expect(await screen.findByText('Paused — 3 clip(s) waiting')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('switch', { name: 'Zernio auto-publish kick:xqc' }));
+  await waitFor(() => expect(setMonitorPublishing).toHaveBeenCalledWith('kick:xqc', true));
+});
+
+test('config Applica posts only changed/allowed fields (instructions + caption_template)', async () => {
+  const { updateMonitorConfig } = await import('./realApi');
+  mockStatus.mockResolvedValue({
+    monitors: [{ id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing', channel: 'xqc' }],
+  });
+  render(<LiveMonitorView />);
+  await screen.findByText('xqc');
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  fireEvent.change(screen.getByLabelText('Settings instructions kick:xqc'), { target: { value: 'find hype moments' } });
+  fireEvent.change(screen.getByLabelText('Settings caption template kick:xqc'), { target: { value: '{hook}' } });
+  fireEvent.click(screen.getByRole('button', { name: /Apply/ }));
+  await waitFor(() => expect(updateMonitorConfig).toHaveBeenCalledWith('kick:xqc', {
+    instructions: 'find hype moments',
+    caption_template: '{hook}',
+  }));
 });
 
 test('twitch missing-credentials (400) points to Settings', async () => {

@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from clippyme.domain.clip_resolve import resolve_clip
+from clippyme.domain.clip_resolve import clip_filename_for, resolve_clip
 from clippyme.domain.errors import NotFoundError
 
 JOB_ID = "33333333-3333-4333-8333-333333333333"
@@ -72,6 +72,50 @@ def test_missing_file_404_only_when_required(tmp_path, job_dir):
     r = resolve_clip(JOB_ID, 0, str(tmp_path), require_file=False)
     assert r.clip_filename == "vid_clip_1.mp4"
     assert not os.path.exists(r.clip_path)
+
+
+# --- clip_filename_for: task 4b preference chain ---------------------------
+
+def test_clip_filename_for_prefers_clip_filename_key():
+    filename = clip_filename_for(
+        "vid_metadata.json",
+        {"clip_filename": "My Viral Title_clip_1.mp4",
+         "video_url": "/videos/x/legacy_clip_1.mp4"},
+        0,
+    )
+    assert filename == "My Viral Title_clip_1.mp4"
+
+
+@pytest.mark.parametrize("bad", [
+    "../../etc/passwd",
+    "sub/dir_clip_1.mp4",
+    "sub\\dir_clip_1.mp4",
+    "",
+    123,
+    None,
+])
+def test_clip_filename_for_ignores_tampered_clip_filename(bad):
+    filename = clip_filename_for(
+        "vid_metadata.json",
+        {"clip_filename": bad, "video_url": "/videos/x/legacy_clip_1.mp4"},
+        0,
+    )
+    assert filename == "legacy_clip_1.mp4"
+
+
+def test_clip_filename_for_positional_fallback_unaffected():
+    # No clip_filename, no video_url → byte-identical legacy behaviour.
+    filename = clip_filename_for("vid_metadata.json", {"start": 0, "end": 5}, 2)
+    assert filename == "vid_clip_3.mp4"
+
+
+def test_resolve_clip_end_to_end_with_new_format_metadata(tmp_path, job_dir):
+    _write_meta(job_dir, "vid_metadata.json",
+                [{"clip_filename": "Best Moment Ever_clip_1.mp4"}])
+    (job_dir / "Best Moment Ever_clip_1.mp4").write_bytes(b"\x00")
+    r = resolve_clip(JOB_ID, 0, str(tmp_path))
+    assert r.clip_filename == "Best Moment Ever_clip_1.mp4"
+    assert r.clip_path == str(job_dir / "Best Moment Ever_clip_1.mp4")
 
 
 def test_latest_metadata_by_mtime_wins(tmp_path, job_dir):
