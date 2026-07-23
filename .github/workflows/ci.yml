@@ -41,7 +41,21 @@ jobs:
         run: ruff check src/clippyme tests --select E9,F63,F7,F82
 
       - name: Run host test suite (excludes integration)
-        run: pytest -m "not integration" -q --cov=clippyme --cov-report=term
+        id: host-tests
+        continue-on-error: true
+        run: >-
+          pytest -m "not integration" -q
+          --cov=clippyme --cov-report=term
+          --junitxml=pytest-report.xml
+
+      - name: Upload backend test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-pytest-report
+          path: pytest-report.xml
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Dependency vulnerability scan (core pinned tree)
         run: >-
@@ -54,6 +68,10 @@ jobs:
 
       - name: Dependency vulnerability scan (runtime tools)
         run: pip-audit -r requirements-runtime-tools.txt --desc
+
+      - name: Enforce backend test result
+        if: steps.host-tests.outcome != 'success'
+        run: exit 1
 
   frontend-audit:
     name: Frontend production dependency audit
