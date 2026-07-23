@@ -291,6 +291,55 @@ test('config Applica posts only changed/allowed fields (instructions + caption_t
   }));
 });
 
+test('shows Gemini rate-limit notice when gemini_exhausted_at set', async () => {
+  mockStatus.mockResolvedValue({
+    monitors: [{ id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing',
+      channel: 'xqc', gemini_exhausted_at: '2026-07-23T09:00:00Z' }],
+  });
+  render(<LiveMonitorView />);
+  expect(await screen.findByText(/rate.?limit/i)).toBeInTheDocument();
+});
+
+test('no Gemini rate-limit notice when gemini_exhausted_at is unset', async () => {
+  mockStatus.mockResolvedValue({
+    monitors: [{ id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing', channel: 'xqc' }],
+  });
+  render(<LiveMonitorView />);
+  await screen.findByText('xqc');
+  expect(screen.queryByText(/rate.?limit/i)).toBeNull();
+});
+
+test('delete-after-publish checkbox seeds true by default and sends nothing when untouched', async () => {
+  const { updateMonitorConfig } = await import('./realApi');
+  mockStatus.mockResolvedValue({
+    monitors: [{ id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing', channel: 'xqc', config: {} }],
+  });
+  render(<LiveMonitorView />);
+  await screen.findByText('xqc');
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  const toggle = screen.getByRole('switch', { name: 'Delete after publish kick:xqc' });
+  expect(toggle).toHaveAttribute('aria-checked', 'true');
+  fireEvent.change(screen.getByLabelText('Settings instructions kick:xqc'), { target: { value: 'find hype moments' } });
+  fireEvent.click(screen.getByRole('button', { name: /Apply/ }));
+  await waitFor(() => expect(updateMonitorConfig).toHaveBeenCalledWith('kick:xqc', { instructions: 'find hype moments' }));
+});
+
+test('delete-after-publish checkbox seeds false from config and sends only when toggled', async () => {
+  const { updateMonitorConfig } = await import('./realApi');
+  mockStatus.mockResolvedValue({
+    monitors: [{ id: 'kick:xqc', platform: 'kick', mode: 'live', running: true, state: 'capturing', channel: 'xqc',
+      config: { delete_after_publish: false } }],
+  });
+  render(<LiveMonitorView />);
+  await screen.findByText('xqc');
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+  const toggle = screen.getByRole('switch', { name: 'Delete after publish kick:xqc' });
+  expect(toggle).toHaveAttribute('aria-checked', 'false');
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole('button', { name: /Apply/ }));
+  await waitFor(() => expect(updateMonitorConfig).toHaveBeenCalledWith('kick:xqc', { delete_after_publish: true }));
+});
+
 test('twitch missing-credentials (400) points to Settings', async () => {
   const { startLiveMonitor } = await import('./realApi');
   startLiveMonitor.mockRejectedValueOnce(new Error(

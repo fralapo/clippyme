@@ -21,6 +21,32 @@ _RESERVED_NAMES = frozenset(
 )
 
 
+def sanitize_windows_basename(title: str | None, max_len: int = 80) -> str | None:
+    """Windows-safe basename (no extension, no suffix) or None.
+
+    Strips forbidden chars (<>:"/\\|?* + control), collapses whitespace,
+    trims trailing dots/spaces, rejects reserved names (CON/PRN/AUX/NUL/
+    COM1-9/LPT1-9). Truncates on a word boundary at ``max_len``. Returns
+    None when nothing usable survives (caller supplies its own fallback).
+    """
+    if not title or not isinstance(title, str):
+        return None
+    cleaned = _FORBIDDEN_CHARS_RE.sub("", title)
+    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
+    cleaned = cleaned.strip(". ")
+    if not cleaned or cleaned.upper() in _RESERVED_NAMES:
+        return None
+    if len(cleaned) > max_len:
+        cut = cleaned[:max_len]
+        boundary, _, _ = cut.rpartition(" ")
+        if boundary:
+            cut = boundary
+        cleaned = cut.strip(". ")
+        if not cleaned:
+            return None
+    return cleaned
+
+
 def clip_output_basename(
     title: str | None, index: int, fallback_base: str, max_len: int = 80
 ) -> str:
@@ -33,26 +59,9 @@ def clip_output_basename(
     filenames stay unique across a job's clips.
     """
     fallback = f"{fallback_base}_clip_{index + 1}"
-    if not title or not isinstance(title, str):
+    cleaned = sanitize_windows_basename(title, max_len=max_len)
+    if cleaned is None:
         return fallback
-
-    cleaned = _FORBIDDEN_CHARS_RE.sub("", title)
-    cleaned = _WHITESPACE_RE.sub(" ", cleaned).strip()
-    cleaned = cleaned.strip(". ")
-    if not cleaned:
-        return fallback
-    if cleaned.upper() in _RESERVED_NAMES:
-        return fallback
-
-    if len(cleaned) > max_len:
-        cut = cleaned[:max_len]
-        boundary, _, _ = cut.rpartition(" ")
-        if boundary:
-            cut = boundary
-        cleaned = cut.strip(". ")
-        if not cleaned:
-            return fallback
-
     return f"{cleaned}_clip_{index + 1}"
 
 
@@ -69,6 +78,16 @@ def resolve_output_dir(out: str | None, default: str) -> str:
         return os.path.dirname(out) or default
     os.makedirs(out, exist_ok=True)
     return out
+
+
+def should_use_fallback(monitor_mode: bool) -> bool:
+    """Whether to use the no-AI fallbacks (TextTiling / whole-video).
+
+    Monitor jobs must NEVER publish fallback clips (topic "part N" chunks or a
+    30-min whole-video render), so they get zero clips instead. Normal jobs
+    keep the fallbacks.
+    """
+    return not monitor_mode
 
 
 def build_cut_command(input_video: str, start: float, end: float, dest: str) -> list[str]:

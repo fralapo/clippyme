@@ -7,7 +7,11 @@ input validation are security-relevant, so they get explicit coverage.
 """
 import pytest
 
-from clippyme.domain.job_results import _build_clips, build_main_cmd, MAX_INSTRUCTIONS_LEN
+import json
+
+from clippyme.domain.job_results import (
+    _build_clips, build_main_cmd, load_final_result, MAX_INSTRUCTIONS_LEN,
+)
 
 
 # --- happy path / flag assembly --------------------------------------------
@@ -57,6 +61,16 @@ def test_reframe_mode_auto_is_omitted():
     # 'auto' is the default pipeline behaviour, so it is not forwarded.
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="auto")
     assert "--reframe-mode" not in cmd
+
+
+def test_build_main_cmd_monitor_flag():
+    cmd = build_main_cmd(input_path="/x.mp4", output_dir="/out", monitor=True)
+    assert "--monitor" in cmd
+
+
+def test_build_main_cmd_no_monitor_by_default():
+    cmd = build_main_cmd(input_path="/x.mp4", output_dir="/out")
+    assert "--monitor" not in cmd
 
 
 def test_reframe_mode_subject_is_forwarded():
@@ -210,3 +224,15 @@ def test_build_clips_skips_deleted_after_publish_even_in_final_result(tmp_path):
     result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=False)
     assert [c["original_index"] for c in result] == [0, 2]
     assert all(not c.get("deleted_after_publish") for c in result)
+
+
+def test_load_final_result_surfaces_gemini_exhausted(tmp_path):
+    # Monitor mode (Task 3) writes this top-level marker when Gemini quota is
+    # exhausted and fallbacks are disabled. load_final_result must not drop it
+    # -- live_monitor._await_and_publish reads it off the result dict.
+    metadata = tmp_path / "vid_metadata.json"
+    metadata.write_text(json.dumps({"shorts": [], "gemini_exhausted": True}))
+
+    result = load_final_result("job1", str(tmp_path))
+
+    assert result["gemini_exhausted"] is True

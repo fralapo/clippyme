@@ -349,10 +349,26 @@ def backfill_hook_text(
     return clips
 
 
+def drop_wordless_clips(clips: list[dict], words: list[dict]) -> list[dict]:
+    """Keep only clips whose [start,end] overlaps at least one transcript word.
+
+    A clip with zero words in range is either a Gemini hallucination (empty
+    transcript) or would crash subtitle compose ("No words found") — drop it.
+    Same half-open overlap test as generate_ass_karaoke.
+    """
+    kept = []
+    for c in clips:
+        cs, ce = float(c.get("start", 0)), float(c.get("end", 0))
+        if any(w["end"] > cs and w["start"] < ce for w in words):
+            kept.append(c)
+    return kept
+
+
 __all__ = [
     "JSON_DELIMITER",
     "ParseResult",
     "parse_gemini_response",
     "validate_and_dedupe",
     "backfill_hook_text",
+    "drop_wordless_clips",
 ]
