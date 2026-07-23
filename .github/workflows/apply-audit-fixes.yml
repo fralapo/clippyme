@@ -11,14 +11,18 @@ jobs:
   apply:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           ref: audit/full-hardening-2026-07-23
           fetch-depth: 0
 
-      - name: Normalize and apply patch
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Apply backend hardening patches
         shell: bash
         run: |
           python - <<'PY'
@@ -111,9 +115,53 @@ jobs:
               text = text.replace(old, new, 1)
 
           path.write_text(text)
+
+          tests = Path('tests/domain/test_live_monitor.py')
+          tests.write_text(tests.read_text().replace(
+              '    monitor = LiveMonitorRegistry.__new__(LiveMonitorRegistry)\n',
+              '',
+          ))
           PY
 
           python -m compileall -q src tests
+
+      - name: Upgrade frontend toolchain and lockfile
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          for name in ('dashboard/Dockerfile', 'dashboard/Dockerfile.prod'):
+              path = Path(name)
+              text = path.read_text().replace('node:20-alpine', 'node:22-alpine')
+              if name.endswith('/Dockerfile'):
+                  text = text.replace('RUN npm install\n', 'RUN npm ci\n')
+              path.write_text(text)
+
+          ci = Path('.github/workflows/ci.yml')
+          ci.write_text(ci.read_text().replace('node-version: "20"', 'node-version: "22"'))
+
+          config = Path('dashboard/vite.config.js')
+          text = config.read_text()
+          if "from 'node:url'" not in text:
+              text = text.replace(
+                  "import path from 'path'\n",
+                  "import path from 'node:path'\nimport { fileURLToPath } from 'node:url'\n",
+              )
+              text = text.replace(
+                  "// Content-Security-Policy injected",
+                  "const __dirname = path.dirname(fileURLToPath(import.meta.url))\n\n"
+                  "// Content-Security-Policy injected",
+              )
+          config.write_text(text)
+          PY
+
+          cd dashboard
+          npm install --package-lock-only --save-dev \
+            vite@8.1.5 @vitejs/plugin-react@6.0.4
+          npm audit --package-lock-only --omit=dev --audit-level=high
+          cd ..
+
           git diff --check
 
       - name: Commit coordinated fixes
@@ -128,6 +176,9 @@ jobs:
           git add src/clippyme/api/schemas.py src/clippyme/api/app.py \
                   src/clippyme/domain/live_monitor.py \
                   tests/api/test_request_schema_contracts.py \
-                  tests/domain/test_live_monitor.py scripts/apply_audit_fixes.py
-          git commit -m "fix(monitor): retain failed backfill windows for retry"
+                  tests/domain/test_live_monitor.py scripts/apply_audit_fixes.py \
+                  dashboard/package.json dashboard/package-lock.json \
+                  dashboard/Dockerfile dashboard/Dockerfile.prod \
+                  dashboard/vite.config.js .github/workflows/ci.yml
+          git commit -m "fix(audit): complete monitor durability and frontend security upgrade"
           git push origin HEAD:audit/full-hardening-2026-07-23
