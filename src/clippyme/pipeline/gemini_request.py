@@ -83,6 +83,17 @@ normally on the words alone.
 ## LANGUAGE RULE
 Every text field (viral_reason, descriptions, titles, hook_text) MUST be in the SAME LANGUAGE as the transcript.
 
+## SPEAKER ATTRIBUTION RULE (CRITICAL)
+The transcript carries NO reliable speaker identity — you cannot tell who is
+speaking from the audio alone. NEVER attribute a quote, action, opinion or
+reaction to a specific named person (in video_title_for_youtube_short,
+viral_hook_text or viral_reason) UNLESS that exact name is EXPLICITLY spoken in
+the transcript words of THAT clip. Any name listed only in the user context/
+instructions does NOT count as evidence of who is speaking. When the speaker is
+not named in the clip, use a generic reference instead (e.g. "un concorrente",
+"uno di loro", "in villa", "chi parla") — never guess. A wrong name is far worse
+than no name.
+
 ## FEW-SHOT EXAMPLES
 GOOD (score 87):
   start=12.340 end=37.900
