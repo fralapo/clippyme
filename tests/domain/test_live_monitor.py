@@ -1068,6 +1068,53 @@ def test_resume_drains_pending_in_order_with_spacing(tmp_path, monkeypatch):
     assert mon.clips_published == 2
 
 
+def test_drain_recomposes_missing_composed_path_and_survives_failure(tmp_path, monkeypatch):
+    """A restored pending entry whose composed_path vanished is recomposed on
+    drain; a recompose that raises re-queues that entry (retried, not lost) and
+    never aborts draining the other pending clips."""
+    import asyncio
+
+    from clippyme.domain import live_monitor as lm
+
+    job_dir = tmp_path / "job1"
+    job_dir.mkdir()
+    (job_dir / "b.mp4").write_bytes(b"x")           # the good sibling
+    recomposed = job_dir / "a_recomposed.mp4"
+    recomposed.write_bytes(b"x")
+
+    async def fake_sleep(secs):
+        pass
+    monkeypatch.setattr(lm.asyncio, "sleep", fake_sleep)
+
+    mon, calls = _publishing_monitor(tmp_path, monkeypatch)
+
+    compose_calls = []
+
+    async def spy_compose(job_id, clip, base_path=None):
+        compose_calls.append(clip)
+        if len(compose_calls) == 1:                 # first recompose fails
+            raise RuntimeError("compose boom")
+        return str(recomposed)                      # retry succeeds
+    mon._compose_for_publish = spy_compose
+
+    a = {"job_id": "job1",
+         "clip": {"video_url": "/videos/job1/a.mp4", "title": "A"},
+         "composed_path": str(job_dir / "missing.mp4")}   # gone → triggers recompose
+    b = {"job_id": "job1",
+         "clip": {"video_url": "/videos/job1/b.mp4", "title": "B"},
+         "composed_path": str(job_dir / "b.mp4")}
+    mon.publishing_enabled = True
+    mon._pending_publish = [a, b]
+
+    asyncio.run(mon._drain_pending())
+
+    assert compose_calls                             # recompose was invoked
+    assert mon._pending_publish == []                # everything drained, nothing lost
+    published = {os.path.basename(c["clip_path"]) for c in calls}
+    assert published == {"b.mp4", "a_recomposed.mp4"}  # sibling published + entry retried
+    assert mon.clips_published == 2
+
+
 def test_successful_publish_deletes_clip_files_and_empty_dir(tmp_path, monkeypatch):
     """A published clip's artifacts are removed; when it was the last clip the
     whole job dir goes away."""

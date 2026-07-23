@@ -1121,7 +1121,11 @@ class LiveMonitor:
             dest = os.path.join(self._clip_dir, fname)
             try:
                 composed = await self._compose_for_publish(job_id, clip, None)
-                await asyncio.to_thread(shutil.copyfile, composed, dest)
+                # Atomic: copy to a tmp sibling then os.replace, so a crash
+                # mid-copy never orphans a partial .mp4 (which would also
+                # permanently reserve its title filename).
+                await asyncio.to_thread(shutil.copyfile, composed, dest + ".tmp")
+                os.replace(dest + ".tmp", dest)
                 out.append({"job_id": job_id, "clip": clip, "composed_path": dest})
             except Exception:
                 logger.exception("LiveMonitor %s: consolidate/compose failed for %s/%s",
@@ -1275,7 +1279,16 @@ class LiveMonitor:
                 first = False
                 entry = self._pending_publish.pop(0)
                 self._persist()
-                await self._publish_one(entry)
+                try:
+                    await self._publish_one(entry)
+                except Exception:
+                    # A recompose (vanished composed_path) can raise — re-queue
+                    # the entry so it retries rather than being lost, and keep
+                    # draining the rest (one bad entry never aborts the drain).
+                    logger.exception("LiveMonitor %s: drain publish failed, re-queued",
+                                     self.id)
+                    self._pending_publish.append(entry)
+                    self._persist()
         finally:
             self._draining = False
 
