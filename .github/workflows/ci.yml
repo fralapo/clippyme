@@ -19,65 +19,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  apply-audit-fixes:
-    name: Apply final audit fixes
-    if: >-
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/audit/full-hardening-2026-07-23' &&
-      github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: audit/full-hardening-2026-07-23
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
-
-      - name: Apply coordinated source fixes
-        run: |
-          python scripts/final_audit_patch.py
-          python -m compileall -q src tests
-          git diff --check
-
-      - name: Upgrade Vite to the supported security backport
-        working-directory: dashboard
-        run: |
-          npm install --package-lock-only --save-dev vite@6.4.3
-          npm ci --no-audit --no-fund
-          npm audit --omit=dev --audit-level=high
-          npm run lint
-          npm test -- --coverage
-          npm run build
-
-      - name: Commit generated lockfile and fixes
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/clippyme/api/schemas.py src/clippyme/api/app.py \
-                  src/clippyme/domain/live_monitor.py \
-                  tests/api/test_request_schema_contracts.py \
-                  tests/domain/test_live_monitor.py \
-                  dashboard/src/redesign/realApi.js \
-                  dashboard/package.json dashboard/package-lock.json
-          if git diff --cached --quiet; then
-            echo "No generated changes"
-            exit 0
-          fi
-          git commit -m "fix(audit): close monitor durability and frontend dependency gaps"
-          git push origin HEAD:audit/full-hardening-2026-07-23
-
   backend:
     name: Backend (pytest + pip-audit)
     runs-on: ubuntu-latest
