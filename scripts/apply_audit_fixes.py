@@ -187,8 +187,6 @@ replace_once(
             return
         if self.platform == "kick" and not live:
             await self._recover_kick_backfill()
-        elif self.platform == "twitch" and live:
-            await self._backfill_from_vod(list(self._missed_windows))
 
     async def _schedule_backfill(self, started_at) -> None:
         """Compute missed windows and arrange crash-safe recovery."""

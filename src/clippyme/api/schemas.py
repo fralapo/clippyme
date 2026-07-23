@@ -307,6 +307,11 @@ class PublishRequest(BaseModel):
         return _validate_overlay_params(value)
 
 
+class LiveMonitorPublishingRequest(BaseModel):
+    # Strict prevents strings such as 'false' from being coerced to True.
+    enabled: bool = Field(strict=True)
+
+
 class LiveMonitorStartRequest(BaseModel):
     slug: str = Field(..., min_length=1, max_length=256)
     platform: str = Field("kick", pattern=r"^(kick|twitch|youtube)$")

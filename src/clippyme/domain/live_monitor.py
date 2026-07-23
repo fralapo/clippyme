@@ -279,7 +279,7 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
             config.get("delete_after_publish", True), "delete_after_publish"),
         # Max clips kept per segment (top-N by viral_score) — bounds a
         # publish-limited monitor's output. Clamped to [1, 50], default 5.
-        "max_clips": max(1, min(50, int(config.get("max_clips", 5) or 5))),
+        "max_clips": _clamp_int(config.get("max_clips"), 5, 1, 50),
     }
 
 
@@ -530,10 +530,10 @@ class LiveMonitor:
         self.segments_captured = 0   # live: segments; vod: items processed
         self.clips_published = 0
         self.backfill_pending = 0    # missed-window recoveries still to process
-        # ponytail: missed windows live only in-process — a restart mid-session
-        # loses any pending backfill. Persist self._missed_windows if that ever
-        # needs to survive a crash.
-        self._missed_windows: list = []
+        # Pending backfill is durable: a crash must not silently discard
+        # footage that was already identified as missing.
+        self._missed_windows: list[tuple[int, int]] = []
+        self._backfill_baseline_ready: bool = False
         # Stream-relative coverage (persisted): how far into the CURRENT stream
         # this monitor has already captured or queued for backfill. Keyed to the
         # stream's own start time so a restart mid-marathon doesn't recompute
@@ -594,6 +594,9 @@ class LiveMonitor:
             "clips_published": self.clips_published,
             "covered_elapsed": int(self._covered_elapsed),
             "covered_stream_start": self._covered_stream_start,
+            "missed_windows": [list(w) for w in self._missed_windows],
+            "vod_baseline_ids": sorted(self._vod_baseline_ids),
+            "backfill_baseline_ready": self._backfill_baseline_ready,
             "state": self.state,
             "resume_on_start": self.resume_on_start,
             "updated_at": datetime.now().isoformat(),
@@ -613,6 +616,18 @@ class LiveMonitor:
         self.clips_published = int(snap.get("clips_published") or 0)
         self._covered_elapsed = int(snap.get("covered_elapsed") or 0)
         self._covered_stream_start = snap.get("covered_stream_start") or None
+        restored_windows = []
+        for window in snap.get("missed_windows") or []:
+            if (isinstance(window, (list, tuple)) and len(window) == 2
+                    and all(isinstance(v, (int, float)) for v in window)):
+                start, end = int(window[0]), int(window[1])
+                if end > start >= 0:
+                    restored_windows.append((start, end))
+        self._missed_windows = sorted(set(restored_windows))
+        self.backfill_pending = len(self._missed_windows)
+        self._vod_baseline_ids = set(snap.get("vod_baseline_ids") or [])
+        self._backfill_baseline_ready = bool(
+            snap.get("backfill_baseline_ready", False))
         self.resume_on_start = bool(snap.get("resume_on_start", False))
 
     def start(self, cfg: dict) -> dict:
@@ -664,6 +679,8 @@ class LiveMonitor:
             # applies, so this can never interleave with the toggle path.
             if self.publishing_enabled and self._pending_publish:
                 self._track_task(asyncio.create_task(self._drain_pending()))
+            if self._missed_windows:
+                self._track_task(asyncio.create_task(self._resume_backfill()))
         logger.info("LiveMonitor started: %s (mode=%s)", self.id, self.mode)
         return self.status()
 
@@ -858,22 +875,35 @@ class LiveMonitor:
         self._publish_tasks.add(task)
         task.add_done_callback(self._publish_tasks.discard)
 
-    async def _schedule_backfill(self, started_at) -> None:
-        """Compute the missed window(s) and arrange their recovery.
+    async def _resume_backfill(self) -> None:
+        """Resume durable missed windows after a process restart."""
+        if not self._missed_windows or self.cfg.get("catchup") == "live_only":
+            return
+        try:
+            live, _, _ = await asyncio.to_thread(self._strategy.get_live_state)
+        except Exception:
+            logger.warning("LiveMonitor %s: backfill resume state check failed",
+                           self.id, exc_info=True)
+            return
+        if self.platform == "kick" and not live:
+            await self._recover_kick_backfill()
 
-        Twitch: an in-progress archive VOD exists → backfill in parallel now.
-        Kick: no live VOD → stash the windows + a pre-session VOD-id baseline and
-        recover after the session ends, from the newly-published replay."""
-        self._missed_windows = []
-        self._vod_baseline_ids = set()
+    async def _schedule_backfill(self, started_at) -> None:
+        """Compute missed windows and arrange crash-safe recovery."""
         if started_at is None:
             return
         started_iso = started_at.isoformat()
+        same_stream = self._covered_stream_start == started_iso
+        carried = list(self._missed_windows) if same_stream else []
+        if not same_stream:
+            self._missed_windows = []
+            self._vod_baseline_ids = set()
+            self._backfill_baseline_ready = False
         elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
         if self.cfg.get("catchup") == "live_only":
-            # No historical recovery — coverage starts at "now" (current
-            # stream elapsed), never before this monitor session started.
-            if self._covered_stream_start != started_iso:
+            self._missed_windows = []
+            self.backfill_pending = 0
+            if not same_stream:
                 self._covered_elapsed = 0
             self._covered_stream_start = started_iso
             self._covered_elapsed = max(self._covered_elapsed, int(elapsed))
@@ -882,29 +912,29 @@ class LiveMonitor:
         start = effective_backfill_start(
             self.cfg["prelive_skip_seconds"], self._covered_elapsed,
             self._covered_stream_start, started_iso)
-        windows = backfill_windows(elapsed, start, self.cfg["segment_seconds"])
-        # Everything up to now is either captured (prior session), queued as a
-        # window, or deliberately skipped — record it so a restart doesn't redo it.
-        if self._covered_stream_start != started_iso:
+        newly_missed = backfill_windows(elapsed, start, self.cfg["segment_seconds"])
+        windows = sorted(set(carried + newly_missed))
+        if not same_stream:
             self._covered_elapsed = 0
         self._covered_stream_start = started_iso
         self._covered_elapsed = max(self._covered_elapsed, int(elapsed))
+        self._missed_windows = windows
+        self.backfill_pending = len(windows)
         self._persist()
         if not windows:
             return
         if self.platform == "twitch":
-            self.backfill_pending = len(windows)
-            self._track_task(asyncio.create_task(self._backfill_from_vod(windows)))
-        elif self.platform == "kick":
+            self._track_task(asyncio.create_task(
+                self._backfill_from_vod(list(windows))))
+        elif self.platform == "kick" and not self._backfill_baseline_ready:
             try:
                 baseline = await asyncio.to_thread(self._strategy.fetch_vods)
                 self._vod_baseline_ids = {v["id"] for v in baseline}
+                self._backfill_baseline_ready = True
+                self._persist()
             except Exception:
                 logger.warning("LiveMonitor %s: kick backfill baseline failed — "
-                               "skipping recovery", self.id, exc_info=True)
-                return
-            self.backfill_pending = len(windows)
-            self._missed_windows = windows
+                               "recovery remains pending", self.id, exc_info=True)
 
     async def _backfill_from_vod(self, windows) -> None:
         """Twitch: resolve the in-progress VOD url and process each missed window."""
@@ -916,12 +946,14 @@ class LiveMonitor:
             vod_url = await asyncio.to_thread(self._strategy.live_vod_url)
         except Exception:
             logger.exception("LiveMonitor %s: live VOD lookup failed", self.id)
-            self.backfill_pending = 0
+            self.backfill_pending = len(self._missed_windows)
+            self._persist()
             return
         if not vod_url:
             logger.warning("LiveMonitor %s: backfill unavailable (no in-progress "
                            "VOD — past broadcasts disabled?)", self.id)
-            self.backfill_pending = 0
+            self.backfill_pending = len(self._missed_windows)
+            self._persist()
             return
         await self._backfill_windows(vod_url, windows)
 
@@ -952,7 +984,7 @@ class LiveMonitor:
         sequential so forward live capture keeps priority)."""
         from clippyme.pipeline.media_probe import probe_duration
 
-        for t1, t2 in windows:
+        for t1, t2 in list(windows):
             if self._stop.is_set():
                 break
             seg_path = await self._download_vod_range(vod_url, t1, t2)
@@ -965,7 +997,11 @@ class LiveMonitor:
                     await self._await_and_publish(job_id, seg_path)
                 else:
                     _safe_remove(seg_path)
-            self.backfill_pending = max(0, self.backfill_pending - 1)
+            try:
+                self._missed_windows.remove((int(t1), int(t2)))
+            except ValueError:
+                pass
+            self.backfill_pending = len(self._missed_windows)
             self._persist()
 
     async def _download_vod_range(self, vod_url: str, t1: int, t2: int) -> str | None:

@@ -2,7 +2,9 @@
 import pytest
 from pydantic import ValidationError
 
-from clippyme.api.schemas import BatchRequest, LiveMonitorStartRequest, ProcessRequest
+from clippyme.api.schemas import (
+    BatchRequest, LiveMonitorPublishingRequest, LiveMonitorStartRequest, ProcessRequest,
+)
 
 
 _MONITOR_BASE = {
@@ -51,3 +53,9 @@ def test_live_monitor_start_bounds_max_clips(max_clips):
 def test_live_monitor_start_rejects_unknown_timezone():
     with pytest.raises(ValidationError):
         LiveMonitorStartRequest(**_MONITOR_BASE, timezone="Mars/Olympus_Mons")
+
+
+def test_live_monitor_publishing_requires_a_strict_boolean():
+    assert LiveMonitorPublishingRequest(enabled=False).enabled is False
+    with pytest.raises(ValidationError):
+        LiveMonitorPublishingRequest(enabled="false")

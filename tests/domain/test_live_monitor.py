@@ -1333,3 +1333,25 @@ def test_restored_monitor_with_pending_and_enabled_drains_on_start(tmp_path, mon
     assert mon._pending_publish == []
     assert mon.clips_published == 1
     assert mon._draining is False   # guard released, not left stuck
+
+
+def test_validate_config_malformed_max_clips_uses_default():
+    cfg = validate_monitor_config(_base_cfg(max_clips="not-an-int"))
+    assert cfg["max_clips"] == 5
+
+
+def test_monitor_snapshot_restores_pending_backfill(tmp_path):
+    import json
+    monitor = LiveMonitorRegistry.__new__(LiveMonitorRegistry)
+    from clippyme.domain.live_monitor import LiveMonitor
+    original = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    original._missed_windows = [(1800, 3600), (3600, 5400)]
+    original._vod_baseline_ids = {"old-vod"}
+    original._backfill_baseline_ready = True
+    snap = json.loads(json.dumps(original.snapshot()))
+    restored = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
+    restored.restore(snap)
+    assert restored._missed_windows == [(1800, 3600), (3600, 5400)]
+    assert restored.backfill_pending == 2
+    assert restored._vod_baseline_ids == {"old-vod"}
+    assert restored._backfill_baseline_ready is True
