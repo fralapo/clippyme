@@ -1,45 +1,48 @@
 """Pydantic request schemas for the ClippyMe FastAPI app."""
+from __future__ import annotations
+
 import ipaddress
-import socket
+from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
-# ViralClip / ViralClipsResponse moved to the neutral clippyme.schemas module so
-# the pipeline no longer imports from clippyme.api. Re-exported here for
-# backward compatibility (existing imports from clippyme.api.schemas keep working).
+from clippyme.domain.job_results import ALLOWED_LANGUAGES, MAX_INSTRUCTIONS_LEN
+from clippyme.netutil import resolve_host_addresses
 from clippyme.schemas import ViralClip, ViralClipsResponse  # noqa: F401
-from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
 
 
 def _reject_internal_host(host: str) -> None:
-    """Raise ValueError if a hostname resolves to a private/loopback/link-local
-    address. Best-effort SSRF guard: blocks the obvious metadata-endpoint and
-    LAN targets while leaving public video URLs untouched. DNS failures are
-    tolerated (the downstream downloader will fail safely)."""
+    """Reject literal or DNS-resolved non-public hosts without unbounded DNS I/O.
+
+    DNS failures and timeouts remain best-effort at this early API boundary; the
+    downloader performs the authoritative rebinding-aware check immediately
+    before the network request.
+    """
     if not host:
         raise ValueError("url has no host")
-    candidates = set()
     try:
-        candidates.add(ipaddress.ip_address(host))
+        candidates = {ipaddress.ip_address(host)}
     except ValueError:
         try:
-            for info in socket.getaddrinfo(host, None):
-                try:
-                    candidates.add(ipaddress.ip_address(info[4][0]))
-                except ValueError:
-                    continue
-        except (socket.gaierror, UnicodeError):
-            return  # unresolvable — let the downloader handle it
+            candidates = set(resolve_host_addresses(host, timeout=5.0))
+        except (OSError, TimeoutError, UnicodeError):
+            return
     for ip in candidates:
-        if (ip.is_private or ip.is_loopback or ip.is_link_local
-                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
             raise ValueError("url points to a non-public address")
 
 
 def validate_public_url(value: str) -> str:
-    """Enforce http(s) scheme + non-internal host. Used by Process/Batch."""
+    """Enforce an HTTP(S) URL with a non-internal host."""
     raw = (value or "").strip()
     parsed = urlparse(raw)
     if parsed.scheme.lower() not in ("http", "https"):
@@ -48,33 +51,58 @@ def validate_public_url(value: str) -> str:
     return raw
 
 
+def _validate_language(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized not in ALLOWED_LANGUAGES:
+        raise ValueError(f"unsupported language: {value!r}")
+    return normalized
+
+
+def _validate_timezone(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("timezone must not be blank")
+    try:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(normalized)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"unknown timezone: {normalized!r}") from exc
+    except ImportError:  # pragma: no cover - Python 3.11 always has zoneinfo
+        pass
+    return normalized
+
+
 class ProcessRequest(BaseModel):
     url: str = Field(..., max_length=2048)
-
-    @field_validator("url")
-    @classmethod
-    def _validate_url(cls, v: str) -> str:
-        # Allow the internal multipart-upload placeholder unchanged; every
-        # real submission must be a public http(s) URL (SSRF guard).
-        if v == "https://upload.invalid/local":
-            return v
-        return validate_public_url(v)
-    # Optional per-job knobs — mirror the BatchRequest so single and batch
-    # jobs expose the same surface area to the frontend. All three are
-    # validated downstream (reframe_mode by argparse choices, language by
-    # ALLOWED_LANGUAGES in job_results.build_main_cmd, instructions by
-    # length cap).
     instructions: Optional[str] = Field(None, max_length=MAX_INSTRUCTIONS_LEN)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
     aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
     language: Optional[str] = Field(None, max_length=16)
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
-    # Optional per-job Gemini model override. Validated against the gemini-
-    # family prefix + safe charset (build_main_cmd.GEMINI_MODEL_RE) before it's
-    # appended as --model to the pipeline argv. When omitted, the pipeline uses
-    # GEMINI_MODEL from env / Settings (default gemini-3.5-flash).
-    model: Optional[str] = Field(None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$")
+    model: Optional[str] = Field(
+        None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$"
+    )
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        if value == "https://upload.invalid/local":
+            return value
+        return validate_public_url(value)
+
+    @field_validator("language")
+    @classmethod
+    def _bound_language(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_language(value)
 
 
 class BatchRequest(BaseModel):
@@ -82,168 +110,140 @@ class BatchRequest(BaseModel):
     instructions: Optional[str] = Field(None, max_length=MAX_INSTRUCTIONS_LEN)
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
     aspect: Optional[str] = Field(None, pattern=r"^(9:16|1:1|16:9)$")
-
-    @field_validator("urls")
-    @classmethod
-    def _validate_urls(cls, v: List[str]) -> List[str]:
-        # Preserve the legacy "skip blanks" behaviour, validate the rest.
-        return [validate_public_url(u) for u in v if (u or "").strip()]
-    # Optional per-batch ASR language override. When omitted the pipeline
-    # uses its default (Deepgram `multi` for EN+IT code-switching). Setting
-    # this to a single-language code ("en", "it", "es", …) improves both
-    # transcription accuracy AND speaker diarization reliability on audio
-    # that isn't actually multilingual.
     language: Optional[str] = Field(None, max_length=16)
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
-    # Per-batch Gemini model override (applies to every job in the batch).
-    model: Optional[str] = Field(None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$")
+    model: Optional[str] = Field(
+        None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$"
+    )
+
+    @field_validator("urls")
+    @classmethod
+    def _validate_urls(cls, values: List[str]) -> List[str]:
+        cleaned = [validate_public_url(url) for url in values if (url or "").strip()]
+        if not cleaned:
+            raise ValueError("at least one non-blank URL is required")
+        return cleaned
+
+    @field_validator("language")
+    @classmethod
+    def _bound_language(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_language(value)
 
 
 class ConfigUpdateRequest(BaseModel):
-    # Typed as Dict[str, str] so non-string values are rejected at the
-    # boundary. save_persistent_config further filters to VALID_CONFIG_KEYS.
     keys: Dict[str, str]
 
     @field_validator("keys")
     @classmethod
-    def _cap_values(cls, v: Dict[str, str]) -> Dict[str, str]:
-        # Cap each value to defeat a memory/disk-bloat write via a giant string.
-        for name, val in v.items():
-            if val is not None and len(val) > 4096:
+    def _cap_values(cls, values: Dict[str, str]) -> Dict[str, str]:
+        for name, value in values.items():
+            if value is not None and len(value) > 4096:
                 raise ValueError(f"config value for {name!r} too long (max 4096)")
-        return v
+        return values
 
 
 class ReframeRequest(BaseModel):
-    """Switch a clip between reframe modes after it has been generated.
-
-    Only valid when the per-clip 16:9 source slice was preserved on disk
-    (i.e. jobs produced after the post-hoc reframe feature landed).
-    """
     reframe_mode: Optional[str] = Field(None, pattern=r"^(auto|disabled|subject|object)$")
 
 
-# Overlay params (hook_params / subtitle_params) are intentionally left as
-# free-form dicts so the frontend can evolve fields without a schema bump, but
-# they flow into Pillow text rendering and ffmpeg numeric filter args. Without
-# bounds, a single authenticated request with a multi-megabyte ``text`` or an
-# absurd ``font_size`` can pin a worker (DoS). This validator enforces flat,
-# bounded values without changing the downstream ``.get()`` access pattern.
 _OVERLAY_MAX_KEYS = 40
 _OVERLAY_MAX_STR = 1000
 _OVERLAY_MAX_ABS_NUM = 100_000
 
 
-def _validate_overlay_params(v):
-    if v is None:
-        return v
-    if not isinstance(v, dict):
+def _validate_overlay_params(value):
+    if value is None:
+        return value
+    if not isinstance(value, dict):
         raise ValueError("must be an object")
-    if len(v) > _OVERLAY_MAX_KEYS:
+    if len(value) > _OVERLAY_MAX_KEYS:
         raise ValueError(f"too many keys (max {_OVERLAY_MAX_KEYS})")
-    for key, val in v.items():
-        if isinstance(val, str):
-            if len(val) > _OVERLAY_MAX_STR:
+    for key, item in value.items():
+        if isinstance(item, str):
+            if len(item) > _OVERLAY_MAX_STR:
                 raise ValueError(f"value for {key!r} too long (max {_OVERLAY_MAX_STR})")
-        elif isinstance(val, bool):
+        elif isinstance(item, bool):
             continue
-        elif isinstance(val, (int, float)):
-            if abs(val) > _OVERLAY_MAX_ABS_NUM:
+        elif isinstance(item, (int, float)):
+            if abs(item) > _OVERLAY_MAX_ABS_NUM:
                 raise ValueError(f"value for {key!r} out of range")
-        elif val is None:
+        elif item is None:
             continue
         else:
-            # Reject nested dicts/lists — overlay params are flat scalars.
             raise ValueError(f"value for {key!r} must be a scalar")
-    return v
+    return value
 
 
-# Manual-trim drop spans. Bounds mirror the overlay validator's intent: keep an
-# authenticated request from handing the worker an absurd list. The smartcut
-# engine (normalize_drop_ranges) re-validates, so this is a cheap front gate.
 _DROP_MAX_RANGES = 500
 _DROP_MAX_SECONDS = 100_000
 
 
-def _validate_drop_ranges(v):
-    if v is None:
-        return v
-    if not isinstance(v, list):
+def _validate_drop_ranges(value):
+    if value is None:
+        return value
+    if not isinstance(value, list):
         raise ValueError("drop_ranges must be a list")
-    if len(v) > _DROP_MAX_RANGES:
+    if len(value) > _DROP_MAX_RANGES:
         raise ValueError(f"too many drop_ranges (max {_DROP_MAX_RANGES})")
-    for item in v:
-        # Accept [start, end] pairs or {"start","end"} objects; the engine
-        # coerces both. Just bound the numeric magnitude here.
+    for item in value:
         if isinstance(item, dict):
-            nums = (item.get("start"), item.get("end"))
+            numbers = (item.get("start"), item.get("end"))
         elif isinstance(item, (list, tuple)) and len(item) == 2:
-            nums = (item[0], item[1])
+            numbers = (item[0], item[1])
         else:
             raise ValueError("each drop range must be [start, end] or {start, end}")
-        for n in nums:
-            if not isinstance(n, (int, float)) or isinstance(n, bool):
+        for number in numbers:
+            if not isinstance(number, (int, float)) or isinstance(number, bool):
                 raise ValueError("drop range bounds must be numbers")
-            if abs(n) > _DROP_MAX_SECONDS:
+            if abs(number) > _DROP_MAX_SECONDS:
                 raise ValueError("drop range bound out of range")
-    return v
+    return value
 
 
-def validate_publish_platforms(v: List[dict]) -> List[dict]:
-    """Validate a list of Zernio platform targets.
-
-    Each entry is forwarded verbatim into Zernio's create-post payload, so it
-    must be a small flat object with a known platform + an accountId (no
-    smuggled control keys like publishNow / webhookUrl). Shared by
-    PublishRequest and LiveMonitorStartRequest.
-    """
+def validate_publish_platforms(value: List[dict]) -> List[dict]:
+    """Validate the small, flat Zernio target objects forwarded downstream."""
     allowed = {"tiktok", "instagram", "youtube"}
-    for item in v:
+    for item in value:
         if not isinstance(item, dict):
             raise ValueError("each platform must be an object")
         platform = item.get("platform")
         if platform not in allowed:
             raise ValueError(f"platform must be one of {sorted(allowed)}")
-        acct = item.get("accountId")
-        if not isinstance(acct, str) or not acct or len(acct) > 256:
+        account_id = item.get("accountId")
+        if not isinstance(account_id, str) or not account_id or len(account_id) > 256:
             raise ValueError("accountId must be a non-empty string (max 256)")
         extra = set(item) - {"platform", "accountId", "platformSpecificData"}
         if extra:
             raise ValueError(f"unexpected platform keys: {sorted(extra)}")
         if "platformSpecificData" in item:
             _validate_overlay_params(item["platformSpecificData"])
-    return v
+    return value
 
 
 class ComposeRequest(BaseModel):
-    toggles: dict = {}
-    hook_params: dict = {}
-    subtitle_params: dict = {}
-    logo_params: dict = {}
-    grade_params: dict = {}
-    # Attribution banner: {enabled, platform, handle, y_pct?, mode?}. Flat scalar
-    # dict like the other overlay params (bounded below). `enabled` acts as the
-    # banner's own active flag (no separate toggles entry required).
-    banner_params: dict = {}
-    # Manual Smart Cut trim: hand-picked [[start, end], …] spans (clip-relative
-    # seconds) removed on top of the automatic filler/silence pass.
-    drop_ranges: list = []
+    toggles: dict = Field(default_factory=dict)
+    hook_params: dict = Field(default_factory=dict)
+    subtitle_params: dict = Field(default_factory=dict)
+    logo_params: dict = Field(default_factory=dict)
+    grade_params: dict = Field(default_factory=dict)
+    banner_params: dict = Field(default_factory=dict)
+    drop_ranges: list = Field(default_factory=list)
 
-    @field_validator("hook_params", "subtitle_params", "logo_params", "grade_params",
-                     "banner_params")
+    @field_validator(
+        "hook_params", "subtitle_params", "logo_params", "grade_params", "banner_params"
+    )
     @classmethod
-    def _bound_overlay(cls, v):
-        return _validate_overlay_params(v)
+    def _bound_overlay(cls, value):
+        return _validate_overlay_params(value)
 
     @field_validator("drop_ranges")
     @classmethod
-    def _bound_drops(cls, v):
-        return _validate_drop_ranges(v)
+    def _bound_drops(cls, value):
+        return _validate_drop_ranges(value)
 
 
 class EditAIRequest(BaseModel):
-    """Natural-language clip-trim request — Gemini returns spans to cut."""
     instruction: str = Field(..., min_length=1, max_length=1000)
     model: Optional[str] = Field(
         None, max_length=64, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$"
@@ -251,55 +251,14 @@ class EditAIRequest(BaseModel):
 
 
 class PublishRequest(BaseModel):
-    """Schedule a clip on social platforms via Zernio.
-
-    schedule_mode:
-      - "now"     → publish immediately
-      - "auto"    → SmartScheduler picks the next optimal slot
-      - "manual"  → caller passes scheduled_for (ISO 8601)
-
-    platforms is a list of {platform, accountId, platformSpecificData?} dicts
-    matching Zernio's create-post schema.
-    """
     title: str = Field("", max_length=500)
     caption: str = Field("", max_length=2200)
     platforms: List[dict] = Field(..., min_length=1, max_length=14)
     schedule_mode: str = Field("now", pattern=r"^(now|auto|manual)$")
     scheduled_for: Optional[str] = Field(None, max_length=64)
-    # Optional YYYY-MM-DD that defines the day the SmartScheduler should
-    # start picking slots from when schedule_mode="auto". Ignored by
-    # "now" / "manual". Defaults to today if omitted.
     start_date: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     timezone: str = Field("Europe/Rome", max_length=64)
     tiktok_settings: Optional[dict] = None
-
-    @field_validator("timezone")
-    @classmethod
-    def _validate_tz(cls, v: str) -> str:
-        # Reject unknown IANA zones at the boundary (defends SmartScheduler /
-        # Zernio from a crafted tz string). Falls back to allowing the value
-        # if the tz database isn't available on the host.
-        try:
-            from zoneinfo import available_timezones
-            if v not in available_timezones():
-                raise ValueError(f"unknown timezone: {v!r}")
-        except ImportError:
-            pass
-        return v
-
-    @field_validator("scheduled_for")
-    @classmethod
-    def _validate_scheduled_for(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        from datetime import datetime
-        try:
-            datetime.fromisoformat(v.replace("Z", "+00:00"))
-        except (ValueError, AttributeError) as exc:
-            raise ValueError("scheduled_for must be an ISO 8601 timestamp") from exc
-        return v
-    # If true, force a fresh compose pass before upload using the supplied
-    # toggles. If omitted, the latest composed clip on disk is used.
     compose_first: bool = False
     toggles: Optional[dict] = None
     hook_params: Optional[dict] = None
@@ -309,44 +268,46 @@ class PublishRequest(BaseModel):
     banner_params: Optional[dict] = None
     drop_ranges: Optional[list] = None
 
-    @field_validator("hook_params", "subtitle_params", "logo_params", "grade_params",
-                     "banner_params")
+    @field_validator("timezone")
     @classmethod
-    def _bound_overlay(cls, v):
-        return _validate_overlay_params(v)
+    def _validate_tz(cls, value: str) -> str:
+        return _validate_timezone(value)  # type: ignore[return-value]
+
+    @field_validator("scheduled_for")
+    @classmethod
+    def _validate_scheduled_for(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("scheduled_for must be an ISO 8601 timestamp") from exc
+        return value
+
+    @field_validator(
+        "hook_params", "subtitle_params", "logo_params", "grade_params", "banner_params"
+    )
+    @classmethod
+    def _bound_overlay(cls, value):
+        return _validate_overlay_params(value)
 
     @field_validator("drop_ranges")
     @classmethod
-    def _bound_drops(cls, v):
-        return None if v is None else _validate_drop_ranges(v)
+    def _bound_drops(cls, value):
+        return None if value is None else _validate_drop_ranges(value)
 
     @field_validator("platforms")
     @classmethod
-    def _validate_platforms(cls, v: List[dict]) -> List[dict]:
-        return validate_publish_platforms(v)
+    def _validate_platforms(cls, value: List[dict]) -> List[dict]:
+        return validate_publish_platforms(value)
 
     @field_validator("tiktok_settings")
     @classmethod
-    def _bound_tiktok_settings(cls, v):
-        # Forwarded verbatim into Zernio's create-post body; bound it so an
-        # authenticated client can't smuggle a huge/nested object through.
-        return _validate_overlay_params(v)
+    def _bound_tiktok_settings(cls, value):
+        return _validate_overlay_params(value)
 
 
 class LiveMonitorStartRequest(BaseModel):
-    """Start a content monitor for one channel on one platform.
-
-    All runtime config is body-supplied (no env). ``platforms`` reuses the same
-    Zernio target validation as PublishRequest; every produced clip is published
-    with schedule_mode='auto' and a shared >=min_gap_seconds spacing that is
-    GLOBAL across all running monitors.
-
-    ``platform`` (default 'kick' for back-compat) and ``mode`` (default 'live')
-    select the source. ``slug`` is the channel: a kick/twitch login, or for
-    youtube an @handle / UC… id / channel URL. Per-platform channel validation
-    (and the youtube-can't-do-live rule) is enforced in the domain layer, which
-    raises a clean 400, so the schema keeps ``slug`` permissive.
-    """
     slug: str = Field(..., min_length=1, max_length=256)
     platform: str = Field("kick", pattern=r"^(kick|twitch|youtube)$")
     mode: str = Field("live", pattern=r"^(live|vod)$")
@@ -354,84 +315,85 @@ class LiveMonitorStartRequest(BaseModel):
     segment_seconds: int = Field(1800, ge=60, le=3600)
     prelive_skip_seconds: int = Field(1800, ge=0, le=7200)
     min_gap_seconds: int = Field(900, ge=0, le=86400)
-    # Optional: domain picks a mode-appropriate default (60s live / 600s vod).
     poll_interval: Optional[int] = Field(None, ge=30, le=3600)
     loop: bool = False
     caption_template: str = Field("", max_length=2200)
     title_template: str = Field("", max_length=500)
-    # AI instructions steering Gemini viral-clip selection — mirrors
-    # ProcessRequest.instructions (same cap; domain layer trims/re-caps).
     instructions: Optional[str] = Field(None, max_length=MAX_INSTRUCTIONS_LEN)
     timezone: Optional[str] = Field(None, max_length=64)
-    # Attribution-banner override for auto-published clips. None → auto from the
-    # monitor's own platform + channel; {"enabled": false} disables it; a dict
-    # overrides {platform, handle, y_pct}. Flat scalar dict (bounded).
     banner: Optional[dict] = None
-    # Optional compose-recipe overrides for the monitor's auto-publish flow:
-    # {toggles?, hook_params?, subtitle_params?, banner?}. Defaults (hook top,
-    # banner attached under the letterbox band, subtitles bottom-left) apply
-    # when omitted. Shallow-merged over the defaults in build_monitor_compose.
     compose: Optional[dict] = None
-    # "backfill" (default, current behaviour) recovers footage missed before
-    # capture started (prelive window, kick/twitch missed-window recovery).
-    # "live_only" never recovers pre-start footage. Re-validated in the
-    # domain layer; kept permissive here (regex mirrors mode/platform style).
     catchup: str = Field("backfill", pattern=r"^(backfill|live_only)$")
+    delete_after_publish: bool = True
+    max_clips: int = Field(5, ge=1, le=50)
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_tz(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_timezone(value)
 
     @field_validator("banner")
     @classmethod
-    def _bound_banner(cls, v):
-        return _validate_overlay_params(v)
+    def _bound_banner(cls, value):
+        return _validate_overlay_params(value)
 
     @field_validator("compose")
     @classmethod
-    def _bound_compose(cls, v):
-        # Nested overlay dicts are allowed here (hook_params/subtitle_params/
-        # banner), so bound each nested value individually but keep the shape.
-        if v is None:
-            return v
-        if not isinstance(v, dict):
+    def _bound_compose(cls, value):
+        if value is None:
+            return value
+        if not isinstance(value, dict):
             raise ValueError("compose must be an object")
-        if len(v) > 8:
+        if len(value) > 8:
             raise ValueError("compose has too many keys")
-        for key, val in v.items():
-            if isinstance(val, dict):
-                _validate_overlay_params(val)
-            elif not isinstance(val, (str, int, float, bool)) and val is not None:
+        for key, item in value.items():
+            if isinstance(item, dict):
+                _validate_overlay_params(item)
+            elif not isinstance(item, (str, int, float, bool)) and item is not None:
                 raise ValueError(f"compose[{key!r}] must be a scalar or object")
-        return v
+        return value
 
     @field_validator("slug")
     @classmethod
-    def _clean_slug(cls, v: str) -> str:
-        v = v.strip()
-        if not v or any(c.isspace() for c in v):
+    def _clean_slug(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized or any(character.isspace() for character in normalized):
             raise ValueError("channel must not be blank or contain whitespace")
-        return v
+        return normalized
 
     @field_validator("platforms")
     @classmethod
-    def _validate_platforms(cls, v: List[dict]) -> List[dict]:
-        return validate_publish_platforms(v)
+    def _validate_platforms(cls, value: List[dict]) -> List[dict]:
+        return validate_publish_platforms(value)
 
 
 class ZernioConfigRequest(BaseModel):
-    """Persisted Zernio settings (saved to data/config.json)."""
     api_key: Optional[str] = Field(None, max_length=512)
-    accounts: Optional[dict] = None  # {"tiktok": "...", "instagram": "...", "youtube": "..."}
+    accounts: Optional[dict] = None
     timezone: Optional[str] = Field(None, max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_tz(cls, value: Optional[str]) -> Optional[str]:
+        return _validate_timezone(value)
 
     @field_validator("accounts")
     @classmethod
-    def _validate_accounts(cls, v):
-        if v is None:
-            return v
-        if len(v) > 16:
+    def _validate_accounts(cls, value):
+        if value is None:
+            return value
+        if not isinstance(value, dict):
+            raise ValueError("accounts must be an object")
+        if len(value) > 16:
             raise ValueError("too many account entries")
         allowed = {"tiktok", "instagram", "youtube"}
-        for k, val in v.items():
-            if k not in allowed:
-                raise ValueError(f"unknown account platform: {k!r}")
-            if val is not None and (not isinstance(val, str) or len(val) > 256):
-                raise ValueError(f"account id for {k!r} must be a string <= 256 chars")
-        return v
+        for platform, account_id in value.items():
+            if platform not in allowed:
+                raise ValueError(f"unknown account platform: {platform!r}")
+            if account_id is not None and (
+                not isinstance(account_id, str) or len(account_id) > 256
+            ):
+                raise ValueError(
+                    f"account id for {platform!r} must be a string <= 256 chars"
+                )
+        return value
