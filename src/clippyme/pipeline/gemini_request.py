@@ -250,7 +250,10 @@ def backoff_seconds(rate_limited: bool, attempt: int) -> int:
 def build_model_chain(primary_model: str, fallback_models: str | None = None) -> list[str]:
     """Return a de-duplicated primary → fallback model chain."""
     raw = fallback_models if fallback_models is not None else (
-        "gemini-3.1-flash-lite,gemini-3-flash-preview,"
+        # Pro first: when the flash primary is 503/rate-limited, route to the
+        # stronger pro model (better clip selection on dense speech) BEFORE
+        # dropping to the weaker flash-lite tiers.
+        "gemini-3.1-pro-preview,gemini-3.1-flash-lite,gemini-3-flash-preview,"
         "gemini-2.5-flash,gemini-2.5-flash-lite"
     )
     models = [primary_model, *(part.strip() for part in raw.split(","))]
