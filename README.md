@@ -282,6 +282,8 @@ All routes are JSON in / JSON out. Job IDs are strict UUID4. Config endpoints re
 | `POST` | `/api/publish/{job_id}/{clip_index}` | Upload + schedule a clip on TikTok/IG/YouTube. |
 | `POST` | `/api/live-monitor/start` | Start a channel monitor (kick/twitch/youtube, live/vod mode). |
 | `POST` | `/api/live-monitor/stop` | Stop one monitor (`{monitor_id}`) or all. |
+| `POST` | `/api/live-monitor/{id}/config` | Update a running monitor's settings (allow-listed fields; apply to future clips). |
+| `POST` | `/api/live-monitor/{id}/publishing` | Pause/resume Zernio auto-publish (`{"enabled": bool}`); pending clips drain on resume. |
 | `GET` | `/api/live-monitor/status` | All monitors: state, segments captured, backfill pending, clips published. |
 
 Static mounts: `/videos`, `/thumbnails`, `/fonts` (read-only).
