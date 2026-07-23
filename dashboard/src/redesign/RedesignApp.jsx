@@ -159,7 +159,10 @@ export default function RedesignApp() {
   // `processing` flag drives the per-card spinner; each clip is an independent
   // async chain → several can render concurrently.
   const reprocessClip = useCallback(async (idx, clip, params) => runApplyEdit({
-    jobId, idx, params,
+    // apiIdx resolves to the backend's ABSOLUTE `shorts` position — diverges
+    // from the local array position `idx` once a manual-publish gap skips a
+    // deleted_after_publish clip.
+    jobId, idx, apiIdx: clip?.original_index ?? idx, params,
     api: { reframeClip, composeClip },
     updateClipState, pushToast,
   }), [jobId, updateClipState, pushToast]);

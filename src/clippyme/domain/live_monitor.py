@@ -251,8 +251,8 @@ def validate_monitor_config(config: dict, default_timezone: str = "Europe/Rome")
 
 
 # Fields a running monitor's config may be safely mutated to at runtime.
-# platform/mode/channel/slug/loop/publisher_mode are identity/lifecycle knobs
-# — changing them mid-run would need a restart, not a config patch.
+# platform/mode/channel/slug/loop are identity/lifecycle knobs — changing them
+# mid-run would need a restart, not a config patch.
 _UPDATABLE_CONFIG_FIELDS = (
     "instructions", "caption_template", "title_template", "min_gap_seconds",
     "segment_seconds", "prelive_skip_seconds", "platforms", "banner", "compose",
@@ -272,9 +272,9 @@ _SNAPSHOT_CONFIG_FIELDS = (
 def validate_monitor_partial_update(partial: dict, current_cfg: dict) -> dict:
     """Validate a runtime config-update payload against a running monitor's
     current config. Only ``_UPDATABLE_CONFIG_FIELDS`` may be changed; anything
-    else (platform/mode/channel/slug/loop/publisher_mode/...) is rejected.
-    Returns the fully re-validated merged config (same shape as
-    ``validate_monitor_config``'s return)."""
+    else (platform/mode/channel/slug/loop/...) is rejected. Returns the fully
+    re-validated merged config (same shape as ``validate_monitor_config``'s
+    return)."""
     if not isinstance(partial, dict) or not partial:
         raise ValidationError("no updatable fields provided")
     bad = set(partial) - set(_UPDATABLE_CONFIG_FIELDS)

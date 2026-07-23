@@ -827,7 +827,10 @@ async def live_monitor_update_config(monitor_id: str, request: Request):
     FUTURE segments/publishes only, never retroactively."""
     require_trusted_config_request(request)
     enforce_rate_limit(request, "livemonitor", capacity=10, refill_per_sec=10 / 60)
-    partial = await request.json()
+    try:
+        partial = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed JSON body")
     return {"monitor": live_monitor.update_config(monitor_id, partial)}
 
 
@@ -838,7 +841,10 @@ async def live_monitor_set_publishing(monitor_id: str, request: Request):
     drained through the normal publish path on resume."""
     require_trusted_config_request(request)
     enforce_rate_limit(request, "livemonitor", capacity=10, refill_per_sec=10 / 60)
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed JSON body")
     enabled = bool(body.get("enabled")) if isinstance(body, dict) else False
     return {"monitor": live_monitor.set_publishing(monitor_id, enabled)}
 

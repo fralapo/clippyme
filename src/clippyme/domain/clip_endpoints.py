@@ -78,6 +78,12 @@ def restore_job_from_disk(job_id: str, output_dir: str, job_dir: str) -> dict:
     clips = data.get("shorts", [])
     present = []
     for i, clip in enumerate(clips):
+        # Mirror job_results._build_clips: never resurface a clip deleted
+        # after a confirmed publish, and keep `original_index` as the
+        # ABSOLUTE position in `shorts` (not the post-skip array position) so
+        # per-clip endpoints resolve the right clip even when a gap exists.
+        if clip.get('deleted_after_publish'):
+            continue
         clip_filename = clip_filename_for(meta_files[0], clip, i)
         # Only restore clips whose rendered file actually made it to disk. When a
         # job is stopped/cancelled mid-render the metadata still lists every
@@ -90,6 +96,7 @@ def restore_job_from_disk(job_id: str, output_dir: str, job_dir: str) -> dict:
         # downstream consumers (publish, smartcut, compose) never have to
         # defensively split on `?` again.
         clip["video_url"] = f"/videos/{job_id}/{clip_filename}"
+        clip["original_index"] = i
         present.append(clip)
 
     if not present:

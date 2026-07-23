@@ -116,8 +116,12 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     setProgress(init);
     const results = await Promise.allSettled(clips.map(async (clip, batchPos) => {
       const idx = clip._idx;
+      // Resolve to the backend's ABSOLUTE `shorts` position for the actual
+      // publish call — `idx` (array position) stays the key into local
+      // clipStates/progress, which are unaffected by a manual-publish gap.
+      const apiIdx = clip._apiIdx ?? idx;
       try {
-        await publishClip(jobId, idx, buildBody(clip, idx, batchPos));
+        await publishClip(jobId, apiIdx, buildBody(clip, idx, batchPos));
         setProgress((p) => ({ ...p, [idx]: { state: 'done' } }));
         onPublished?.(idx);
         return true;

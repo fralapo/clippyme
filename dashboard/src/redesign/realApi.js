@@ -129,7 +129,11 @@ export async function exportClip(jobId, index, clip, state, preselections) {
   const logo = state?.logoParams ?? seedLogoParams(preselections);
   const grade = state?.gradeParams ?? { preset: preselections?.grade?.preset || 'none' };
   const banner = state?.bannerParams ?? seedBannerParams(preselections);
-  const { composed_url } = await composeClip(jobId, index, {
+  // Resolve to the backend's ABSOLUTE `shorts` position, not the array
+  // position `index` — they diverge once a manual-publish gap skips a
+  // deleted_after_publish clip (see job_results._build_clips).
+  const apiIndex = clip?.original_index ?? index;
+  const { composed_url } = await composeClip(jobId, apiIndex, {
     toggles,
     hook_params: toggles.hook ? hook : {},
     subtitle_params: toggles.subtitles ? subs : {},

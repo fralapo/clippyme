@@ -53,3 +53,31 @@ def test_update_config_untrusted_origin_rejected():
     r = client.post("/api/live-monitor/kick:foo/config", json={"min_gap_seconds": 120})
 
     assert r.status_code in (403, 400)
+
+
+def test_update_config_malformed_json_400():
+    fake = _FakeMonitor()
+    app_module.live_monitor._monitors["kick:foo"] = fake
+    client = TestClient(app_module.app, headers=ORIGIN)
+
+    r = client.post(
+        "/api/live-monitor/kick:foo/config",
+        content=b"{not json",
+        headers={**ORIGIN, "Content-Type": "application/json"},
+    )
+
+    assert r.status_code == 400, r.text
+
+
+def test_set_publishing_malformed_json_400():
+    fake = _FakeMonitor()
+    app_module.live_monitor._monitors["kick:foo"] = fake
+    client = TestClient(app_module.app, headers=ORIGIN)
+
+    r = client.post(
+        "/api/live-monitor/kick:foo/publishing",
+        content=b"{not json",
+        headers={**ORIGIN, "Content-Type": "application/json"},
+    )
+
+    assert r.status_code == 400, r.text
