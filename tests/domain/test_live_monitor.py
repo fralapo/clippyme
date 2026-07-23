@@ -1135,7 +1135,8 @@ def test_drain_recomposes_missing_composed_path_and_survives_failure(tmp_path, m
 
 def test_successful_publish_deletes_clip_files_and_empty_dir(tmp_path, monkeypatch):
     """A published clip's artifacts are removed; when it was the last clip the
-    whole job dir goes away."""
+    whole job dir goes away. The consolidated per-monitor composed file is
+    also removed (delete_after_publish default True)."""
     import asyncio
 
     job_dir = tmp_path / "job1"
@@ -1146,17 +1147,22 @@ def test_successful_publish_deletes_clip_files_and_empty_dir(tmp_path, monkeypat
     (job_dir / "composed_clip_0.mp4").write_bytes(b"x")
     (job_dir / "run_metadata.json").write_text(
         '{"shorts": [{"video_url": "/videos/job1/c.mp4"}]}')
+    monitor_dir = tmp_path / "monitor_kick_chan"
+    monitor_dir.mkdir()
+    composed = monitor_dir / "Title.mp4"
+    composed.write_bytes(b"x")
 
     jobs = {"job1": {"status": "completed"}}
     mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
-    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(composed)}
 
     asyncio.run(mon._publish_one(entry))
 
     assert len(calls) == 1
     assert mon.clips_published == 1
     assert not job_dir.exists()          # last clip → job dir removed
+    assert not composed.exists()         # consolidated file removed too
 
 
 def test_successful_publish_keeps_dir_and_marks_metadata_when_clips_remain(tmp_path, monkeypatch):
@@ -1201,13 +1207,17 @@ def test_delete_after_publish_false_keeps_artifacts_but_marks_published(tmp_path
     (job_dir / "source_c.mp4").write_bytes(b"x")
     meta = job_dir / "run_metadata.json"
     meta.write_text(json.dumps({"shorts": [{"video_url": "/videos/job1/c.mp4"}]}))
+    monitor_dir = tmp_path / "monitor_kick_chan"
+    monitor_dir.mkdir()
+    composed = monitor_dir / "Title.mp4"
+    composed.write_bytes(b"x")
 
     jobs = {"job1": {"status": "completed"}}
     mon, calls = _publishing_monitor(tmp_path, monkeypatch, jobs=jobs)
     mon.cfg["delete_after_publish"] = False
     clip = {"video_url": "/videos/job1/c.mp4", "title": "T", "original_index": 0}
     clip_path = os.path.join(str(tmp_path), "job1", "c.mp4")
-    entry = {"job_id": "job1", "clip": clip, "composed_path": str(job_dir / "c.mp4")}
+    entry = {"job_id": "job1", "clip": clip, "composed_path": str(composed)}
 
     asyncio.run(mon._publish_one(entry))
 
@@ -1216,6 +1226,7 @@ def test_delete_after_publish_false_keeps_artifacts_but_marks_published(tmp_path
     assert clip_path in mon._published        # dedupe still recorded
     assert (job_dir / "c.mp4").exists()        # artifacts kept
     assert (job_dir / "source_c.mp4").exists()
+    assert composed.exists()                   # consolidated file kept too
     data = json.loads(meta.read_text())
     assert "deleted_after_publish" not in data["shorts"][0]
 

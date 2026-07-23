@@ -1096,7 +1096,6 @@ class LiveMonitor:
                 return
             result = self._jobs.get(job_id, {}).get("result") or {}
             if result.get("gemini_exhausted"):
-                from datetime import datetime, timezone
                 self._gemini_exhausted_at = datetime.now(timezone.utc).isoformat()
                 self._persist()
                 logger.warning("LiveMonitor %s: Gemini rate-limited — segment %s skipped", self.id, job_id)
@@ -1257,10 +1256,15 @@ class LiveMonitor:
             # still recorded as published above so it's never re-published.
             return
         # Clip is published → free the job-dir artifacts (best-effort, never
-        # raises). The consolidated composed file (upload_path, in the per-monitor
-        # folder) is the durable deliverable and is deliberately KEPT — pass
-        # clip_path so it's never a deletion target.
+        # raises), AND the consolidated composed file in the per-monitor
+        # folder — the folder must only ever hold not-yet-published clips on
+        # a 24/7 monitor, so nothing durable survives a confirmed publish.
         self._delete_clip_artifacts(job_id, clip, clip_path, clip_path)
+        try:
+            _safe_remove(entry.get("composed_path"))
+        except Exception:
+            logger.warning("LiveMonitor %s: consolidated-file cleanup failed for %s",
+                           self.id, job_id, exc_info=True)
 
     # -- pause / resume auto-publish -------------------------------------
 
