@@ -421,6 +421,10 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     # template fill) is pure — it lives in gemini_request, host-tested.
     prompt, words = build_viral_prompt(transcript_result, video_duration, instructions)
 
+    if not words:
+        print("⏭️  Empty transcript (no words) — skipping Gemini, no clips.")
+        return None
+
     max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3") or "3")
     try:
         response, model_name = generate_with_model_fallback(
@@ -446,7 +450,9 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     # Parse response JSON via the 5-level chain in gemini_parser.
     # See CLAUDE.md section "Gemini viral detection — parsing chain".
     try:
-        from clippyme.pipeline.gemini_parser import parse_gemini_response, validate_and_dedupe, backfill_hook_text
+        from clippyme.pipeline.gemini_parser import (
+            parse_gemini_response, validate_and_dedupe, backfill_hook_text, drop_wordless_clips,
+        )
         from pydantic import ValidationError
 
         text = response.text or ""
@@ -510,6 +516,11 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
 
         if not clips:
             print("❌ No valid clips after Pydantic validation + dedupe")
+            return None
+
+        clips = drop_wordless_clips(clips, words)
+        if not clips:
+            print("❌ No clips with transcript words in range (hallucination/empty transcript guard)")
             return None
 
         # Ensure every clip has a viral_hook_text. Logic lives in
