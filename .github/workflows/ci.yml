@@ -64,10 +64,31 @@ jobs:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
-      # npm audit only needs package.json/package-lock.json. Keeping this job
-      # separate means a disclosed advisory does not hide lint/test/build output.
-      - name: Audit production dependencies
-        run: npm audit --package-lock-only --omit=dev --audit-level=high
+
+      - name: Generate production audit report
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --package-lock-only --omit=dev --audit-level=high --json > npm-audit.json
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload production audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-production-audit
+          path: dashboard/npm-audit.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Enforce production audit
+        if: steps.audit.outputs.exit_code != '0'
+        run: |
+          node -e "const r=require('./npm-audit.json'); for (const [n,v] of Object.entries(r.vulnerabilities||{})) console.error(n, v.severity, v.via);"
+          exit 1
 
   frontend:
     name: Frontend (test + build + lint)
