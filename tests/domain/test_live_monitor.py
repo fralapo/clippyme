@@ -18,6 +18,7 @@ from clippyme.domain.live_monitor import (
     build_monitor_compose,
     remaining_prelive,
     render_template,
+    monitor_id_for,
     should_process_segment,
     validate_monitor_config,
     validate_monitor_partial_update,
@@ -1342,7 +1343,6 @@ def test_validate_config_malformed_max_clips_uses_default():
 
 def test_monitor_snapshot_restores_pending_backfill(tmp_path):
     import json
-    monitor = LiveMonitorRegistry.__new__(LiveMonitorRegistry)
     from clippyme.domain.live_monitor import LiveMonitor
     original = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
     original._missed_windows = [(1800, 3600), (3600, 5400)]
@@ -1355,3 +1355,17 @@ def test_monitor_snapshot_restores_pending_backfill(tmp_path):
     assert restored.backfill_pending == 2
     assert restored._vod_baseline_ids == {"old-vod"}
     assert restored._backfill_baseline_ready is True
+
+
+
+def test_youtube_monitor_id_is_stable_and_path_safe():
+    channel = "https://www.youtube.com/@ExampleCreator"
+    first = monitor_id_for("youtube", channel)
+    assert first == monitor_id_for("youtube", channel)
+    assert first.startswith("youtube:")
+    assert "/" not in first
+    assert len(first) == len("youtube:") + 20
+
+
+def test_non_youtube_monitor_id_remains_human_readable():
+    assert monitor_id_for("kick", "creator") == "kick:creator"

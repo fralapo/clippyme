@@ -3,7 +3,8 @@ import pytest
 from pydantic import ValidationError
 
 from clippyme.api.schemas import (
-    BatchRequest, LiveMonitorPublishingRequest, LiveMonitorStartRequest, ProcessRequest,
+    BatchRequest, LiveMonitorPublishingRequest, LiveMonitorStartRequest,
+    LiveMonitorStopRequest, ProcessRequest,
 )
 
 
@@ -59,3 +60,10 @@ def test_live_monitor_publishing_requires_a_strict_boolean():
     assert LiveMonitorPublishingRequest(enabled=False).enabled is False
     with pytest.raises(ValidationError):
         LiveMonitorPublishingRequest(enabled="false")
+
+
+
+def test_live_monitor_stop_id_is_path_safe():
+    assert LiveMonitorStopRequest(monitor_id="youtube:0123456789abcdefabcd").monitor_id
+    with pytest.raises(ValidationError):
+        LiveMonitorStopRequest(monitor_id="youtube:https://example.com/channel")

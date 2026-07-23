@@ -27,6 +27,7 @@ module never imports ``api.app`` (no circular import).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -70,6 +71,16 @@ PUBLISH_MAX_DAY_ROLLS = 7
 # ---------------------------------------------------------------------------
 # Pure helpers (host-testable, no I/O)
 # ---------------------------------------------------------------------------
+
+
+def monitor_id_for(platform: str, channel: str) -> str:
+    """Return a stable path-safe ID without exposing URL-shaped channels."""
+    platform = str(platform or "").strip().lower()
+    channel = str(channel or "").strip()
+    if platform != "youtube":
+        return f"{platform}:{channel}"
+    digest = hashlib.sha256(channel.encode("utf-8")).hexdigest()[:20]
+    return f"youtube:{digest}"
 
 
 def should_process_segment(duration: float, min_seconds: float = MIN_PROCESS_SECONDS) -> bool:
@@ -961,8 +972,15 @@ class LiveMonitor:
         """Kick: poll for the replay VOD that appears after the session ends
         (an id not in the pre-session baseline), then process the missed windows."""
         if self.cfg.get("catchup") == "live_only":
-            return  # ponytail: defence-in-depth — _schedule_backfill never calls us in this mode
-        windows = self._missed_windows
+            return  # defence-in-depth — _schedule_backfill never calls us in this mode
+        if not self._backfill_baseline_ready:
+            logger.warning(
+                "LiveMonitor %s: kick backfill remains pending because the "
+                "pre-session VOD baseline is unavailable", self.id)
+            self.backfill_pending = len(self._missed_windows)
+            self._persist()
+            return
+        windows = list(self._missed_windows)
         for _ in range(30):  # ponytail: fixed cap; replay usually lands in minutes
             if self._stop.is_set():
                 return
@@ -987,6 +1005,7 @@ class LiveMonitor:
         for t1, t2 in list(windows):
             if self._stop.is_set():
                 break
+            completed = False
             seg_path = await self._download_vod_range(vod_url, t1, t2)
             if seg_path is not None:
                 duration = await asyncio.to_thread(probe_duration, seg_path)
@@ -995,12 +1014,15 @@ class LiveMonitor:
                     job_id = await self._submit_segment_job(seg_path)
                     self.current_job_id = job_id
                     await self._await_and_publish(job_id, seg_path)
+                    completed = True
                 else:
                     _safe_remove(seg_path)
-            try:
-                self._missed_windows.remove((int(t1), int(t2)))
-            except ValueError:
-                pass
+                    completed = True
+            if completed:
+                try:
+                    self._missed_windows.remove((int(t1), int(t2)))
+                except ValueError:
+                    pass
             self.backfill_pending = len(self._missed_windows)
             self._persist()
 
@@ -1460,7 +1482,7 @@ class LiveMonitorRegistry:
     def start(self, config: dict) -> dict:
         from clippyme.storage.config_store import load_zernio_config
         cfg = validate_monitor_config(config, default_timezone=load_zernio_config().get("timezone"))
-        mid = f"{cfg['platform']}:{cfg['channel']}"
+        mid = monitor_id_for(cfg["platform"], cfg["channel"])
 
         existing = self._monitors.get(mid)
         if existing is not None and existing.is_running():
@@ -1637,7 +1659,18 @@ class LiveMonitorRegistry:
                     "segments_captured": data.get("segments_captured") or 0,
                     "clips_published": data.get("clips_published") or 0,
                 }
-        self._snapshots = {k: v for k, v in monitors.items() if isinstance(v, dict)}
+        normalized = {}
+        for old_mid, snap in monitors.items():
+            if not isinstance(snap, dict):
+                continue
+            cfg = snap.get("config") if isinstance(snap.get("config"), dict) else {}
+            platform = cfg.get("platform") or snap.get("platform")
+            channel = cfg.get("channel") or snap.get("channel")
+            if platform and channel:
+                normalized[monitor_id_for(platform, channel)] = snap
+            else:
+                normalized[old_mid] = snap
+        self._snapshots = normalized
         for iso in data.get("picked_slots") or []:
             try:
                 self._picked_slots.append(datetime.fromisoformat(iso))

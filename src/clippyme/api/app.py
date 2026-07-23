@@ -49,6 +49,7 @@ from clippyme.api.schemas import (
     EditAIRequest,
     LiveMonitorPublishingRequest,
     LiveMonitorStartRequest,
+    LiveMonitorStopRequest,
     ProcessRequest,
     PublishRequest,
     ReframeRequest,
@@ -807,18 +808,12 @@ async def live_monitor_start(req: LiveMonitorStartRequest, request: Request):
 
 
 @app.post("/api/live-monitor/stop")
-async def live_monitor_stop(request: Request):
-    """Stop one monitor (body ``{"monitor_id": "..."}``) or ALL monitors (no
-    body). Lets in-flight publishes drain first."""
+async def live_monitor_stop(
+    request: Request, req: LiveMonitorStopRequest | None = None
+):
+    """Stop one monitor, or all monitors only when the body is truly absent."""
     require_trusted_config_request(request)
-    monitor_id = None
-    try:
-        body = await request.json()
-        if isinstance(body, dict):
-            monitor_id = body.get("monitor_id")
-    except Exception:
-        pass  # no/invalid body → stop all
-    return await live_monitor.stop(monitor_id)
+    return await live_monitor.stop(req.monitor_id if req else None)
 
 
 @app.post("/api/live-monitor/{monitor_id}/config")

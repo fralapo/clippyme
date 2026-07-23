@@ -307,6 +307,12 @@ class PublishRequest(BaseModel):
         return _validate_overlay_params(value)
 
 
+class LiveMonitorStopRequest(BaseModel):
+    monitor_id: Optional[str] = Field(
+        None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9:_-]+$"
+    )
+
+
 class LiveMonitorPublishingRequest(BaseModel):
     # Strict prevents strings such as 'false' from being coerced to True.
     enabled: bool = Field(strict=True)
