@@ -1,0 +1,57 @@
+name: Apply coordinated audit fixes
+
+on:
+  push:
+    branches: ["audit/full-hardening-2026-07-23"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/full-hardening-2026-07-23
+          fetch-depth: 0
+
+      - name: Normalize and apply patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply_audit_fixes.py')
+          text = path.read_text()
+          text = text.replace(
+              '        elif self.platform == "twitch" and live:\n'
+              '            await self._backfill_from_vod(list(self._missed_windows))\n',
+              '',
+          )
+          text = text.replace(
+              '    monitor = LiveMonitorRegistry.__new__(LiveMonitorRegistry)\n',
+              '',
+          )
+          path.write_text(text)
+          PY
+          python scripts/apply_audit_fixes.py
+          python -m compileall -q src tests
+          git diff --check
+
+      - name: Commit coordinated fixes
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No patch needed"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/clippyme/api/schemas.py src/clippyme/api/app.py \
+                  src/clippyme/domain/live_monitor.py \
+                  tests/api/test_request_schema_contracts.py \
+                  tests/domain/test_live_monitor.py scripts/apply_audit_fixes.py
+          git commit -m "fix(monitor): persist backfill and strictly validate publishing"
+          git push origin HEAD:audit/full-hardening-2026-07-23
