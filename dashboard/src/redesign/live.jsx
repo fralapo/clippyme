@@ -51,6 +51,16 @@ const SLUG_PLACEHOLDER = {
   youtube: '@handle or https://youtube.com/@handle',
 };
 
+// ISO timestamp → coarse relative time for the Gemini-exhaustion notice.
+function relTime(iso) {
+  if (!iso) return '';
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m fa`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h fa`;
+  return `${Math.floor(s / 86400)}g fa`;
+}
+
 // Seconds → minutes for the drawer's minute inputs; '' (blank) when unset so
 // "Apply" still treats an untouched field as untouched.
 const secToMin = (s) => (typeof s === 'number' ? String(Math.round(s / 60)) : '');
@@ -71,6 +81,10 @@ function MonitorSettings({ monitor, onApply, applying }) {
   const [minGapMin, setMinGapMin] = useState(secToMin(cfg.min_gap_seconds));
   const [subOn, setSubOn] = useState(!!cfg.compose?.subtitle_params);
   const [sub, setSub] = useState(() => fromComposeSubtitleParams(cfg.compose?.subtitle_params, SUB_DEFAULTS));
+  // Default-on (matches the backend default): only an explicit `false` in the
+  // persisted config starts the checkbox unchecked.
+  const [deleteAfterPublish, setDeleteAfterPublish] = useState(cfg.delete_after_publish !== false);
+  const [deleteAfterPublishTouched, setDeleteAfterPublishTouched] = useState(false);
 
   const apply = () => {
     const partial = {};
@@ -81,6 +95,7 @@ function MonitorSettings({ monitor, onApply, applying }) {
     if (preliveMin !== '') partial.prelive_skip_seconds = clampMonitorTimings(0, preliveMin, 0).prelive_skip_seconds;
     if (minGapMin !== '') partial.min_gap_seconds = clampMonitorTimings(0, 0, minGapMin).min_gap_seconds;
     if (subOn) partial.compose = { subtitle_params: toComposeSubtitleParams(sub) };
+    if (deleteAfterPublishTouched) partial.delete_after_publish = deleteAfterPublish;
     onApply(monitor.id, partial);
   };
 
@@ -124,6 +139,11 @@ function MonitorSettings({ monitor, onApply, applying }) {
         <Switch on={subOn} onChange={setSubOn} />
       </div>
       {subOn && <SubtitleControls variant="create" value={sub} onChange={(p) => setSub((s) => ({ ...s, ...p }))} />}
+      <div className="opt" style={{ borderBottom: 0, paddingLeft: 0, paddingRight: 0 }}>
+        <div className="otxt"><div className="ot">Delete clip after publish</div><div className="od">Frees disk once a clip is confirmed published</div></div>
+        <Switch on={deleteAfterPublish} label={`Delete after publish ${monitor.id}`}
+          onChange={(on) => { setDeleteAfterPublish(on); setDeleteAfterPublishTouched(true); }} />
+      </div>
       <Btn variant="secondary" size="sm" disabled={applying} onClick={apply} style={{ marginTop: 10 }}>
         {applying ? 'Applying…' : 'Apply'}
       </Btn>
@@ -150,6 +170,11 @@ function MonitorCard({ monitor, onStop, stopping, onApplySettings, applyingSetti
           </div>
           {monitor.current_job_id && <div className="od">Current job: {monitor.current_job_id}</div>}
           {monitor.last_error && <div className="od" style={{ color: 'var(--danger)' }}>{monitor.last_error}</div>}
+          {monitor.gemini_exhausted_at && (
+            <div className="od" style={{ color: 'var(--brand-amber)' }}>
+              Gemini rate-limited — ultimo segmento saltato ({relTime(monitor.gemini_exhausted_at)})
+            </div>
+          )}
         </div>
         <div className="r">
           <Btn variant="secondary" size="sm" icon="sliders-horizontal" onClick={() => setSettingsOpen((v) => !v)}>
