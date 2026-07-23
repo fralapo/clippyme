@@ -31,8 +31,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     # Install a PINNED auto-editor Nim binary (v30.x track) with sha256
     # verification, so a re-tagged/tampered GitHub asset can't slip in at build
-    # time. The runtime updater (auto_editor_updater.py) keeps it fresh after
-    # build; bump AE_VERSION + the digests together when updating the pin.
+    # time. The optional runtime updater keeps it fresh only when explicitly
+    # enabled; bump AE_VERSION + the digests together when updating the pin.
     AE_VERSION=30.5.0 && \
     ARCH=$(uname -m) && \
     case "$ARCH" in \
@@ -64,8 +64,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     # Install a PINNED auto-editor Nim binary (v30.x track) with sha256
     # verification, so a re-tagged/tampered GitHub asset can't slip in at build
-    # time. The runtime updater (auto_editor_updater.py) keeps it fresh after
-    # build; bump AE_VERSION + the digests together when updating the pin.
+    # time. The optional runtime updater keeps it fresh only when explicitly
+    # enabled; bump AE_VERSION + the digests together when updating the pin.
     AE_VERSION=30.5.0 && \
     ARCH=$(uname -m) && \
     case "$ARCH" in \
@@ -101,16 +101,14 @@ ENV PATH=/app/data/bin:$PATH
 # Build with:   docker compose build --build-arg ENABLE_WHISPER_DIARIZE=1
 ARG GPU_RUNTIME
 ARG ENABLE_WHISPER_DIARIZE=0
-# Install from the fully-pinned lock for reproducible builds (regenerate with
-# `uv pip compile requirements.txt ... -o requirements.lock`). requirements.txt
-# is copied too for reference/diagnostics.
-COPY requirements.lock requirements.txt ./
+# Install from the fully-pinned core lock plus the explicitly pinned auxiliary
+# CLI/rendering tools. requirements.txt is copied for reference/diagnostics.
+COPY requirements.lock requirements.txt requirements-runtime-tools.txt ./
 # BuildKit cache mount: pip's download cache lives in the mount (shared across
-# rebuilds) and is NOT baked into the image layer, so we get fast rebuilds
-# without the image bloat that dropping --no-cache-dir would otherwise cause.
+# rebuilds) and is NOT baked into the image layer.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    pip install -r requirements.lock && \
+    pip install -r requirements.lock -r requirements-runtime-tools.txt && \
     if [ "$GPU_RUNTIME" = "nvidia" ]; then \
         pip install nvidia-cublas-cu12 && \
         SITE=$(python -c "import site; print(site.getsitepackages()[0])") && \
@@ -121,24 +119,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     if [ "$ENABLE_WHISPER_DIARIZE" = "1" ]; then \
         pip install 'pyannote.audio>=3.1'; \
     fi
-# streamlink captures Twitch (and Kick, when no HLS playback URL is exposed)
-# live streams for the content monitor (subprocess, see domain/live_monitor.py).
-# NOT added to requirements.lock — that lock is uv-compiled for the pure-Python
-# video pipeline; streamlink is a runtime CLI tool like ffmpeg / auto-editor.
-RUN --mount=type=cache,target=/root/.cache/pip pip install 'streamlink==7.*'
-
-# cairosvg rasterizes the committed platform SVGs (assets/platform_logos/) to
-# PNGs for the attribution banner (domain/banner.py) — ffmpeg/Pillow can't read
-# SVG. NOT added to requirements.lock: that lock is uv-compiled for the pure
-# video pipeline, and cairosvg needs the system libcairo2 installed above, so it
-# lives here beside streamlink as a runtime extra rather than a locked dep.
-RUN --mount=type=cache,target=/root/.cache/pip pip install --no-cache-dir cairosvg
 
 # NOTE: do NOT `pip install --upgrade yt-dlp` here — that would un-pin yt-dlp
-# from requirements.lock and pull whatever the latest (unverified) release is at
-# build time, breaking reproducibility and opening a supply-chain window. yt-dlp
-# is pinned in the lock (yt-dlp>=2026.3.17,<2027); bump it by regenerating the
-# lock so the change is reviewed, not silently fetched on every rebuild.
+# from requirements.lock and pull whatever the latest unreviewed release is at
+# build time. The reviewed floor is yt-dlp>=2026.6.9,<2027; update it by
+# regenerating the lock.
 
 # Create non-root user
 RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
@@ -159,10 +144,7 @@ RUN pip install --no-cache-dir -e .
 
 # Entrypoint normalizes ownership of the (bind-mountable) data/ dir as root,
 # then drops to appuser via gosu before launching the server. Copied to a
-# path OUTSIDE /app so the `.:/app` bind mount can't shadow it; baked with
-# 0755 + LF (enforced by .gitattributes) so the shebang always resolves.
-# PID1 stays root ON PURPOSE so the chown can run; the actual uvicorn process
-# runs unprivileged (see docker-entrypoint.sh).
+# path OUTSIDE /app so the `.:/app` bind mount can't shadow it.
 COPY --chmod=0755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 
