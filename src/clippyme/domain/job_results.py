@@ -58,6 +58,7 @@ def build_main_cmd(
     skip_analysis: bool = False,
     aspect: str | None = None,
     model: str | None = None,
+    monitor: bool = False,
 ) -> list[str]:
     """Build a `python -u -m clippyme.pipeline.main ...` command line for a single processing job."""
     if reframe_mode is not None and reframe_mode not in ALLOWED_REFRAME_MODES:
@@ -105,6 +106,8 @@ def build_main_cmd(
         cmd.append("--skip-analysis")
     if model and model.strip():
         cmd.extend(["--model", model.strip()])
+    if monitor:
+        cmd.append("--monitor")
     return cmd
 
 

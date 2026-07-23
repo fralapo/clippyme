@@ -59,6 +59,16 @@ def test_reframe_mode_auto_is_omitted():
     assert "--reframe-mode" not in cmd
 
 
+def test_build_main_cmd_monitor_flag():
+    cmd = build_main_cmd(input_path="/x.mp4", output_dir="/out", monitor=True)
+    assert "--monitor" in cmd
+
+
+def test_build_main_cmd_no_monitor_by_default():
+    cmd = build_main_cmd(input_path="/x.mp4", output_dir="/out")
+    assert "--monitor" not in cmd
+
+
 def test_reframe_mode_subject_is_forwarded():
     # 'subject' (FrameShift face-first) is a non-default mode → passed through.
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="subject")

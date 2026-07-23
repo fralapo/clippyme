@@ -346,6 +346,15 @@ def test_monitor_status_includes_config_allow_list(tmp_path):
         assert status["config"][key] == mon.cfg.get(key)
 
 
+def test_status_exposes_gemini_exhausted_at(tmp_path):
+    from clippyme.domain.live_monitor import LiveMonitor
+
+    mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path))
+
+    assert "gemini_exhausted_at" in mon.status()
+    assert mon.status()["gemini_exhausted_at"] is None
+
+
 def test_registry_update_config_not_found(tmp_path):
     reg = LiveMonitorRegistry(
         jobs={}, job_queue=None, output_dir=str(tmp_path),

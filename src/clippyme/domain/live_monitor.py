@@ -471,6 +471,10 @@ class LiveMonitor:
         self.publishing_enabled: bool = True
         self._pending_publish: list[dict] = []
         self._draining: bool = False
+        # Set when a segment's job hit Gemini exhaustion (monitor mode disables
+        # fallbacks, so an exhausted quota yields an empty `shorts` list rather
+        # than a degraded clip). Cleared the next time a segment publishes clips.
+        self._gemini_exhausted_at: str | None = None
         self._gemini_key = None
         self._zernio_key = None
 
@@ -523,6 +527,7 @@ class LiveMonitor:
             "resume_on_start": self.resume_on_start,
             "publishing_enabled": self.publishing_enabled,
             "pending_publish": len(self._pending_publish),
+            "gemini_exhausted_at": self._gemini_exhausted_at,
             # Same allow-list snapshot() persists — no secrets by construction
             # (validate_monitor_config never puts any in cfg). Lets the
             # frontend Settings drawer seed from the monitor's current config
@@ -544,6 +549,7 @@ class LiveMonitor:
             # Paths + public clip metadata only (no secrets) — restored on resume.
             "publishing_enabled": self.publishing_enabled,
             "pending_publish": self._pending_publish,
+            "gemini_exhausted_at": self._gemini_exhausted_at,
             "segments_captured": self.segments_captured,
             "clips_published": self.clips_published,
             "covered_elapsed": int(self._covered_elapsed),
@@ -561,6 +567,7 @@ class LiveMonitor:
         self._published = set(snap.get("published") or [])
         self.publishing_enabled = bool(snap.get("publishing_enabled", True))
         self._pending_publish = list(snap.get("pending_publish") or [])
+        self._gemini_exhausted_at = snap.get("gemini_exhausted_at") or None
         self.segments_captured = int(snap.get("segments_captured") or 0)
         self.clips_published = int(snap.get("clips_published") or 0)
         self._covered_elapsed = int(snap.get("covered_elapsed") or 0)
@@ -1012,7 +1019,8 @@ class LiveMonitor:
         # top bar, the attribution banner attached under the video band, and
         # subtitles below it — all of which need the un-reframed 9:16 layout.
         cmd = build_main_cmd(input_path=os.path.abspath(seg_path), output_dir=job_dir,
-                             reframe_mode="disabled", instructions=self.cfg.get("instructions") or None)
+                             reframe_mode="disabled", instructions=self.cfg.get("instructions") or None,
+                             monitor=True)
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
             cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
@@ -1026,7 +1034,8 @@ class LiveMonitor:
         job_id, job_dir, env = self._new_job_dir()
         cookies_path = os.path.join("data", "cookies.txt")
         cmd = build_main_cmd(url=url, output_dir=job_dir, cookies_path=cookies_path,
-                             reframe_mode="disabled", instructions=self.cfg.get("instructions") or None)
+                             reframe_mode="disabled", instructions=self.cfg.get("instructions") or None,
+                             monitor=True)
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
             cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
@@ -1048,7 +1057,15 @@ class LiveMonitor:
                 logger.warning("LiveMonitor %s: job %s ended '%s' — no clips published",
                                self.id, job_id, status)
                 return
-            clips = (self._jobs.get(job_id, {}).get("result") or {}).get("clips") or []
+            result = self._jobs.get(job_id, {}).get("result") or {}
+            if result.get("gemini_exhausted"):
+                from datetime import datetime, timezone
+                self._gemini_exhausted_at = datetime.now(timezone.utc).isoformat()
+                self._persist()
+                logger.warning("LiveMonitor %s: Gemini rate-limited — segment %s skipped", self.id, job_id)
+            clips = result.get("clips") or []
+            if clips:
+                self._gemini_exhausted_at = None  # a good segment clears the notice
             for i, clip in enumerate(clips):
                 if i:
                     await asyncio.sleep(PUBLISH_SPACING_SECONDS)
