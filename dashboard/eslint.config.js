@@ -1,12 +1,14 @@
 import js from '@eslint/js'
+import eslintReact from '@eslint-react/eslint-plugin'
 import globals from 'globals'
-import react from 'eslint-plugin-react'
 import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 
+const reactRecommended = eslintReact.configs.recommended
+
 export default [
   {
-    ignores: ['dist', 'design-ref'],
+    ignores: ['dist', 'design-ref', 'coverage'],
   },
   {
     files: ['vite.config.js', '*.config.js'],
@@ -19,30 +21,32 @@ export default [
   {
     files: ['**/*.{js,jsx}'],
     languageOptions: {
+      ...(reactRecommended.languageOptions || {}),
       ecmaVersion: 'latest',
       sourceType: 'module',
       globals: globals.browser,
       parserOptions: {
+        ...(reactRecommended.languageOptions?.parserOptions || {}),
         ecmaFeatures: { jsx: true },
       },
     },
     plugins: {
-      react,
+      ...(reactRecommended.plugins || {}),
       'react-hooks': reactHooks,
       'react-refresh': reactRefresh,
     },
     settings: {
-      react: {
+      ...(reactRecommended.settings || {}),
+      'react-x': {
+        ...(reactRecommended.settings?.['react-x'] || {}),
         version: 'detect',
       },
     },
     rules: {
       ...js.configs.recommended.rules,
-      ...react.configs.recommended.rules,
-      ...react.configs['jsx-runtime'].rules,
+      ...(reactRecommended.rules || {}),
       ...reactHooks.configs.recommended.rules,
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-      'react/prop-types': 'off',
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]', argsIgnorePattern: '^_' }],
       'react-refresh/only-export-components': 'off',
     },
   },
