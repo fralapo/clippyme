@@ -43,22 +43,27 @@ jobs:
           base64 --decode /tmp/round2.patch.b64 | xz --decompress > /tmp/round2.patch
           echo "736add4f4ad88b0264d2ebeb29039c47c1212312c2aaa6232220668ffa7f9300  /tmp/round2.patch" | sha256sum --check
 
-      - name: Check and apply patch
+      - name: Check and apply product patch
         if: steps.gate.outputs.run == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          git apply --check --binary /tmp/round2.patch
-          git apply --binary --whitespace=nowarn /tmp/round2.patch
+          git apply --check --binary \
+            --exclude=.github/workflows/ci.yml \
+            --exclude=.github/workflows/source-snapshot.yml \
+            /tmp/round2.patch
+          git apply --binary --whitespace=nowarn \
+            --exclude=.github/workflows/ci.yml \
+            --exclude=.github/workflows/source-snapshot.yml \
+            /tmp/round2.patch
 
-      - name: Publish final branch
+      - name: Publish product changes
         if: steps.gate.outputs.run == 'true'
         shell: bash
         run: |
           set -euo pipefail
           rm -rf .audit-payload
-          rm -f .github/workflows/apply-round2-patch.yml
-          printf 'round2-final-ci\n' > .round2-ci-trigger
+          printf 'round2-workflows-pending\n' > .round2-ci-trigger
           git add -A
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
