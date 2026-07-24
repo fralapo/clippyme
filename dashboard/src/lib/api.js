@@ -1,58 +1,43 @@
+
 import { getApiUrl } from '../config';
 import { apiFetch } from './apiToken';
 
-async function throwFromResponse(res) {
+export async function throwFromResponse(res) {
   const text = await res.text();
   let msg = text;
   try {
     const parsed = JSON.parse(text);
-    msg = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail);
+    const detail = parsed?.detail ?? parsed?.message;
+    msg = typeof detail === 'string' ? detail : detail ? JSON.stringify(detail) : text;
   } catch {
-    // Non-JSON body: fall back to the raw text captured above.
+    // Non-JSON body: use the captured text.
   }
-  throw new Error(msg || `HTTP ${res.status}`);
+  const error = new Error(msg || `HTTP ${res.status}`);
+  error.status = res.status;
+  error.retryable = res.status === 408 || res.status === 429 || res.status >= 500;
+  throw error;
 }
 
-export async function pollJob(jobId) {
-  const res = await apiFetch(getApiUrl(`/api/status/${jobId}`));
-  if (!res.ok) throw new Error('Status check failed');
+export async function pollJob(jobId, { signal } = {}) {
+  const res = await apiFetch(getApiUrl(`/api/status/${encodeURIComponent(jobId)}`), { signal });
+  if (!res.ok) await throwFromResponse(res);
   return res.json();
 }
 
-/**
- * Normalize the language preselection into an optional backend field.
- * "multi" / undefined / empty → undefined (backend default applies).
- *
- * @param {{ language?: string } | undefined} pre
- * @returns {string | undefined}
- */
 function pickLanguage(pre) {
   const lang = (pre?.language || '').trim();
   if (!lang || lang === 'multi' || lang === 'auto') return undefined;
   return lang;
 }
 
-/**
- * Submit a single video (URL or uploaded file) for processing.
- *
- * @param {{ type: 'url' | 'file', payload: string | File, instructions?: string, preselections?: { reframe_mode?: string, language?: string } }} data
- * @param {string} apiKey
- * @returns {Promise<{ job_id: string }>}
- */
-export async function submitProcessJob(data, apiKey) {
+export async function submitProcessJob(data, apiKey, { signal } = {}) {
   const headers = { 'X-Gemini-Key': apiKey };
   let body;
-
   const language = pickLanguage(data.preselections);
-
-  // Forward reframe_mode unconditionally so the backend echoes the user's
-  // pre-selection instead of relying on its own default (which could drift).
   const reframeMode = data.preselections?.reframe_mode;
   const aspect = data.preselections?.aspect;
   const noZoom = data.preselections?.no_zoom === true;
   const skipAnalysis = data.preselections?.skip_analysis === true;
-  // Per-job Gemini model override (optional). Validated server-side against the
-  // gemini- family prefix; omitted → backend uses the global Settings model.
   const model = (data.preselections?.model || '').trim();
 
   if (data.type === 'url') {
@@ -67,11 +52,10 @@ export async function submitProcessJob(data, apiKey) {
     if (model) jsonBody.model = model;
     body = JSON.stringify(jsonBody);
   } else {
-    if (data.payload?.size > 16384 * 1024 * 1024) {
-      throw new Error('File too large. Max size 16384MB');
-    }
+    if (data.payload?.size > 16 * 1024 * 1024 * 1024) throw new Error('File too large. Maximum size is 16 GB.');
     const formData = new FormData();
     formData.append('file', data.payload);
+    if (data.instructions) formData.append('instructions', data.instructions);
     if (reframeMode) formData.append('reframe_mode', reframeMode);
     if (aspect && aspect !== '9:16') formData.append('aspect', aspect);
     if (language) formData.append('language', language);
@@ -81,26 +65,15 @@ export async function submitProcessJob(data, apiKey) {
     body = formData;
   }
 
-  const res = await apiFetch(getApiUrl('/api/process'), { method: 'POST', headers, body });
+  const res = await apiFetch(getApiUrl('/api/process'), { method: 'POST', headers, body, signal });
   if (!res.ok) await throwFromResponse(res);
   return res.json();
 }
 
-/**
- * Submit a batch of URLs for processing.
- *
- * @param {{ urls: string[], instructions?: string, preselections?: { reframe_mode?: string, language?: string } }} data
- * @param {string} apiKey
- * @returns {Promise<{ batch_id: string, total: number }>}
- */
-export async function submitBatchJob(data, apiKey) {
+export async function submitBatchJob(data, apiKey, { signal } = {}) {
   const batchBody = { urls: data.urls, instructions: data.instructions };
-  if (data.preselections?.reframe_mode) {
-    batchBody.reframe_mode = data.preselections.reframe_mode;
-  }
-  if (data.preselections?.aspect && data.preselections.aspect !== '9:16') {
-    batchBody.aspect = data.preselections.aspect;
-  }
+  if (data.preselections?.reframe_mode) batchBody.reframe_mode = data.preselections.reframe_mode;
+  if (data.preselections?.aspect && data.preselections.aspect !== '9:16') batchBody.aspect = data.preselections.aspect;
   const language = pickLanguage(data.preselections);
   if (language) batchBody.language = language;
   if (data.preselections?.no_zoom === true) batchBody.no_zoom = true;
@@ -110,6 +83,7 @@ export async function submitBatchJob(data, apiKey) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Gemini-Key': apiKey },
     body: JSON.stringify(batchBody),
+    signal,
   });
   if (!res.ok) await throwFromResponse(res);
   return res.json();
