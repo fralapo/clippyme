@@ -29,6 +29,7 @@ class PreflightInputs:
     aspect: str = "9:16"
     has_gpu: bool = False
     max_clips: int | None = None
+    analysis_enabled: bool = True
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -48,8 +49,6 @@ def expected_clip_count(duration_seconds: float, max_clips: int | None = None) -
 
 def estimate_gemini_tokens(duration_seconds: float) -> tuple[int, int]:
     """Approximate prompt/output token counts from conversational speech rate."""
-    # ~2.4 spoken words/s; compact TOON rows average ~2.0 tokens/word including
-    # timestamps. Add a fixed prompt/rubric allowance and a bounded JSON output.
     words = max(0.0, float(duration_seconds)) * 2.4
     input_tokens = int(5_500 + words * 2.0)
     output_tokens = int(700 + min(12, expected_clip_count(duration_seconds)) * 180)
@@ -60,7 +59,17 @@ def estimate_gemini_cost(
     duration_seconds: float,
     model: str,
     pricing: dict[str, dict[str, float]] | None,
+    *,
+    enabled: bool = True,
 ) -> dict[str, Any]:
+    if not enabled:
+        return {
+            "model": model,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "estimated_cost_usd": 0.0,
+            "pricing_known": True,
+        }
     input_tokens, output_tokens = estimate_gemini_tokens(duration_seconds)
     rates = (pricing or {}).get(model) or {}
     input_rate = float(rates.get("input") or 0.0)
@@ -79,11 +88,13 @@ def estimate_disk_bytes(inputs: PreflightInputs, clip_count: int) -> int:
     """Conservative peak disk requirement including source slices and temp files."""
     duration = max(1.0, float(inputs.duration_seconds))
     input_bytes = max(0, int(inputs.input_bytes))
-    # Assume 45 s/clip. Source slices + final encodes + one temp render can peak
-    # near 18 Mbps combined. Preserve a copy-sized safety margin for atomic swaps.
-    selected_seconds = min(duration, clip_count * 45.0)
+    selected_seconds = min(duration, clip_count * 45.0) if inputs.analysis_enabled else duration
     generated = selected_seconds * 18_000_000 / 8
-    transcript_and_metadata = max(64 * _MIB, duration * 30_000)
+    transcript_and_metadata = (
+        max(64 * _MIB, duration * 30_000)
+        if inputs.analysis_enabled
+        else 8 * _MIB
+    )
     return int(input_bytes + generated * 1.35 + transcript_and_metadata)
 
 
@@ -91,9 +102,10 @@ def estimate_runtime_seconds(inputs: PreflightInputs, clip_count: int) -> int:
     """Wall-clock estimate based on source minutes and output volume."""
     duration = max(1.0, float(inputs.duration_seconds))
     source_minutes = duration / 60.0
-    # GPU mainly improves detection/reframe; transcription/provider latency and
-    # ffmpeg remain. These factors deliberately lean high.
-    analysis_factor = 0.65 if inputs.has_gpu else 1.15
+    if inputs.analysis_enabled:
+        analysis_factor = 0.65 if inputs.has_gpu else 1.15
+    else:
+        analysis_factor = 0.05
     render_factor = 0.55 if inputs.has_gpu else 1.25
     seconds = 45 + source_minutes * 60 * analysis_factor + clip_count * 45 * render_factor
     return max(30, int(math.ceil(seconds)))
@@ -105,10 +117,19 @@ def build_preflight(
     pricing: dict[str, dict[str, float]] | None = None,
     free_disk_bytes: int | None = None,
 ) -> dict[str, Any]:
-    clip_count = expected_clip_count(inputs.duration_seconds, inputs.max_clips)
+    clip_count = (
+        expected_clip_count(inputs.duration_seconds, inputs.max_clips)
+        if inputs.analysis_enabled
+        else 1
+    )
     disk_required = estimate_disk_bytes(inputs, clip_count)
     runtime_seconds = estimate_runtime_seconds(inputs, clip_count)
-    cost = estimate_gemini_cost(inputs.duration_seconds, inputs.model, pricing)
+    cost = estimate_gemini_cost(
+        inputs.duration_seconds,
+        inputs.model,
+        pricing,
+        enabled=inputs.analysis_enabled,
+    )
     report = {
         "duration_seconds": round(max(0.0, float(inputs.duration_seconds)), 3),
         "input_bytes": max(0, int(inputs.input_bytes)),
@@ -117,6 +138,7 @@ def build_preflight(
         "source_height": inputs.height,
         "aspect": inputs.aspect,
         "gpu": bool(inputs.has_gpu),
+        "analysis_enabled": bool(inputs.analysis_enabled),
         "expected_clips": clip_count,
         "estimated_runtime_seconds": runtime_seconds,
         "estimated_runtime_minutes": round(runtime_seconds / 60.0, 1),
@@ -133,7 +155,7 @@ def build_preflight(
 
 def enforce_preflight(report: dict[str, Any], env: dict[str, str] | None = None) -> None:
     """Apply operator quotas. Unset/zero knobs are disabled."""
-    env = env or os.environ
+    env = os.environ if env is None else env
 
     def _float(name: str, default: float = 0.0) -> float:
         try:
