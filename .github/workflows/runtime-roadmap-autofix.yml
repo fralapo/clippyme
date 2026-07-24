@@ -12,20 +12,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  preserve-source-slices:
+  compatibility-fixes:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Remove unsafe source-slice cleanup
+      - name: Patch orchestrator compatibility details
         run: |
           python - <<'PY'
           from pathlib import Path
 
           path = Path('src/clippyme/pipeline/orchestrator.py')
           text = path.read_text(encoding='utf-8')
-          old = '''    for path in Path(output_dir).glob("source_*.mp4"):
+
+          source_cleanup = '''    for path in Path(output_dir).glob("source_*.mp4"):
               try:
                   path.unlink()
               except OSError:
@@ -33,18 +34,36 @@ jobs:
           try:
               shutil.rmtree(state.checkpoint_dir)
           '''
-          new = '''    # Preserve source_<clip>.mp4 permanently: POST /api/reframe uses
+          safe_cleanup = '''    # Preserve source_<clip>.mp4 permanently: POST /api/reframe uses
               # those slices to change framing without downloading/transcribing again.
               # Only the hidden duplicate transcript/checkpoint cache is disposable.
               try:
                   shutil.rmtree(state.checkpoint_dir)
           '''
-          if old not in text:
-              print('Compatibility block already fixed; nothing to commit.')
-          else:
-              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          text = text.replace(source_cleanup, safe_cleanup, 1)
+
+          uncapped = '''    shorts = clips_data.get("shorts") or []
+
+              if shorts and not args.skip_analysis:
+          '''
+          capped = '''    shorts = clips_data.get("shorts") or []
+              max_clips = _max_clips_from_env()
+              if max_clips and len(shorts) > max_clips:
+                  print(
+                      f"✂️ CLIPPYME_MAX_CLIPS={max_clips}: keeping the highest-ranked "
+                      f"{max_clips} of {len(shorts)} candidates",
+                      flush=True,
+                  )
+                  shorts = shorts[:max_clips]
+                  clips_data["shorts"] = shorts
+
+              if shorts and not args.skip_analysis:
+          '''
+          text = text.replace(uncapped, capped, 1)
+
+          path.write_text(text, encoding='utf-8')
           PY
-      - name: Commit fix when needed
+      - name: Commit fixes when needed
         run: |
           if git diff --quiet; then
             exit 0
@@ -52,5 +71,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/clippyme/pipeline/orchestrator.py
-          git commit -m "fix(pipeline): preserve source slices for reframe"
+          git commit -m "fix(pipeline): preserve reframe sources and enforce clip cap"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
