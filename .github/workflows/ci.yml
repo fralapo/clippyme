@@ -46,18 +46,23 @@ jobs:
       - name: Run host test suite (excludes integration)
         id: host-tests
         continue-on-error: true
-        run: >-
-          pytest -m "not integration" -vv
-          --timeout=120 --timeout-method=thread
-          --cov=clippyme --cov-report=term
-          --junitxml="$RUNNER_TEMP/pytest-report.xml"
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest -m "not integration" -vv \
+            --timeout=120 --timeout-method=thread \
+            --cov=clippyme --cov-report=term \
+            --junitxml=pytest-report.xml \
+            2>&1 | tee pytest-output.log
 
-      - name: Upload backend test report
+      - name: Upload backend test diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: backend-pytest-report
-          path: ${{ runner.temp }}/pytest-report.xml
+          path: |
+            pytest-report.xml
+            pytest-output.log
           if-no-files-found: error
           retention-days: 7
 
