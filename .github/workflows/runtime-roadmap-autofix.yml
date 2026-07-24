@@ -18,39 +18,64 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Preserve post-hoc reframe source slices
+      - name: Apply audited compatibility fixes
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('src/clippyme/pipeline/orchestrator.py')
-          text = path.read_text(encoding='utf-8')
-          old = "\n".join([
+          orchestrator = Path('src/clippyme/pipeline/orchestrator.py')
+          text = orchestrator.read_text(encoding='utf-8')
+          unsafe_cleanup = "\n".join([
               '    for path in Path(output_dir).glob("source_*.mp4"):',
               '        try:',
               '            path.unlink()',
               '        except OSError:',
               '            pass',
           ]) + "\n"
-          new = "\n".join([
+          safe_comment = "\n".join([
               '    # Preserve source_<clip>.mp4: POST /api/reframe needs these slices',
               '    # to change framing without downloading/transcribing again.',
           ]) + "\n"
-          if old in text:
-              text = text.replace(old, new, 1)
-              path.write_text(text, encoding='utf-8')
+          if unsafe_cleanup in text:
+              orchestrator.write_text(text.replace(unsafe_cleanup, safe_comment, 1), encoding='utf-8')
           elif 'for path in Path(output_dir).glob("source_*.mp4")' in text:
               raise SystemExit('source-slice cleanup exists but did not match the audited block')
-          else:
-              print('Source slices are already preserved.')
+
+          runner = Path('src/clippyme/domain/job_runner.py')
+          text = runner.read_text(encoding='utf-8')
+          old = "\n".join([
+              '            for attempt in range(1, max_attempts + 1):',
+              '                status = jobs[job_id].get("status")',
+          ])
+          new = "\n".join([
+              '            try:',
+              '                completed_attempts = max(0, int(job_data.get("attempt") or 0))',
+              '            except (TypeError, ValueError):',
+              '                completed_attempts = 0',
+              '            first_attempt = completed_attempts + 1',
+              '            if first_attempt > max_attempts:',
+              '                jobs[job_id]["status"] = "failed"',
+              '                jobs[job_id]["logs"].append(',
+              '                    "Retry budget already exhausted before dispatch."',
+              '                )',
+              '                _notify()',
+              '                return',
+              '',
+              '            for attempt in range(first_attempt, max_attempts + 1):',
+              '                status = jobs[job_id].get("status")',
+          ])
+          if old in text:
+              runner.write_text(text.replace(old, new, 1), encoding='utf-8')
+          elif 'for attempt in range(1, max_attempts + 1):' in text:
+              raise SystemExit('retry loop exists but did not match the audited block')
           PY
-      - name: Commit fix when needed
+      - name: Commit fixes when needed
         run: |
           if git diff --quiet; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/clippyme/pipeline/orchestrator.py
-          git commit -m "fix(pipeline): preserve source slices for reframe"
+          git add src/clippyme/pipeline/orchestrator.py src/clippyme/domain/job_runner.py
+          git commit -m "fix(runtime): preserve sources and global retry budget"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
