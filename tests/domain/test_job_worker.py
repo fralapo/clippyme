@@ -1,4 +1,4 @@
-"""Tests for clippyme.domain.job_worker.enqueue_output.
+"""Tests for clippyme.domain.job_worker helpers.
 
 The log-reader thread feeds the job's user-visible log list. It must survive
 non-UTF-8 bytes on the subprocess stream: before the fix, one bad byte raised
@@ -6,8 +6,9 @@ UnicodeDecodeError, the outer except ended the read loop, and the job's log
 froze for the rest of the run while the subprocess kept working.
 """
 import io
+import os
 
-from clippyme.domain.job_worker import MAX_LOG_LINES, enqueue_output
+from clippyme.domain.job_worker import MAX_LOG_LINES, active_input_paths, enqueue_output
 
 
 def _run(stream_bytes, job_id="j", jobs=None):
@@ -45,6 +46,26 @@ def test_log_list_is_trimmed_to_max():
 def test_unknown_job_id_is_ignored():
     jobs = _run(b"orphan line\n", job_id="missing", jobs={"other": {"logs": []}})
     assert jobs["other"]["logs"] == []
+
+
+def test_active_input_paths_only_protects_non_terminal_jobs(tmp_path):
+    queued = tmp_path / "queued.mp4"
+    processing = tmp_path / "processing.mp4"
+    paused = tmp_path / "paused.mp4"
+    completed = tmp_path / "completed.mp4"
+    jobs = {
+        "q": {"status": "queued", "input_path": str(queued)},
+        "p": {"status": "processing", "input_path": str(processing)},
+        "z": {"status": "paused", "input_path": str(paused)},
+        "c": {"status": "completed", "input_path": str(completed)},
+        "n": {"status": "processing", "input_path": None},
+    }
+
+    assert active_input_paths(jobs) == {
+        os.path.abspath(queued),
+        os.path.abspath(processing),
+        os.path.abspath(paused),
+    }
 
 
 def test_dispatcher_shutdown_cancels_and_awaits_active_jobs(tmp_path):
