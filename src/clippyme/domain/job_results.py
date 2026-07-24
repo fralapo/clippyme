@@ -1,4 +1,4 @@
-"""Job result loading helpers + main.py command builder extracted from app.py."""
+"""Job result loading helpers + checkpointed pipeline command builder."""
 from __future__ import annotations
 
 import glob
@@ -8,6 +8,7 @@ import os
 import re
 
 from clippyme.domain.clip_resolve import clip_filename_for
+from clippyme.domain.runtime_state import runtime_result_fields
 
 logger = logging.getLogger("clippyme")
 
@@ -21,22 +22,14 @@ MAX_INSTRUCTIONS_LEN = 5000
 
 
 def canonical_reframe_mode(mode):
-    """Map a legacy reframe-mode alias to its canonical value (``object`` →
-    ``subject``). Leaves any other value (incl. None) unchanged."""
+    """Map the legacy ``object`` alias to the canonical ``subject`` value."""
     return REFRAME_MODE_ALIASES.get(mode, mode)
 
-# Per-job Gemini model override must look like a real Gemini model id. We don't
-# pin an exact allow-list here (newer families like gemini-3* ship continuously
-# and are surfaced via live discovery), but we DO enforce the family prefix +
-# a safe charset so the value can't smuggle argv flags or shell metacharacters
-# into the pipeline subprocess. The Settings discovery dropdown is the canonical
-# source of valid ids; this is the boundary guard.
+
+# New Gemini families are discovered at runtime, therefore validate the family
+# prefix and an argv-safe character set rather than pinning a stale allow-list.
 GEMINI_MODEL_RE = re.compile(r"^gemini-[A-Za-z0-9.\-]{1,64}$")
 
-# Languages we explicitly allow the frontend to request for Deepgram.
-# Keep this aligned with Nova-3's supported single-language codes:
-# https://developers.deepgram.com/docs/models-languages-overview
-# ``multi`` stays the default — the language override is OPT-IN per job.
 ALLOWED_LANGUAGES = frozenset({
     "multi", "auto",
     "en", "it", "es", "fr", "de", "pt", "nl", "hi", "ja", "ru",
@@ -60,7 +53,12 @@ def build_main_cmd(
     model: str | None = None,
     monitor: bool = False,
 ) -> list[str]:
-    """Build a `python -u -m clippyme.pipeline.main ...` command line for a single processing job."""
+    """Build argv for the checkpointed backend pipeline.
+
+    ``pipeline.main`` remains available for direct/legacy CLI usage and owns the
+    heavy algorithms. Queued jobs use ``pipeline.orchestrator`` so retries and
+    restarts can reuse phase and per-clip checkpoints safely.
+    """
     if reframe_mode is not None and reframe_mode not in ALLOWED_REFRAME_MODES:
         raise ValueError(f"invalid reframe_mode: {reframe_mode!r}")
     if model is not None:
@@ -76,15 +74,12 @@ def build_main_cmd(
         if lang_norm and lang_norm not in ALLOWED_LANGUAGES:
             raise ValueError(f"unsupported language: {language!r}")
 
-    # Reject argv-injection attempts: any value starting with "-" would
-    # be interpreted as a new flag by argparse. yt-dlp URLs and uploaded
-    # file paths never legitimately start with a dash.
     if url and url.lstrip().startswith("-"):
         raise ValueError("url must not start with '-'")
     if input_path and input_path.lstrip().startswith("-"):
         raise ValueError("input_path must not start with '-'")
 
-    cmd = ["python", "-u", "-m", "clippyme.pipeline.main"]
+    cmd = ["python", "-u", "-m", "clippyme.pipeline.orchestrator"]
     if url:
         cmd.extend(["-u", url])
         if cookies_path and os.path.exists(cookies_path):
@@ -112,115 +107,97 @@ def build_main_cmd(
 
 
 def _build_clips(data: dict, base_name: str, job_id: str, output_dir: str, only_ready: bool) -> list:
-    clips = data.get('shorts', [])
+    clips = data.get("shorts", [])
 
-    # Defensive backfill: old metadata.json files (from jobs generated
-    # before the viral_hook_text schema field existed) will be missing
-    # hooks entirely. Rehydrate them here so the frontend always has a
-    # non-empty hook regardless of job age. Transcript words may or
-    # may not be present depending on how the pipeline dumped metadata.
     try:
         from clippyme.pipeline.gemini_parser import backfill_hook_text
-        transcript = data.get('transcript') or {}
+
+        transcript = data.get("transcript") or {}
         words = []
-        for segment in transcript.get('segments', []) or []:
-            for w in segment.get('words', []) or []:
+        for segment in transcript.get("segments", []) or []:
+            for word in segment.get("words", []) or []:
                 words.append({
-                    'w': w.get('word', ''),
-                    's': w.get('start', 0.0),
-                    'e': w.get('end', 0.0),
+                    "w": word.get("word", ""),
+                    "s": word.get("start", 0.0),
+                    "e": word.get("end", 0.0),
                 })
         backfill_hook_text(clips, words, fallback_title=base_name)
     except Exception as exc:
-        # Never break result loading because of backfill logic —
-        # stale metadata should still render even if hooks are empty.
         logger.debug("backfill_hook_text failed: %s", exc)
 
     result = []
-    # clip_filename_for wants a metadata path only to derive the positional
-    # fallback's base name via os.path.basename(...).replace("_metadata.json",
-    # "") — the file doesn't need to exist on disk for that string op.
     fake_metadata_path = f"{base_name}_metadata.json"
-    for i, clip in enumerate(clips):
-        if clip.get('deleted_after_publish'):
-            # Deleted after a confirmed publish: never resurface it, even in
-            # the final-result path (only_ready=False) where the file-missing
-            # skip below doesn't apply. Skipping does NOT renumber siblings —
-            # original_index below stays the absolute position in `shorts`.
+    for index, clip in enumerate(clips):
+        if clip.get("deleted_after_publish"):
             continue
-        clip_filename = clip_filename_for(fake_metadata_path, clip, i)
+        clip_filename = clip_filename_for(fake_metadata_path, clip, index)
         clip_path = os.path.join(output_dir, clip_filename)
         exists = os.path.exists(clip_path) and os.path.getsize(clip_path) > 0
         if only_ready and not exists:
             continue
-        clip['video_url'] = f"/videos/{job_id}/{clip_filename}"
-        # Attach the ABSOLUTE position in the original `shorts` array.
-        # This is the React key the frontend uses for useClipStates[]
-        # and for the ResultsGrid map. Without it, partial-result
-        # polling returns a growing subset and the frontend's
-        # positional index shifts as more clips come online — causing
-        # stale <video> elements to get reconciled with a different
-        # clip's video_url (the "grey screen while processing" bug).
-        clip['original_index'] = i
+        clip["video_url"] = f"/videos/{job_id}/{clip_filename}"
+        clip["original_index"] = index
         result.append(clip)
     return result
 
 
 def _pick_latest_metadata(output_dir: str) -> str | None:
-    """Return the most-recently-modified ``*_metadata.json`` path.
-
-    When a job directory accidentally ends up with more than one metadata
-    file (e.g. reprocessing with a slightly different sanitized title),
-    glob[0] is filesystem-order dependent and non-deterministic. Sort by
-    mtime so the user always sees the latest run.
-    """
+    """Return the most-recently-modified ``*_metadata.json`` path."""
     json_files = glob.glob(os.path.join(output_dir, "*_metadata.json"))
     if not json_files:
         return None
     try:
-        json_files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        json_files.sort(key=lambda path: os.path.getmtime(path), reverse=True)
     except OSError:
         pass
     return json_files[0]
 
 
+def _result_payload(data: dict, clips: list, output_dir: str) -> dict:
+    payload = {
+        "clips": clips,
+        "cost_analysis": data.get("cost_analysis"),
+        "source_info": data.get("source_info"),
+    }
+    payload.update(runtime_result_fields(output_dir))
+    return payload
+
+
 def load_partial_result(job_id: str, output_dir: str) -> dict | None:
-    """Read metadata + return result dict for clips already on disk. None if nothing ready."""
+    """Read metadata and return clips already present plus runtime operations."""
     try:
         target_json = _pick_latest_metadata(output_dir)
         if not target_json:
-            return None
+            runtime = runtime_result_fields(output_dir)
+            return {"clips": [], **runtime} if runtime else None
         if os.path.getsize(target_json) <= 0:
             return None
-        with open(target_json, 'r') as f:
-            data = json.load(f)
-        base_name = os.path.basename(target_json).replace('_metadata.json', '')
+        with open(target_json, encoding="utf-8") as handle:
+            data = json.load(handle)
+        base_name = os.path.basename(target_json).replace("_metadata.json", "")
         ready = _build_clips(data, base_name, job_id, output_dir, only_ready=True)
-        if not ready:
+        runtime = runtime_result_fields(output_dir)
+        if not ready and not runtime:
             return None
-        return {'clips': ready, 'cost_analysis': data.get('cost_analysis'),
-                'source_info': data.get('source_info')}
+        return _result_payload(data, ready, output_dir)
     except (OSError, json.JSONDecodeError, ValueError):
-        return None
+        runtime = runtime_result_fields(output_dir)
+        return {"clips": [], **runtime} if runtime else None
 
 
 def load_final_result(job_id: str, output_dir: str) -> dict | None:
-    """Read metadata + return result with all clips. None if no metadata file.
-
-    Catches JSON / OSError so callers can treat a corrupt metadata file
-    the same as a missing one instead of crashing the request handler.
-    """
+    """Return the final metadata plus operational/QA state."""
     try:
         target_json = _pick_latest_metadata(output_dir)
         if not target_json:
             return None
-        with open(target_json, 'r') as f:
-            data = json.load(f)
+        with open(target_json, encoding="utf-8") as handle:
+            data = json.load(handle)
     except (OSError, json.JSONDecodeError, ValueError):
         return None
 
-    base_name = os.path.basename(target_json).replace('_metadata.json', '')
+    base_name = os.path.basename(target_json).replace("_metadata.json", "")
     clips = _build_clips(data, base_name, job_id, output_dir, only_ready=False)
-    return {'clips': clips, 'cost_analysis': data.get('cost_analysis'),
-            'source_info': data.get('source_info'),
-            'gemini_exhausted': data.get('gemini_exhausted')}
+    payload = _result_payload(data, clips, output_dir)
+    payload["gemini_exhausted"] = data.get("gemini_exhausted")
+    return payload
