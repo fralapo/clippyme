@@ -1,30 +1,9 @@
-"""Minimal on-disk journal for the in-memory job queue.
+"""Crash-safe journal for the in-memory job queue.
 
-The ``jobs`` dict and ``asyncio.Queue`` live only in memory, so a backend
-restart used to silently lose every queued job and orphan the subprocess of
-every processing one. This module persists just enough state to recover:
-
-* ``snapshot``/``save_journal`` — one atomic JSON file (``data/jobs_journal.json``)
-  holding the ACTIVE jobs only ({status, cmd, output_dir, pid, updated_at}).
-  NEVER the env (it carries the Gemini API key), the Popen handle, logs or
-  results. ``data/`` is deliberately chosen over ``output/<job_id>/``: the
-  output tree is served by the ``/videos`` static mount and is rmtree'd by
-  cancel, so a per-job state file there would be publicly downloadable and
-  could be deleted out from under its own record.
-* ``make_journal_writer`` — the ``on_change`` hook threaded into
-  ``submit_job``/``make_run_job``/the control handlers. Swallows + logs I/O
-  errors so journalling can never break a request.
-* ``plan_recovery`` (pure) + ``recover_jobs`` — startup path: ``queued``
-  entries are re-enqueued; ``processing``/``paused`` entries are checked
-  against the disk first (a job killed between its final render and the
-  journal prune is restored as ``completed``) and otherwise marked ``failed``
-  with a clear log line. ``failed`` is reused instead of a new status because
-  the frontend poller only terminates on completed|stopped|cancelled|failed —
-  an unknown status would poll forever.
-* ``kill_stale_tree`` — best-effort psutil kill of an orphaned pipeline tree
-  from a previous server life, guarded by an argv prefix match so a recycled
-  pid can never kill an unrelated process. No re-adoption: the Popen handle
-  is gone, so the safe move is to kill and let the user resubmit.
+The journal stores only non-secret process metadata.  Queued jobs are requeued;
+interrupted checkpoint-capable jobs are killed and safely requeued from their
+last durable phase; legacy/non-resumable jobs retain the previous fail-safe
+behaviour.
 """
 import json
 import logging
@@ -35,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 
 from clippyme.domain.job_control import ACTIVE_STATES, terminate_tree
+from clippyme.domain.runtime_state import is_resumable, runtime_result_fields
 
 logger = logging.getLogger("clippyme")
 
@@ -43,8 +23,7 @@ _JOURNAL_LOCK = threading.RLock()
 
 
 def snapshot(jobs: dict) -> dict:
-    """Journal records for every ACTIVE job. Secrets (env), live handles
-    (process), logs and results are deliberately excluded."""
+    """Journal every active job without secrets, handles, logs or results."""
     records = {}
     for job_id, job in jobs.items():
         status = job.get("status")
@@ -56,6 +35,8 @@ def snapshot(jobs: dict) -> dict:
             "output_dir": job.get("output_dir", ""),
             "input_path": job.get("input_path"),
             "pid": job.get("pid"),
+            "attempt": int(job.get("attempt") or 0),
+            "max_attempts": int(job.get("max_attempts") or 0),
             "updated_at": time.time(),
         }
     return records
@@ -102,10 +83,10 @@ def save_journal(path: str, records: dict) -> None:
 
 
 def load_journal(path: str) -> dict:
-    """Read the journal; {} on missing or corrupt file (logged, never raises)."""
+    """Read the journal; return ``{}`` for missing or corrupt files."""
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+        with open(path, encoding="utf-8") as file:
+            data = json.load(file)
         return data if isinstance(data, dict) else {}
     except FileNotFoundError:
         return {}
@@ -115,7 +96,7 @@ def load_journal(path: str) -> dict:
 
 
 def make_journal_writer(*, jobs: dict, path: str):
-    """The ``on_change`` hook: snapshot + save, swallowing I/O errors."""
+    """Return a best-effort snapshot writer suitable for lifecycle hooks."""
 
     def persist() -> None:
         try:
@@ -128,12 +109,12 @@ def make_journal_writer(*, jobs: dict, path: str):
 
 @dataclass
 class RecoveryPlan:
-    requeue: list = field(default_factory=list)       # [(job_id, record)]
-    mark_failed: list = field(default_factory=list)   # [(job_id, record)]
+    requeue: list = field(default_factory=list)
+    mark_failed: list = field(default_factory=list)
 
 
 def plan_recovery(records: dict) -> RecoveryPlan:
-    """Pure classification of journal records found at startup."""
+    """Pure initial classification; disk checkpoints are inspected later."""
     plan = RecoveryPlan()
     for job_id, record in records.items():
         status = (record or {}).get("status")
@@ -145,7 +126,7 @@ def plan_recovery(records: dict) -> RecoveryPlan:
 
 
 def _command_matches(actual, expected) -> bool:
-    """Require the complete recorded argv, allowing only argv[0] path changes."""
+    """Require the full recorded argv, allowing only executable path changes."""
     actual = [str(value) for value in (actual or [])]
     expected = [str(value) for value in (expected or [])]
     if not actual or len(actual) != len(expected):
@@ -159,17 +140,14 @@ def _command_matches(actual, expected) -> bool:
 
 
 def kill_stale_tree(pid, expected_cmd) -> bool:
-    """Kill the process tree at ``pid`` iff its argv still matches the job's
-    recorded cmd prefix (guards against pid reuse). Best-effort; returns
-    whether a kill was attempted."""
+    """Kill a recorded process tree only when its complete argv still matches."""
     if not pid:
         return False
     try:
         import psutil
 
-        proc = psutil.Process(int(pid))
-        cmdline = proc.cmdline()
-        if not _command_matches(cmdline, expected_cmd):
+        process = psutil.Process(int(pid))
+        if not _command_matches(process.cmdline(), expected_cmd):
             return False
         terminate_tree(int(pid), timeout=5.0)
         return True
@@ -177,34 +155,37 @@ def kill_stale_tree(pid, expected_cmd) -> bool:
         return False
 
 
-def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) -> dict:
-    """Startup recovery. Mutates ``jobs``/``job_queue`` in place and rewrites
-    the journal to reflect the recovered state. Returns counts for logging.
+def _recovered_entry(job_id: str, record: dict, message: str) -> dict:
+    output_dir = record.get("output_dir", "")
+    max_attempts = int(record.get("max_attempts") or os.environ.get("CLIPPYME_JOB_MAX_ATTEMPTS", "3") or 3)
+    env = os.environ.copy()
+    env["CLIPPYME_JOB_ID"] = job_id
+    env["CLIPPYME_JOB_MAX_ATTEMPTS"] = str(max(1, max_attempts))
+    return {
+        "status": "queued",
+        "logs": [message],
+        "cmd": record.get("cmd") or [],
+        "env": env,
+        "output_dir": output_dir,
+        "input_path": record.get("input_path"),
+        "attempt": int(record.get("attempt") or 0),
+        "max_attempts": max(1, max_attempts),
+        "result": {"clips": [], **runtime_result_fields(output_dir)},
+    }
 
-    A ``processing`` job whose final result actually made it to disk (killed
-    between render-finish and journal-prune) is restored as ``completed``
-    instead of being failed.
-    """
+
+def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) -> dict:
+    """Recover queued, completed-on-disk, and checkpoint-resumable jobs."""
     from clippyme.domain.clip_endpoints import restore_job_from_disk
     from clippyme.domain.errors import ClippyMeError
     from clippyme.domain.job_results import load_final_result
 
     plan = plan_recovery(load_journal(journal_path))
-    counts = {"requeued": 0, "failed": 0, "restored": 0}
+    counts = {"requeued": 0, "resumed": 0, "failed": 0, "restored": 0}
 
     for job_id, record in plan.requeue:
-        entry = {
-            "status": "queued",
-            "logs": ["Re-enqueued after server restart."],
-            "cmd": record.get("cmd") or [],
-            # Header-supplied keys (X-Gemini-Key) are not recoverable — the
-            # run-time persistent-config merge in run_job fills missing ones.
-            "env": os.environ.copy(),
-            "output_dir": record.get("output_dir", ""),
-            "input_path": record.get("input_path"),
-        }
         try:
-            jobs[job_id] = entry
+            jobs[job_id] = _recovered_entry(job_id, record, "Re-enqueued after server restart.")
             job_queue.put_nowait(job_id)
             counts["requeued"] += 1
         except Exception as exc:
@@ -221,14 +202,39 @@ def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) 
         if final:
             try:
                 jobs[job_id] = restore_job_from_disk(
-                    job_id, output_root, os.path.join(output_root, job_id))
+                    job_id, output_root, os.path.join(output_root, job_id)
+                )
                 counts["restored"] += 1
                 continue
             except ClippyMeError:
                 pass
-        if kill_stale_tree(record.get("pid"), record.get("cmd")):
-            logger.info("Killed orphaned pipeline tree for interrupted job %s (pid=%s)",
-                        job_id, record.get("pid"))
+
+        killed = kill_stale_tree(record.get("pid"), record.get("cmd"))
+        if killed:
+            logger.info(
+                "Killed orphaned pipeline tree for interrupted job %s (pid=%s)",
+                job_id,
+                record.get("pid"),
+            )
+
+        if is_resumable(
+            output_dir,
+            input_path=record.get("input_path"),
+            cmd=record.get("cmd"),
+        ):
+            try:
+                jobs[job_id] = _recovered_entry(
+                    job_id,
+                    record,
+                    "Server restarted; resuming from the last durable checkpoint.",
+                )
+                job_queue.put_nowait(job_id)
+                counts["resumed"] += 1
+                continue
+            except Exception as exc:
+                jobs.pop(job_id, None)
+                logger.warning("Could not resume interrupted job %s: %s", job_id, exc)
+
         jobs[job_id] = {
             "status": "failed",
             "logs": ["Job interrupted by server restart."],
@@ -236,6 +242,7 @@ def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) 
             "env": {},
             "output_dir": output_dir,
             "input_path": record.get("input_path"),
+            "result": {"clips": [], **runtime_result_fields(output_dir)},
         }
         counts["failed"] += 1
 
@@ -245,6 +252,11 @@ def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) 
         logger.warning("Could not rewrite job journal after recovery: %s", exc)
 
     if any(counts.values()):
-        logger.info("Job recovery: %d re-enqueued, %d restored from disk, %d marked failed",
-                    counts["requeued"], counts["restored"], counts["failed"])
+        logger.info(
+            "Job recovery: %d re-enqueued, %d resumed, %d restored, %d failed",
+            counts["requeued"],
+            counts["resumed"],
+            counts["restored"],
+            counts["failed"],
+        )
     return counts
