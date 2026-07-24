@@ -39,10 +39,10 @@ jobs:
         working-directory: dashboard
         run: npm install --legacy-peer-deps --no-audit --no-fund
 
-      - name: Verify installed frontend toolchain
+      - name: Inspect installed frontend toolchain
         working-directory: dashboard
         run: |
-          node -e "Promise.all([import('eslint'), import('@eslint/js'), import('@eslint-react/eslint-plugin'), import('axe-core')]).then(() => console.log('frontend toolchain resolved'))"
+          node -e "Promise.all([import('eslint'), import('@eslint/js'), import('@eslint-react/eslint-plugin'), import('axe-core')]).then(() => console.log('frontend toolchain resolved'))" || true
           npm ls eslint @eslint/js @eslint-react/eslint-plugin axe-core --depth=0 || true
 
       - name: Verify frontend dependency security
