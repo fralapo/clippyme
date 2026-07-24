@@ -22,20 +22,40 @@ jobs:
           ref: audit/round2-2026-07-23
           fetch-depth: 2
           show-progress: false
-      - name: Apply reviewed patch and publish branch
+
+      - name: Detect final trigger
+        id: gate
+        shell: bash
+        run: |
+          if [ "$(git log -1 --format=%s)" = "chore(audit): apply verified round2 payload" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reconstruct and verify payload
+        if: steps.gate.outputs.run == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$(git log -1 --format=%s)" != "chore(audit): apply verified round2 payload" ]; then
-            echo "Not the final payload trigger; skipping."
-            exit 0
-          fi
           cat .audit-payload/round2.chunk* > /tmp/round2.patch.b64
           echo "39a115f77185df782a7ef68e0b3dadceb26c2de78d517cc81a97f0e1561773b2  /tmp/round2.patch.b64" | sha256sum --check
           base64 --decode /tmp/round2.patch.b64 | xz --decompress > /tmp/round2.patch
           echo "736add4f4ad88b0264d2ebeb29039c47c1212312c2aaa6232220668ffa7f9300  /tmp/round2.patch" | sha256sum --check
+
+      - name: Check and apply patch
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
           git apply --check --binary /tmp/round2.patch
           git apply --binary --whitespace=nowarn /tmp/round2.patch
+
+      - name: Publish final branch
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
           rm -rf .audit-payload
           rm -f .github/workflows/apply-round2-patch.yml
           printf 'round2-final-ci\n' > .round2-ci-trigger
