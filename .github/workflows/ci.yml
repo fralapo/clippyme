@@ -57,8 +57,21 @@ jobs:
         if: steps.frontend-lint.outcome != 'success'
         run: exit 1
       - name: Test frontend with coverage
+        id: frontend-tests
+        continue-on-error: true
         working-directory: dashboard
-        run: npm test -- --coverage
+        run: npm test -- --coverage > ../frontend-tests.log 2>&1
+      - name: Upload frontend test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-overhaul-tests
+          path: frontend-tests.log
+          if-no-files-found: error
+          retention-days: 2
+      - name: Enforce frontend tests
+        if: steps.frontend-tests.outcome != 'success'
+        run: exit 1
       - name: Build production frontend
         working-directory: dashboard
         run: npm run build
