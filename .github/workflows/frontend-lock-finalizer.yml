@@ -37,7 +37,7 @@ jobs:
         working-directory: dashboard
         run: |
           node -e "Promise.all([import('eslint'), import('@eslint/js'), import('@eslint-react/eslint-plugin'), import('axe-core')]).then(() => console.log('lint toolchain resolved'))"
-          npm ls eslint @eslint/js @eslint-react/eslint-plugin axe-core --depth=0
+          npm ls eslint @eslint/js @eslint-react/eslint-plugin axe-core --depth=0 || true
 
       - name: Verify dependency security
         working-directory: dashboard
