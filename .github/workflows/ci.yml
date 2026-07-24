@@ -46,8 +46,6 @@ jobs:
           npm ls eslint @eslint/js @eslint-react/eslint-plugin axe-core --depth=0 || true
 
       - name: Verify frontend dependency security
-        id: finalizer-audit
-        continue-on-error: true
         shell: bash
         working-directory: dashboard
         run: |
@@ -55,8 +53,6 @@ jobs:
           npm audit --package-lock-only --audit-level=high 2>&1 | tee ../frontend-finalizer-audit.log
 
       - name: Verify frontend lint
-        id: finalizer-lint
-        continue-on-error: true
         shell: bash
         working-directory: dashboard
         run: |
@@ -64,8 +60,6 @@ jobs:
           npm run lint 2>&1 | tee ../frontend-finalizer-lint.log
 
       - name: Verify frontend tests
-        id: finalizer-tests
-        continue-on-error: true
         shell: bash
         working-directory: dashboard
         run: |
@@ -73,8 +67,6 @@ jobs:
           npm test -- --coverage 2>&1 | tee ../frontend-finalizer-tests.log
 
       - name: Verify frontend production build
-        id: finalizer-build
-        continue-on-error: true
         shell: bash
         working-directory: dashboard
         run: |
@@ -91,16 +83,8 @@ jobs:
             frontend-finalizer-lint.log
             frontend-finalizer-tests.log
             frontend-finalizer-build.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
-
-      - name: Enforce frontend verification
-        if: >-
-          steps.finalizer-audit.outcome != 'success' ||
-          steps.finalizer-lint.outcome != 'success' ||
-          steps.finalizer-tests.outcome != 'success' ||
-          steps.finalizer-build.outcome != 'success'
-        run: exit 1
 
       - name: Commit verified frontend lockfile
         run: |
