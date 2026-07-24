@@ -1,24 +1,19 @@
-"""Tests for clippyme.domain.job_results.build_main_cmd.
-
-build_main_cmd is the single chokepoint that turns user-controlled request
-data (URL, upload path, instructions, language) into the argv of a spawned
-`python -m clippyme.pipeline.main` subprocess. Its argv-injection guard and
-input validation are security-relevant, so they get explicit coverage.
-"""
-import pytest
-
+"""Tests for clippyme.domain.job_results command/result helpers."""
 import json
 
+import pytest
+
 from clippyme.domain.job_results import (
-    _build_clips, build_main_cmd, load_final_result, MAX_INSTRUCTIONS_LEN,
+    MAX_INSTRUCTIONS_LEN,
+    _build_clips,
+    build_main_cmd,
+    load_final_result,
 )
 
 
-# --- happy path / flag assembly --------------------------------------------
-
 def test_url_job_builds_expected_argv():
     cmd = build_main_cmd(url="https://youtu.be/abc", output_dir="output")
-    assert cmd[:4] == ["python", "-u", "-m", "clippyme.pipeline.main"]
+    assert cmd[:4] == ["python", "-u", "-m", "clippyme.pipeline.orchestrator"]
     assert "-u" in cmd and "https://youtu.be/abc" in cmd
     assert cmd[cmd.index("-o") + 1] == "output"
 
@@ -26,8 +21,6 @@ def test_url_job_builds_expected_argv():
 def test_input_path_job_uses_dash_i():
     cmd = build_main_cmd(input_path="uploads/clip.mp4", output_dir="output")
     assert "-i" in cmd and "uploads/clip.mp4" in cmd
-    # '-u' in the prefix is python's unbuffered flag; the URL flag '-u'
-    # must not appear among the job args.
     assert "-u" not in cmd[4:]
 
 
@@ -58,7 +51,6 @@ def test_optional_flags_assembled():
 
 
 def test_reframe_mode_auto_is_omitted():
-    # 'auto' is the default pipeline behaviour, so it is not forwarded.
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="auto")
     assert "--reframe-mode" not in cmd
 
@@ -74,23 +66,19 @@ def test_build_main_cmd_no_monitor_by_default():
 
 
 def test_reframe_mode_subject_is_forwarded():
-    # 'subject' (FrameShift face-first) is a non-default mode → passed through.
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="subject")
     assert cmd[cmd.index("--reframe-mode") + 1] == "subject"
 
 
 def test_reframe_mode_object_legacy_alias_is_accepted():
-    # 'object' is the legacy alias; build_main_cmd still accepts + forwards it
-    # (main.py / reframe.py normalize it to 'subject' downstream).
     from clippyme.domain.job_results import canonical_reframe_mode
+
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="object")
     assert cmd[cmd.index("--reframe-mode") + 1] == "object"
     assert canonical_reframe_mode("object") == "subject"
     assert canonical_reframe_mode("auto") == "auto"
     assert canonical_reframe_mode(None) is None
 
-
-# --- per-job model override ------------------------------------------------
 
 def test_model_forwarded_when_valid():
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", model="gemini-2.5-pro")
@@ -104,17 +92,16 @@ def test_model_omitted_when_none_or_blank():
 
 
 def test_model_future_gemini_family_accepted():
-    # Live discovery surfaces newer families; the boundary guard must allow them.
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", model="gemini-3-pro")
     assert cmd[cmd.index("--model") + 1] == "gemini-3-pro"
 
 
 @pytest.mark.parametrize("bad", [
-    "gpt-4o",                 # wrong family
-    "gemini",                 # no suffix
-    "gemini-2.5-pro; rm -rf", # shell metachars
-    "--inject",               # argv injection
-    "gemini-" + "x" * 100,    # over length cap
+    "gpt-4o",
+    "gemini",
+    "gemini-2.5-pro; rm -rf",
+    "--inject",
+    "gemini-" + "x" * 100,
 ])
 def test_model_rejects_invalid(bad):
     with pytest.raises(ValueError):
@@ -125,8 +112,6 @@ def test_language_multi_is_omitted():
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", language="multi")
     assert "--language" not in cmd
 
-
-# --- validation ------------------------------------------------------------
 
 def test_invalid_reframe_mode_rejected():
     with pytest.raises(ValueError, match="invalid reframe_mode"):
@@ -140,20 +125,18 @@ def test_unsupported_language_rejected():
 
 def test_overlong_instructions_rejected():
     with pytest.raises(ValueError, match="instructions too long"):
-        build_main_cmd(url="https://x.com/v", output_dir="o",
-                       instructions="x" * (MAX_INSTRUCTIONS_LEN + 1))
+        build_main_cmd(
+            url="https://x.com/v", output_dir="o",
+            instructions="x" * (MAX_INSTRUCTIONS_LEN + 1),
+        )
 
-
-# --- argv-injection guard (security) ---------------------------------------
 
 def test_url_starting_with_dash_rejected():
-    # A leading '-' would be parsed by argparse as a flag, not a positional.
     with pytest.raises(ValueError, match="url must not start with '-'"):
         build_main_cmd(url="--config=/etc/evil", output_dir="o")
 
 
 def test_url_with_leading_whitespace_dash_rejected():
-    # lstrip() defeats the obvious " --flag" bypass.
     with pytest.raises(ValueError, match="url must not start with '-'"):
         build_main_cmd(url="   --help", output_dir="o")
 
@@ -162,8 +145,6 @@ def test_input_path_starting_with_dash_rejected():
     with pytest.raises(ValueError, match="input_path must not start with '-'"):
         build_main_cmd(input_path="-rf", output_dir="o")
 
-
-# --- _build_clips: task 4b clip_filename resolution -------------------------
 
 def test_build_clips_uses_clip_filename_from_metadata(tmp_path):
     (tmp_path / "My Title_clip_1.mp4").write_bytes(b"\x00")
@@ -174,7 +155,6 @@ def test_build_clips_uses_clip_filename_from_metadata(tmp_path):
 
 
 def test_build_clips_legacy_metadata_positional_unchanged(tmp_path):
-    # No clip_filename key → byte-identical to pre-task-4b positional naming.
     (tmp_path / "vid_clip_1.mp4").write_bytes(b"\x00")
     data = {"shorts": [{"start": 0, "end": 5}]}
     result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=True)
@@ -192,11 +172,6 @@ def test_build_clips_ignores_tampered_clip_filename(tmp_path, bad):
 
 
 def test_build_clips_partial_job_mid_processing_first_clip_ready(tmp_path):
-    # Mid-job snapshot (per-iteration metadata re-dump, task 4b follow-up):
-    # clip 1 already has clip_filename + is on disk under the new sanitized
-    # name; clip 2 hasn't been cut yet (no clip_filename key, no file).
-    # only_ready=True (the /api/status partial-result path) must return the
-    # first clip and skip the second — not show zero clips for the job.
     (tmp_path / "Ready Clip Title_clip_1.mp4").write_bytes(b"\x00")
     data = {"shorts": [
         {"clip_filename": "Ready Clip Title_clip_1.mp4", "start": 0, "end": 5},
@@ -209,11 +184,6 @@ def test_build_clips_partial_job_mid_processing_first_clip_ready(tmp_path):
 
 
 def test_build_clips_skips_deleted_after_publish_even_in_final_result(tmp_path):
-    # Regression for I1: only_ready=False (the /api/status final-result path,
-    # via load_final_result) must never resurface a clip that was deliberately
-    # deleted after a confirmed Zernio publish — even though its file is gone,
-    # the file-missing skip only fires under only_ready=True. Siblings keep
-    # their absolute original_index; the skip must not renumber them.
     (tmp_path / "vid_clip_1.mp4").write_bytes(b"\x00")
     (tmp_path / "vid_clip_3.mp4").write_bytes(b"\x00")
     data = {"shorts": [
@@ -222,17 +192,22 @@ def test_build_clips_skips_deleted_after_publish_even_in_final_result(tmp_path):
         {"start": 10, "end": 15},
     ]}
     result = _build_clips(data, "vid", "job1", str(tmp_path), only_ready=False)
-    assert [c["original_index"] for c in result] == [0, 2]
-    assert all(not c.get("deleted_after_publish") for c in result)
+    assert [clip["original_index"] for clip in result] == [0, 2]
+    assert all(not clip.get("deleted_after_publish") for clip in result)
 
 
 def test_load_final_result_surfaces_gemini_exhausted(tmp_path):
-    # Monitor mode (Task 3) writes this top-level marker when Gemini quota is
-    # exhausted and fallbacks are disabled. load_final_result must not drop it
-    # -- live_monitor._await_and_publish reads it off the result dict.
     metadata = tmp_path / "vid_metadata.json"
     metadata.write_text(json.dumps({"shorts": [], "gemini_exhausted": True}))
-
     result = load_final_result("job1", str(tmp_path))
-
     assert result["gemini_exhausted"] is True
+
+
+def test_load_final_result_includes_runtime_operations(tmp_path):
+    from clippyme.domain.runtime_state import RuntimeState
+
+    RuntimeState(str(tmp_path), job_id="job1").start("quality", progress=92)
+    (tmp_path / "vid_metadata.json").write_text(json.dumps({"shorts": []}))
+    result = load_final_result("job1", str(tmp_path))
+    assert result["operations"]["stage"] == "quality"
+    assert result["operations"]["progress"] == 92
