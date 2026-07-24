@@ -1,6 +1,6 @@
 """Crash-safe journal for the in-memory job queue.
 
-The journal stores only non-secret process metadata.  Queued jobs are requeued;
+The journal stores only non-secret process metadata. Queued jobs are requeued;
 interrupted checkpoint-capable jobs are killed and safely requeued from their
 last durable phase; legacy/non-resumable jobs retain the previous fail-safe
 behaviour.
@@ -14,7 +14,11 @@ import time
 from dataclasses import dataclass, field
 
 from clippyme.domain.job_control import ACTIVE_STATES, terminate_tree
-from clippyme.domain.runtime_state import is_resumable, runtime_result_fields
+from clippyme.domain.runtime_state import (
+    is_resumable,
+    load_runtime_state,
+    runtime_result_fields,
+)
 
 logger = logging.getLogger("clippyme")
 
@@ -155,12 +159,22 @@ def kill_stale_tree(pid, expected_cmd) -> bool:
         return False
 
 
+def _positive_int(value, default: int) -> int:
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return max(1, int(default))
+
+
 def _recovered_entry(job_id: str, record: dict, message: str) -> dict:
     output_dir = record.get("output_dir", "")
-    max_attempts = int(record.get("max_attempts") or os.environ.get("CLIPPYME_JOB_MAX_ATTEMPTS", "3") or 3)
+    max_attempts = _positive_int(
+        record.get("max_attempts"),
+        os.environ.get("CLIPPYME_JOB_MAX_ATTEMPTS", "3"),
+    )
     env = os.environ.copy()
     env["CLIPPYME_JOB_ID"] = job_id
-    env["CLIPPYME_JOB_MAX_ATTEMPTS"] = str(max(1, max_attempts))
+    env["CLIPPYME_JOB_MAX_ATTEMPTS"] = str(max_attempts)
     return {
         "status": "queued",
         "logs": [message],
@@ -168,10 +182,22 @@ def _recovered_entry(job_id: str, record: dict, message: str) -> dict:
         "env": env,
         "output_dir": output_dir,
         "input_path": record.get("input_path"),
-        "attempt": int(record.get("attempt") or 0),
-        "max_attempts": max(1, max_attempts),
+        "attempt": max(0, int(record.get("attempt") or 0)),
+        "max_attempts": max_attempts,
         "result": {"clips": [], **runtime_result_fields(output_dir)},
     }
+
+
+def _may_restore_completed(output_dir: str) -> bool:
+    """Progress metadata alone is not a completion marker.
+
+    Checkpointed jobs write metadata before and between renders. They may be
+    restored as completed only after the runtime state has durably reached the
+    completed stage. Jobs created before runtime-state support retain the legacy
+    metadata-based recovery path.
+    """
+    state = load_runtime_state(output_dir)
+    return state is None or state.get("stage") == "completed"
 
 
 def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) -> dict:
@@ -195,14 +221,17 @@ def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) 
     for job_id, record in plan.mark_failed:
         output_dir = record.get("output_dir", "")
         final = None
-        try:
-            final = load_final_result(job_id, output_dir)
-        except Exception:
-            final = None
+        if _may_restore_completed(output_dir):
+            try:
+                final = load_final_result(job_id, output_dir)
+            except Exception:
+                final = None
         if final:
             try:
                 jobs[job_id] = restore_job_from_disk(
-                    job_id, output_root, os.path.join(output_root, job_id)
+                    job_id,
+                    output_root,
+                    os.path.join(output_root, job_id),
                 )
                 counts["restored"] += 1
                 continue
