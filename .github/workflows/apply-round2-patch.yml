@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: round2-apply-${{ github.head_ref }}
+  cancel-in-progress: true
+
 jobs:
   apply:
     if: github.head_ref == 'audit/round2-2026-07-23'
@@ -16,12 +20,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: audit/round2-2026-07-23
-          fetch-depth: 0
+          fetch-depth: 2
+          show-progress: false
       - name: Apply reviewed patch and publish branch
         shell: bash
         run: |
           set -euo pipefail
-          cat .audit-payload/round2.chunk* | base64 --decode | xz --decompress > /tmp/round2.patch
+          if [ "$(git log -1 --format=%s)" != "chore(audit): apply verified round2 payload" ]; then
+            echo "Not the final payload trigger; skipping."
+            exit 0
+          fi
+          cat .audit-payload/round2.chunk* > /tmp/round2.patch.b64
+          echo "39a115f77185df782a7ef68e0b3dadceb26c2de78d517cc81a97f0e1561773b2  /tmp/round2.patch.b64" | sha256sum --check
+          base64 --decode /tmp/round2.patch.b64 | xz --decompress > /tmp/round2.patch
+          echo "736add4f4ad88b0264d2ebeb29039c47c1212312c2aaa6232220668ffa7f9300  /tmp/round2.patch" | sha256sum --check
+          git apply --check --binary /tmp/round2.patch
           git apply --binary --whitespace=nowarn /tmp/round2.patch
           rm -rf .audit-payload
           rm -f .github/workflows/apply-round2-patch.yml
