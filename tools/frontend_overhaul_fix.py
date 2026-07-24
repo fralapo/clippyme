@@ -28,4 +28,16 @@ replace_once(
     "    <article {...selectionProps} className={`clip${score >= 90 ? ' top' : ''}${selectMode && selected ? ' sel' : ''}`}>",
 )
 
-print("frontend accessibility lint fixes applied")
+replace_once(
+    "dashboard/src/redesign/primitives.jsx",
+    "  return (\n    <div className={`seg${full ? ' full' : ''}${blue ? ' blue' : ''}`} role=\"radiogroup\" aria-label={label}>\n      {options.map((option, index) => (\n        <button key={option.id} ref={(node) => { refs.current[index] = node; }} type=\"button\" role=\"radio\"\n          aria-checked={value === option.id} tabIndex={value === option.id || (!options.some((item) => item.id === value) && index === 0) ? 0 : -1}",
+    "  return (\n    <div className={`seg${full ? ' full' : ''}${blue ? ' blue' : ''}`} role=\"group\" aria-label={label}>\n      {options.map((option, index) => (\n        <button key={option.id} ref={(node) => { refs.current[index] = node; }} type=\"button\"\n          aria-pressed={value === option.id}",
+)
+
+replace_once(
+    "dashboard/src/redesign/LazyVideo.test.jsx",
+    "  globalThis.IntersectionObserver = vi.fn((cb) => { callback = cb; return { observe: vi.fn(), disconnect: vi.fn() }; });",
+    "  globalThis.IntersectionObserver = vi.fn(function IntersectionObserverMock(cb) { callback = cb; return { observe: vi.fn(), disconnect: vi.fn() }; });",
+)
+
+print("frontend accessibility and compatibility fixes applied")
