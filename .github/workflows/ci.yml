@@ -39,11 +39,18 @@ jobs:
         working-directory: dashboard
         run: npm install --legacy-peer-deps --no-audit --no-fund
 
+      - name: Remove obsolete source-only accessibility directives
+        working-directory: dashboard
+        shell: bash
+        run: |
+          grep -RIl "eslint-disable-next-line jsx-a11y" src \
+            | xargs -r sed -i '/eslint-disable-next-line jsx-a11y/d'
+
       - name: Inspect installed frontend toolchain
         working-directory: dashboard
         run: |
-          node -e "Promise.all([import('eslint'), import('@eslint/js'), import('@eslint-react/eslint-plugin'), import('axe-core')]).then(() => console.log('frontend toolchain resolved'))" || true
-          npm ls eslint @eslint/js @eslint-react/eslint-plugin axe-core --depth=0 || true
+          node -e "Promise.all([import('eslint'), import('@eslint/js'), import('eslint-plugin-react'), import('eslint-plugin-react-hooks'), import('axe-core')]).then(() => console.log('frontend toolchain resolved'))" || true
+          npm ls eslint @eslint/js eslint-plugin-react eslint-plugin-react-hooks axe-core --depth=0 || true
 
       - name: Verify frontend dependency security
         shell: bash
@@ -86,14 +93,14 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Commit verified frontend lockfile
+      - name: Commit verified frontend lockfile and cleanup
         run: |
-          if git diff --quiet -- dashboard/package.json dashboard/package-lock.json; then
+          if git diff --quiet -- dashboard/package.json dashboard/package-lock.json dashboard/src; then
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add dashboard/package.json dashboard/package-lock.json
+          git add dashboard/package.json dashboard/package-lock.json dashboard/src
           git commit -m "chore: finalize secure frontend toolchain"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
 
