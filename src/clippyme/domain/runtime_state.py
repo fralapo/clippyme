@@ -1,6 +1,6 @@
 """Crash-safe pipeline runtime state, checkpoints, and operational metrics.
 
-The backend process and the heavy video subprocess have different lifetimes.  This
+The backend process and the heavy video subprocess have different lifetimes. This
 module gives them one small, owner-only JSON contract inside each job directory:
 
 * the pipeline records phase transitions, completed stages, artefacts, attempts,
@@ -10,7 +10,7 @@ module gives them one small, owner-only JSON contract inside each job directory:
 * restart recovery can decide whether an interrupted job is safe to resume.
 
 The file is hidden *and* has a ``.json`` suffix, so ``SafeStaticFiles`` blocks it
-from the public ``/videos`` mount.  Every write is atomic and fsync'd.
+from the public ``/videos`` mount. Every write is atomic and fsync'd.
 """
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ import tempfile
 import threading
 import time
 from copy import deepcopy
-from pathlib import Path
 from typing import Any
 
 RUNTIME_FILENAME = ".clippyme_runtime.json"
@@ -138,11 +137,26 @@ def load_runtime_state(output_dir: str) -> dict[str, Any] | None:
         return None
 
 
+def _has_orchestrator_url_arg(cmd: list | None) -> bool:
+    """Recognize ``-u/--url`` only after the orchestrator module argument.
+
+    Every Python subprocess already contains ``python -u`` for unbuffered output;
+    treating that interpreter flag as a source URL would incorrectly make a
+    missing-upload job resumable.
+    """
+    argv = [str(item) for item in (cmd or [])]
+    try:
+        module_index = argv.index("clippyme.pipeline.orchestrator")
+    except ValueError:
+        return False
+    return any(arg in {"-u", "--url"} for arg in argv[module_index + 1:])
+
+
 def is_resumable(output_dir: str, *, input_path: str | None = None, cmd: list | None = None) -> bool:
     """Conservative restart-recovery predicate.
 
-    URL jobs can reacquire their source from argv.  Upload jobs are resumable only
-    while their original upload still exists.  A valid runtime state is required
+    URL jobs can reacquire their source from argv. Upload jobs are resumable only
+    while their original upload still exists. A valid runtime state is required
     in both cases so old jobs created before checkpoint support stay fail-safe.
     """
     state = load_runtime_state(output_dir)
@@ -151,9 +165,11 @@ def is_resumable(output_dir: str, *, input_path: str | None = None, cmd: list | 
     if state.get("stage") in {"completed", "cancelled", "stopped"}:
         return False
     if input_path:
-        return os.path.isfile(input_path) and os.path.getsize(input_path) > 0
-    argv = [str(item) for item in (cmd or [])]
-    return "-u" in argv or "--url" in argv
+        try:
+            return os.path.isfile(input_path) and os.path.getsize(input_path) > 0
+        except OSError:
+            return False
+    return _has_orchestrator_url_arg(cmd)
 
 
 class RuntimeState:
@@ -210,8 +226,13 @@ class RuntimeState:
             self.data["detail"] = str(detail)
         self.save()
 
-    def complete_stage(self, stage: str, *, artifacts: dict[str, Any] | None = None,
-                       detail: str | None = None) -> None:
+    def complete_stage(
+        self,
+        stage: str,
+        *,
+        artifacts: dict[str, Any] | None = None,
+        detail: str | None = None,
+    ) -> None:
         completed = self.data.setdefault("completed_stages", [])
         if stage not in completed:
             completed.append(stage)
@@ -237,7 +258,10 @@ class RuntimeState:
         self.save()
 
     def mark_clip(self, index: int, status: str, report: dict[str, Any] | None = None) -> None:
-        qa = self.data.setdefault("qa", {"ok": 0, "warnings": 0, "failed": 0, "reports": {}})
+        qa = self.data.setdefault(
+            "qa",
+            {"ok": 0, "warnings": 0, "failed": 0, "reports": {}},
+        )
         reports = qa.setdefault("reports", {})
         key = str(int(index))
         previous = reports.get(key, {}).get("status") if isinstance(reports.get(key), dict) else None
@@ -285,9 +309,18 @@ def runtime_result_fields(output_dir: str) -> dict[str, Any]:
     public = {
         key: deepcopy(state.get(key))
         for key in (
-            "stage", "progress", "detail", "attempt", "max_attempts",
-            "started_at", "updated_at", "stage_durations", "clips",
-            "preflight", "qa", "last_error",
+            "stage",
+            "progress",
+            "detail",
+            "attempt",
+            "max_attempts",
+            "started_at",
+            "updated_at",
+            "stage_durations",
+            "clips",
+            "preflight",
+            "qa",
+            "last_error",
         )
     }
     return {"operations": public}
@@ -321,7 +354,10 @@ def collect_runtime_metrics(pid: int | None, output_dir: str) -> dict[str, Any]:
     except Exception:
         try:
             usage = os.statvfs(output_dir or ".")
-            metrics["disk_free_gb"] = round((usage.f_bavail * usage.f_frsize) / (1024 ** 3), 2)
+            metrics["disk_free_gb"] = round(
+                (usage.f_bavail * usage.f_frsize) / (1024 ** 3),
+                2,
+            )
         except OSError:
             pass
     return metrics
