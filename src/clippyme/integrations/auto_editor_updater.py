@@ -22,7 +22,6 @@ installed at all (smartcut.py has its own FFmpeg fallback).
 import asyncio
 import contextlib
 import errno
-import fcntl
 import hashlib
 import json
 import logging
@@ -32,10 +31,16 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.request
 from typing import Iterator, Optional
 from urllib.parse import urlparse
+
+try:  # fcntl is unavailable on Windows, where the backend must still import.
+    import fcntl
+except ImportError:  # pragma: no cover - exercised on Windows
+    fcntl = None
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +172,36 @@ def _fetch_latest_release_tag() -> Optional[str]:
     return rel["tag"] if rel else None
 
 
+def _version_tuple(value: Optional[str]) -> Optional[tuple[int, ...]]:
+    """Parse a dotted numeric release, ignoring a leading ``v`` or suffix.
+
+    Unknown formats return ``None`` so callers can fail safe rather than
+    replacing a possibly newer local binary with an older release.
+    """
+    if not value:
+        return None
+    match = re.fullmatch(r"v?(\d+(?:\.\d+)*)(?:[-+][0-9A-Za-z.-]+)?", value.strip())
+    if not match:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _compare_versions(current: Optional[str], latest: Optional[str]) -> Optional[int]:
+    """Return -1/0/1 for current vs latest, or None when either is unknown."""
+    left = _version_tuple(current)
+    right = _version_tuple(latest)
+    if left is None or right is None:
+        return None
+    width = max(len(left), len(right))
+    left += (0,) * (width - len(left))
+    right += (0,) * (width - len(right))
+    return (left > right) - (left < right)
+
+
 def _versions_equal(a: Optional[str], b: Optional[str]) -> bool:
+    comparison = _compare_versions(a, b)
+    if comparison is not None:
+        return comparison == 0
     if not a or not b:
         return False
     return a.strip().lstrip("v") == b.strip().lstrip("v")
@@ -215,9 +249,17 @@ _ALLOWED_DOWNLOAD_HOSTS = frozenset({
 def _allowed_download_url(url: str) -> bool:
     try:
         parsed = urlparse((url or "").strip())
+        port = parsed.port
     except ValueError:
         return False
-    return parsed.scheme == "https" and (parsed.hostname or "").lower() in _ALLOWED_DOWNLOAD_HOSTS
+    return (
+        parsed.scheme == "https"
+        and (parsed.hostname or "").lower() in _ALLOWED_DOWNLOAD_HOSTS
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None, 443)
+        and not parsed.fragment
+    )
 
 
 class _SafeAssetRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -230,12 +272,19 @@ class _SafeAssetRedirectHandler(urllib.request.HTTPRedirectHandler):
 _ASSET_OPENER = urllib.request.build_opener(_SafeAssetRedirectHandler)
 
 
-def _download_binary(url: str, target_path: str, expected_digest: Optional[str] = None) -> bool:
+def _download_binary(
+    url: str,
+    target_path: str,
+    expected_digest: Optional[str] = None,
+    expected_version: Optional[str] = None,
+) -> bool:
     """Atomically download the binary from ``url`` to ``target_path``.
 
     Verifies the SHA256 against ``expected_digest`` (from the release metadata)
     before the binary is ever made executable. Missing, malformed, or mismatched
     digests abort the update; the updater never executes an unverified asset.
+    When ``expected_version`` is supplied, the candidate's bounded ``--version``
+    output must match it as a final defence against mislabeled release assets.
     Returns True on success.
     """
     if not _allowed_download_url(url):
@@ -281,13 +330,18 @@ def _download_binary(url: str, target_path: str, expected_digest: Optional[str] 
             os.remove(tmp_path)
             return False
         os.chmod(tmp_path, 0o700)
-        # Sanity check: must be executable and report a version
+        # Sanity check: must be executable and report the release version.
         try:
             check = subprocess.check_output(
                 [tmp_path, "--version"], stderr=subprocess.STDOUT, timeout=10
             ).decode().strip()
-            if not check:
+            reported_version = check.split()[-1] if check else ""
+            if not reported_version:
                 raise RuntimeError("empty --version output")
+            if expected_version and not _versions_equal(reported_version, expected_version):
+                raise RuntimeError(
+                    f"candidate reports {reported_version!r}, expected {expected_version!r}"
+                )
         except Exception as e:
             logger.warning("auto-editor updater: downloaded binary failed sanity check: %s", e)
             os.remove(tmp_path)
@@ -305,15 +359,26 @@ def _download_binary(url: str, target_path: str, expected_digest: Optional[str] 
         return False
 
 
+_LOCAL_UPDATE_LOCK = threading.Lock()
+
+
 @contextlib.contextmanager
 def _update_lock() -> Iterator[bool]:
     """Best-effort exclusive lock so concurrent workers don't double-download.
 
-    Yields True if the caller acquired the lock, False if another process
-    already holds it (in which case the caller should skip the update).
-    Lockfile is non-blocking; on any OS error we fall through and yield True
-    so the updater still tries (failure-tolerant rather than deadlock-prone).
+    POSIX uses a process-wide file lock. Windows has no ``fcntl``; there the
+    backend remains importable and uses a non-blocking process-local lock, which
+    is sufficient for the single-process desktop deployment model.
     """
+    if fcntl is None:
+        acquired = _LOCAL_UPDATE_LOCK.acquire(blocking=False)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                _LOCAL_UPDATE_LOCK.release()
+        return
+
     os.makedirs(UPDATE_DIR, exist_ok=True)
     lock_path = os.path.join(UPDATE_DIR, ".update.lock")
     fd = None
@@ -369,9 +434,18 @@ def check_and_update_once() -> dict:
     download_url = asset_meta.get("url")
     expected_digest = asset_meta.get("digest")
 
-    if current and _versions_equal(current, latest):
+    comparison = _compare_versions(current, latest) if current else -1
+    if comparison is not None and comparison >= 0:
+        qualifier = "current" if comparison == 0 else "newer than the latest release"
         return {"action": "up_to_date", "current": current, "latest": latest,
-                "message": f"auto-editor {current} is current"}
+                "message": f"auto-editor {current} is {qualifier}"}
+    if current and comparison is None:
+        return {
+            "action": "skipped",
+            "current": current,
+            "latest": latest,
+            "message": "Could not compare versions safely; refusing to replace the local binary",
+        }
     if not download_url or not expected_digest:
         return {
             "action": "download_failed",
@@ -388,15 +462,24 @@ def check_and_update_once() -> dict:
         # Re-check version inside the lock — another worker may have updated
         # while we were blocked at the GitHub API call.
         current_after = _read_local_version()
-        if current_after and _versions_equal(current_after, latest):
+        comparison_after = _compare_versions(current_after, latest) if current_after else -1
+        if comparison_after is not None and comparison_after >= 0:
             return {"action": "up_to_date", "current": current_after, "latest": latest,
                     "message": f"auto-editor {current_after} is current (after lock)"}
+        if current_after and comparison_after is None:
+            return {"action": "skipped", "current": current_after, "latest": latest,
+                    "message": "Could not compare versions safely after lock"}
 
         logger.info(
             "auto-editor updater: %s available (have %s) — downloading %s",
             latest, current_after or "none", asset,
         )
-        ok = _download_binary(download_url, UPDATE_BINARY, expected_digest)
+        ok = _download_binary(
+            download_url,
+            UPDATE_BINARY,
+            expected_digest,
+            expected_version=latest,
+        )
         if not ok:
             return {"action": "download_failed", "current": current_after, "latest": latest,
                     "message": "Download or sanity check failed; keeping existing binary"}

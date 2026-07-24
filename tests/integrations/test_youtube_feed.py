@@ -78,12 +78,12 @@ def test_fetch_feed_enforces_size_cap(monkeypatch):
         yf.fetch_feed(feed_url("UULFabcdefghijklmnopqrstuv"))
 
 
-def test_resolve_channel_id_normalizes_bare_official_host(monkeypatch):
+def test_resolve_channel_id_normalizes_bare_official_host_and_bounds_lookup(monkeypatch):
     captured = {}
 
     class FakeYDL:
         def __init__(self, options):
-            pass
+            captured["options"] = options
 
         def __enter__(self):
             return self
@@ -93,6 +93,7 @@ def test_resolve_channel_id_normalizes_bare_official_host(monkeypatch):
 
         def extract_info(self, url, **kwargs):
             captured["url"] = url
+            captured["kwargs"] = kwargs
             return {"channel_id": "UCabcdefghijklmnopqrstuv"}
 
     import sys
@@ -100,6 +101,11 @@ def test_resolve_channel_id_normalizes_bare_official_host(monkeypatch):
     monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(YoutubeDL=FakeYDL))
     assert yf.resolve_channel_id("youtube.com/@creator") == "UCabcdefghijklmnopqrstuv"
     assert captured["url"] == "https://youtube.com/@creator"
+    assert captured["options"]["socket_timeout"] == yf.CHANNEL_RESOLVE_TIMEOUT
+    assert captured["options"]["retries"] == 2
+    assert captured["options"]["extractor_retries"] == 2
+    assert captured["options"]["noplaylist"] is True
+    assert captured["kwargs"] == {"download": False, "process": False}
 
 
 def test_resolve_channel_id_rejects_http_and_non_channel_urls():

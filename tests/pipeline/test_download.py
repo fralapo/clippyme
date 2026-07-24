@@ -14,13 +14,38 @@ def _fake_getaddrinfo(*ips):
     return _stub
 
 
+@pytest.mark.parametrize("url", [
+    "https://www.youtube.com/watch?v=abc",
+    "https://youtu.be/abcdefghijk?t=1",
+    "https://www.twitch.tv/videos/123",
+    "https://clips.twitch.tv/FancyClip",
+    "https://kick.com/video/1234",
+])
+def test_validate_supported_source_url_accepts_official_https_hosts(url):
+    assert dl.validate_supported_source_url(url) == url
+
+
+@pytest.mark.parametrize("url", [
+    "http://www.youtube.com/watch?v=abc",
+    "https://example.com/video.mp4",
+    "https://youtube.com.evil.example/watch?v=abc",
+    "https://user@www.youtube.com/watch?v=abc",
+    "https://www.youtube.com:444/watch?v=abc",
+    "file:///etc/passwd",
+    "not a url",
+])
+def test_validate_supported_source_url_rejects_untrusted_sources(url):
+    with pytest.raises(ValueError):
+        dl.validate_supported_source_url(url)
+
+
 def test_reject_rebound_literal_internal_ip_raises():
     with pytest.raises(ValueError):
         dl._reject_rebound_internal("http://127.0.0.1/video")
 
 
 def test_reject_rebound_literal_public_ip_passes():
-    # 8.8.8.8 is public — must not raise.
+    # 8.8.8.8 is public — the lower-level rebound guard remains generic.
     dl._reject_rebound_internal("http://8.8.8.8/video")
 
 
@@ -37,8 +62,7 @@ def test_reject_rebound_public_resolution_passes(monkeypatch):
 
 def test_reject_rebound_mixed_public_and_internal_raises(monkeypatch):
     # ANY internal address → reject. A split-horizon / round-robin host that
-    # returns one public + one loopback/private address must NOT pass: yt-dlp
-    # could otherwise connect to the internal one (SSRF via DNS rebinding).
+    # returns one public + one loopback/private address must NOT pass.
     monkeypatch.setattr(netutil.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34", "10.0.0.1"))
     with pytest.raises(ValueError):
         dl._reject_rebound_internal("http://example.com/x")
@@ -52,7 +76,6 @@ def test_reject_rebound_resolution_failure_is_swallowed(monkeypatch):
     def _boom(*a, **k):
         raise OSError("dns down")
     monkeypatch.setattr(netutil.socket, "getaddrinfo", _boom)
-    # Resolution hiccup must not block a legit download — yt-dlp handles it.
     assert dl._reject_rebound_internal("http://example.com/x") is None
 
 
@@ -163,6 +186,5 @@ def test_classify_fatal(msg):
 
 
 def test_classify_bot_wall_beats_any_incidental_403():
-    # Page-level bot wall is fatal even if a 403 substring is nearby.
     msg = "Sign in to confirm you're not a bot (HTTP Error 403)"
     assert dl.classify_download_error(msg) == "fatal"

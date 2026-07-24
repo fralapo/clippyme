@@ -41,6 +41,25 @@ def enqueue_output(out, job_id: str, jobs: Dict[str, Dict]) -> None:
         out.close()
 
 
+def active_input_paths(jobs: Dict[str, Dict]) -> set[str]:
+    """Return canonical upload paths that are still owned by active jobs.
+
+    The retention sweep must never delete an uploaded source while its queued,
+    processing, or paused job can still read it.  Building the set in one pass
+    also avoids repeatedly scanning the job registry for every upload file.
+    """
+    from clippyme.domain.job_control import ACTIVE_STATES
+
+    protected = set()
+    for job in jobs.values():
+        if job.get("status") not in ACTIVE_STATES:
+            continue
+        path = job.get("input_path")
+        if path:
+            protected.add(os.path.abspath(os.fspath(path)))
+    return protected
+
+
 def make_workers(
     *,
     jobs: Dict[str, Dict],
@@ -91,9 +110,16 @@ def make_workers(
                                 shutil.rmtree(job_path, ignore_errors=True)
                                 jobs.pop(job_id, None)
 
-                    # UPLOAD_DIR: purge stale uploads
+                    # UPLOAD_DIR: purge stale uploads, except files still owned
+                    # by queued/processing/paused jobs.  A long-running or
+                    # paused job can legitimately outlive the retention window;
+                    # deleting its source here makes the pipeline fail halfway
+                    # through and can also destroy the only copy of an upload.
+                    protected_uploads = active_input_paths(jobs)
                     for filename in os.listdir(upload_dir):
                         file_path = os.path.join(upload_dir, filename)
+                        if os.path.abspath(file_path) in protected_uploads:
+                            continue
                         try:
                             if now - os.path.getmtime(file_path) > job_retention_seconds:
                                 os.remove(file_path)

@@ -1,20 +1,14 @@
 """Unit tests for clippyme.integrations.auto_editor_updater.
 
 Covers the pure/mockable helpers (no real GitHub calls, no real binary):
-asset-name detection per platform, local-version parsing, latest-tag fetch
-with the ``v`` prefix stripped, version equality, and graceful failure when
-GitHub is unreachable.
+asset-name detection per platform, local-version parsing, latest-tag fetch,
+version ordering, downgrade refusal, and cross-platform locking.
 """
 import subprocess
 
 import pytest
 
-# auto_editor_updater hard-imports fcntl (Unix-only) at module load for its
-# file lock, so the whole module is unimportable on Windows. The binary it
-# manages is Linux-only anyway; skip on platforms without fcntl (CI is Linux).
-pytest.importorskip("fcntl")
-
-import clippyme.integrations.auto_editor_updater as au  # noqa: E402
+import clippyme.integrations.auto_editor_updater as au
 
 
 def test_auto_update_disabled_by_default(monkeypatch):
@@ -51,6 +45,13 @@ def test_versions_equal_strips_v_prefix():
 def test_versions_equal_none_is_false():
     assert au._versions_equal(None, "30.1.0") is False
     assert au._versions_equal("30.1.0", None) is False
+
+
+def test_compare_versions_uses_numeric_not_lexical_order():
+    assert au._compare_versions("30.10.0", "30.9.9") == 1
+    assert au._compare_versions("v30.1", "30.1.0") == 0
+    assert au._compare_versions("30.0.9", "30.1.0") == -1
+    assert au._compare_versions("unknown", "30.1.0") is None
 
 
 def test_detect_asset_name_linux_x86(monkeypatch):
@@ -110,7 +111,7 @@ def test_fetch_latest_release_tag_strips_v(monkeypatch):
             return False
 
     payload = _Resp(_json.dumps({"tag_name": "v30.5.0"}).encode())
-    # The API fetch now goes through the no-redirect opener (M2), so patch that.
+    # The API fetch goes through the no-redirect opener, so patch that.
     monkeypatch.setattr(au._API_OPENER, "open", lambda *a, **k: payload)
     assert au._fetch_latest_release_tag() == "30.5.0"
 
@@ -174,7 +175,6 @@ def test_verify_digest_match_mismatch_and_absent(tmp_path):
     assert au._verify_digest(str(p), good) is True
     assert au._verify_digest(str(p), "sha256:" + "0" * 64) is False
     assert au._verify_digest(str(p), "sha256:deadbeef") is None
-    # No digest / unsupported algo → None (caller installs with sanity-only).
     assert au._verify_digest(str(p), None) is None
     assert au._verify_digest(str(p), "md5:whatever") is None
 
@@ -192,23 +192,23 @@ def test_download_binary_refuses_missing_digest_before_network(monkeypatch, tmp_
     assert not target.exists()
 
 
+def _release(tag="31.0.0", digest="sha256:" + "a" * 64):
+    return {
+        "tag": tag,
+        "assets": {
+            "auto-editor-linux-x86_64": {
+                "url": "https://github.com/WyattBlue/auto-editor/releases/download/v31/asset",
+                "digest": digest,
+            }
+        },
+    }
+
+
 def test_check_update_refuses_release_asset_without_digest(monkeypatch):
     monkeypatch.setenv("AUTO_EDITOR_AUTO_UPDATE", "1")
     monkeypatch.setattr(au, "_detect_asset_name", lambda: "auto-editor-linux-x86_64")
     monkeypatch.setattr(au, "_read_local_version", lambda: "30.0.0")
-    monkeypatch.setattr(
-        au,
-        "_fetch_latest_release",
-        lambda: {
-            "tag": "31.0.0",
-            "assets": {
-                "auto-editor-linux-x86_64": {
-                    "url": "https://github.com/WyattBlue/auto-editor/releases/download/v31/asset",
-                    "digest": None,
-                }
-            },
-        },
-    )
+    monkeypatch.setattr(au, "_fetch_latest_release", lambda: _release(digest=None))
     monkeypatch.setattr(
         au,
         "_download_binary",
@@ -217,3 +217,43 @@ def test_check_update_refuses_release_asset_without_digest(monkeypatch):
     result = au.check_and_update_once()
     assert result["action"] == "download_failed"
     assert "SHA256" in result["message"]
+
+
+def test_check_update_never_downgrades_newer_local_binary(monkeypatch):
+    monkeypatch.setenv("AUTO_EDITOR_AUTO_UPDATE", "1")
+    monkeypatch.setattr(au, "_detect_asset_name", lambda: "auto-editor-linux-x86_64")
+    monkeypatch.setattr(au, "_read_local_version", lambda: "32.0.0")
+    monkeypatch.setattr(au, "_fetch_latest_release", lambda: _release(tag="31.0.0"))
+    monkeypatch.setattr(
+        au,
+        "_download_binary",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not downgrade")),
+    )
+
+    result = au.check_and_update_once()
+    assert result["action"] == "up_to_date"
+    assert result["current"] == "32.0.0"
+
+
+def test_check_update_skips_uncomparable_local_version(monkeypatch):
+    monkeypatch.setenv("AUTO_EDITOR_AUTO_UPDATE", "1")
+    monkeypatch.setattr(au, "_detect_asset_name", lambda: "auto-editor-linux-x86_64")
+    monkeypatch.setattr(au, "_read_local_version", lambda: "custom-build")
+    monkeypatch.setattr(au, "_fetch_latest_release", lambda: _release())
+    monkeypatch.setattr(
+        au,
+        "_download_binary",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not replace unknown build")),
+    )
+
+    assert au.check_and_update_once()["action"] == "skipped"
+
+
+def test_update_lock_works_without_fcntl(monkeypatch):
+    monkeypatch.setattr(au, "fcntl", None)
+    with au._update_lock() as acquired:
+        assert acquired is True
+        with au._update_lock() as nested:
+            assert nested is False
+    with au._update_lock() as acquired_again:
+        assert acquired_again is True

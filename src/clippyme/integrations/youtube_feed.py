@@ -12,6 +12,7 @@ logger = logging.getLogger("clippyme")
 FEED_URL = "https://www.youtube.com/feeds/videos.xml?playlist_id={playlist}"
 USER_AGENT = "Mozilla/5.0 (compatible; ClippyMe-LiveMonitor/1.0)"
 MAX_FEED_BYTES = 2 * 1024 * 1024
+CHANNEL_RESOLVE_TIMEOUT = 15
 
 _UC_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 _PLAYLIST_RE = re.compile(r"^UULF[A-Za-z0-9_-]{22}$")
@@ -80,7 +81,12 @@ def fetch_feed(url: str, timeout: float = 15.0) -> bytes:
 
 
 def resolve_channel_id(channel_input: str) -> str:
-    """Resolve an @handle / channel URL / UC id to a canonical UC id."""
+    """Resolve an @handle / channel URL / UC id to a canonical UC id.
+
+    The yt-dlp metadata lookup is explicitly bounded: without socket/retry
+    limits a broken resolver or half-open connection could pin a monitor worker
+    forever and prevent clean shutdown.
+    """
     channel = (channel_input or "").strip()
     if _UC_RE.fullmatch(channel):
         return channel
@@ -119,7 +125,18 @@ def resolve_channel_id(channel_input: str) -> str:
         raise ValueError("YouTube channel must use an official channel/handle URL")
     from yt_dlp import YoutubeDL
 
-    with YoutubeDL({"quiet": True, "skip_download": True, "extract_flat": True}) as ydl:
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "extract_flat": True,
+        "noplaylist": True,
+        "socket_timeout": CHANNEL_RESOLVE_TIMEOUT,
+        "retries": 2,
+        "extractor_retries": 2,
+        "cachedir": False,
+    }
+    with YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False, process=False) or {}
     channel_id = info.get("channel_id") or info.get("uploader_id") or info.get("id")
     if not channel_id or not _UC_RE.fullmatch(str(channel_id)):
