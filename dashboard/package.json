@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "@eslint-react/eslint-plugin": "5.18.0",
-    "@eslint/js": "10.8.0",
+    "@eslint/js": "10.0.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
@@ -30,7 +30,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "autoprefixer": "^10.4.23",
     "axe-core": "latest",
-    "eslint": "10.8.0",
+    "eslint": "10.7.0",
     "eslint-plugin-react-hooks": "latest",
     "eslint-plugin-react-refresh": "latest",
     "globals": "latest",
