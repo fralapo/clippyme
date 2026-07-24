@@ -33,15 +33,15 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
-      - name: Install maintained ESLint 10 plugins
+      - name: Install secure ESLint and accessibility tooling
         working-directory: dashboard
         shell: bash
         run: |
-          npm uninstall eslint-plugin-react eslint-plugin-jsx-a11y --legacy-peer-deps --no-audit --no-fund
+          npm uninstall eslint-plugin-react eslint-plugin-jsx-a11y @htmlacademy/eslint-plugin-jsx-a11y --legacy-peer-deps --no-audit --no-fund
           npm install --save-dev --save-exact --legacy-peer-deps \
             eslint@10.8.0 @eslint/js@10.8.0 globals@latest \
             @eslint-react/eslint-plugin@5.18.0 \
-            @htmlacademy/eslint-plugin-jsx-a11y@6.11.0 \
+            axe-core@latest \
             eslint-plugin-react-hooks@latest \
             eslint-plugin-react-refresh@latest \
             --no-audit --no-fund
@@ -67,10 +67,28 @@ jobs:
       - name: Enforce full dependency audit
         if: steps.security-audit.outputs.exit_code != '0'
         run: exit 1
-      - name: Verify frontend
+      - name: Verify lint
+        id: security-lint
+        continue-on-error: true
+        shell: bash
         working-directory: dashboard
         run: |
-          npm run lint
+          set -o pipefail
+          npm run lint 2>&1 | tee ../frontend-security-lint.log
+      - name: Upload lint diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-security-lint
+          path: frontend-security-lint.log
+          if-no-files-found: error
+          retention-days: 2
+      - name: Enforce lint
+        if: steps.security-lint.outcome != 'success'
+        run: exit 1
+      - name: Verify tests and build
+        working-directory: dashboard
+        run: |
           npm test -- --coverage
           npm run build
       - name: Commit verified dependency update
@@ -81,7 +99,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add dashboard/package.json dashboard/package-lock.json
-          git commit -m "chore: migrate frontend lint security toolchain"
+          git commit -m "chore: migrate frontend lint and accessibility toolchain"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
 
   backend:
