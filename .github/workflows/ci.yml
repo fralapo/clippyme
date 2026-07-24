@@ -34,7 +34,9 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - name: Apply audited frontend patch
-        run: python tools/frontend_overhaul_patch.py
+        run: |
+          python tools/frontend_overhaul_patch.py
+          python tools/frontend_overhaul_fix.py
       - name: Install exact frontend dependencies
         working-directory: dashboard
         run: npm ci --no-audit --no-fund
@@ -65,7 +67,7 @@ jobs:
         run: npm audit --package-lock-only --audit-level=high
       - name: Commit verified frontend overhaul
         run: |
-          git rm tools/frontend_overhaul_patch.py .github/workflows/frontend-overhaul-finalizer.yml
+          git rm tools/frontend_overhaul_patch.py tools/frontend_overhaul_fix.py .github/workflows/frontend-overhaul-finalizer.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add dashboard
