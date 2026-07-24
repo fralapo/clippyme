@@ -33,16 +33,15 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
-      - name: Upgrade lint toolchain to patched releases
+      - name: Pin patched transitive expansion library
         working-directory: dashboard
-        run: >-
-          npm install --save-dev --save-exact
-          eslint@10.8.0 @eslint/js@10.8.0
-          eslint-plugin-react@latest
-          eslint-plugin-jsx-a11y@latest
-          eslint-plugin-react-hooks@latest
-          eslint-plugin-react-refresh@latest
-          --no-audit --no-fund
+        shell: bash
+        run: |
+          version="$(npm view brace-expansion version)"
+          node -e "const [major,minor,patch]=process.argv[1].split('.').map(Number); if (major < 5 || (major === 5 && minor === 0 && patch < 8)) process.exit(1)" "$version"
+          npm pkg set "overrides.brace-expansion=$version"
+          npm install --package-lock-only --no-audit --no-fund
+          npm ci --no-audit --no-fund
       - name: Verify full dependency audit
         working-directory: dashboard
         run: npm audit --package-lock-only --audit-level=high
@@ -60,7 +59,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add dashboard/package.json dashboard/package-lock.json
-          git commit -m "chore: update frontend lint security toolchain"
+          git commit -m "chore: pin patched frontend transitive dependency"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
 
   backend:
