@@ -35,10 +35,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[host-tests]"
-          pip install pytest pytest-cov pip-audit ruff
+          pip install pytest pytest-cov pip-audit ruff bandit
 
       - name: Lint (ruff — bug-class rules)
         run: ruff check src/clippyme tests --select E9,F63,F7,F82
+
+      - name: Static security scan (Bandit medium/high)
+        run: bandit -q -r src/clippyme -ll -ii
 
       - name: Run host test suite (excludes integration)
         id: host-tests
@@ -74,7 +77,7 @@ jobs:
         run: exit 1
 
   frontend-audit:
-    name: Frontend production dependency audit
+    name: Frontend dependency audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -83,26 +86,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate production audit report
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Generate full dependency audit report
         id: audit
         shell: bash
         run: |
           set +e
-          npm audit --package-lock-only --omit=dev --audit-level=high --json > npm-audit.json
+          npm audit --package-lock-only --audit-level=high --json > npm-audit.json
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Upload production audit report
+      - name: Upload full dependency audit report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: npm-production-audit
+          name: npm-full-audit
           path: dashboard/npm-audit.json
           if-no-files-found: error
           retention-days: 7
 
-      - name: Enforce production audit
+      - name: Enforce full dependency audit
         if: steps.audit.outputs.exit_code != '0'
         run: |
           node -e "const r=require('./npm-audit.json'); for (const [n,v] of Object.entries(r.vulnerabilities||{})) console.error(n, v.severity, v.via);"
@@ -120,7 +129,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
@@ -160,123 +169,3 @@ jobs:
 
       - name: Run integration suite in the backend image
         run: docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"
-
-  round2-diagnostics:
-    name: Round 2 static diagnostics
-    if: github.event_name == 'pull_request' && github.head_ref == 'audit/round2-2026-07-23'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
-
-      - name: Run Python static analyzers
-        shell: bash
-        run: |
-          mkdir -p audit-reports
-          python -m pip install --upgrade pip
-          pip install bandit ruff
-          bandit -r src/clippyme -f json -o audit-reports/bandit.json || true
-          ruff check src/clippyme tests \
-            --select S,B,ASYNC,DTZ,PTH,RET,SIM,PERF,RUF \
-            --output-format=json > audit-reports/ruff.json || true
-
-      - name: Run targeted AST and repository-hygiene scans
-        shell: bash
-        run: |
-          python - <<'PY' > audit-reports/ast-audit.txt
-          import ast
-          from pathlib import Path
-
-          blocking = {
-              'time.sleep', 'subprocess.run', 'subprocess.call',
-              'subprocess.check_call', 'subprocess.check_output',
-              'subprocess.Popen', 'requests.get', 'requests.post',
-              'requests.put', 'requests.delete', 'os.system',
-          }
-          dangerous = {
-              'eval', 'exec', 'pickle.loads', 'yaml.load',
-              'tempfile.mktemp', 'tarfile.extractall', 'zipfile.extractall',
-          }
-
-          def dotted(node):
-              parts = []
-              while isinstance(node, ast.Attribute):
-                  parts.append(node.attr)
-                  node = node.value
-              if isinstance(node, ast.Name):
-                  parts.append(node.id)
-              return '.'.join(reversed(parts))
-
-          for path in sorted(Path('src/clippyme').rglob('*.py')):
-              try:
-                  tree = ast.parse(path.read_text(encoding='utf-8'))
-              except Exception as exc:
-                  print(f'{path}: parse error: {exc}')
-                  continue
-              parents = {}
-              for parent in ast.walk(tree):
-                  for child in ast.iter_child_nodes(parent):
-                      parents[child] = parent
-              for node in ast.walk(tree):
-                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                      defaults = list(node.args.defaults) + [d for d in node.args.kw_defaults if d]
-                      for default in defaults:
-                          if isinstance(default, (ast.List, ast.Dict, ast.Set)):
-                              print(f'{path}:{node.lineno}: mutable default in {node.name}')
-                  if isinstance(node, ast.ExceptHandler) and node.body:
-                      if all(isinstance(stmt, ast.Pass) for stmt in node.body):
-                          name = dotted(node.type) if node.type else 'bare except'
-                          print(f'{path}:{node.lineno}: swallowed exception ({name})')
-                  if isinstance(node, ast.Call):
-                      name = dotted(node.func)
-                      if name in dangerous:
-                          print(f'{path}:{node.lineno}: dangerous call {name}')
-                      for kw in node.keywords:
-                          if kw.arg == 'shell' and isinstance(kw.value, ast.Constant) and kw.value.value is True:
-                              print(f'{path}:{node.lineno}: subprocess shell=True')
-                      current = node
-                      async_parent = None
-                      while current in parents:
-                          current = parents[current]
-                          if isinstance(current, ast.AsyncFunctionDef):
-                              async_parent = current
-                              break
-                          if isinstance(current, ast.FunctionDef):
-                              break
-                      if async_parent and name in blocking:
-                          print(f'{path}:{node.lineno}: blocking {name} in async {async_parent.name}')
-          PY
-          {
-            echo 'Tracked generated/cache files:'
-            git ls-files | grep -E '(^|/)(node_modules|__pycache__|dist|coverage)/|\.py[co]$|\.DS_Store$' || true
-            echo
-            echo 'Potential secret-like assignments in tracked source:'
-            git grep -nEI '(api[_-]?key|secret|token|password)[[:space:]]*=[[:space:]]*["'"'][^"'"']{8,}' -- ':!*.lock' ':!package-lock.json' || true
-          } > audit-reports/repository-hygiene.txt
-
-      - name: Run full npm advisory and outdated reports
-        working-directory: dashboard
-        shell: bash
-        run: |
-          npm audit --package-lock-only --audit-level=low --json > ../audit-reports/npm-full-audit.json || true
-          npm outdated --json > ../audit-reports/npm-outdated.json || true
-
-      - name: Upload round-2 diagnostic reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: round2-static-diagnostics
-          path: audit-reports/
-          if-no-files-found: error
-          retention-days: 7
