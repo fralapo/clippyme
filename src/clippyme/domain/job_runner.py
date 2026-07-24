@@ -49,6 +49,19 @@ def _merge_runtime_result(job: dict, output_dir: str, metrics: dict | None = Non
     job["result"] = result
 
 
+def _bounded_max_attempts(job_data: dict, env: dict) -> int:
+    """Resolve deployment/job retry configuration into the supported 1–10 range."""
+    try:
+        value = int(
+            job_data.get("max_attempts")
+            or env.get("CLIPPYME_JOB_MAX_ATTEMPTS")
+            or os.environ.get("CLIPPYME_JOB_MAX_ATTEMPTS", "3")
+        )
+    except (TypeError, ValueError):
+        value = 3
+    return min(10, max(1, value))
+
+
 def make_run_job(*, jobs: dict, output_root: str, on_change=None):
     """Build the ``run_job`` coroutine bound to shared application state."""
 
@@ -68,12 +81,20 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
             if process.poll() is None:
                 raise RuntimeError("process tree still running after termination")
         except Exception:
-            logger.warning("could not terminate process tree for job %s", job_id, exc_info=True)
+            logger.warning(
+                "could not terminate process tree for job %s",
+                job_id,
+                exc_info=True,
+            )
             try:
                 process.kill()
                 await asyncio.to_thread(lambda: process.wait(timeout=5))
             except Exception:
-                logger.error("could not kill orphaned process for job %s", job_id, exc_info=True)
+                logger.error(
+                    "could not kill orphaned process for job %s",
+                    job_id,
+                    exc_info=True,
+                )
 
     async def _refresh(job_id: str, output_dir: str, process) -> None:
         job = jobs.get(job_id)
@@ -119,15 +140,7 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                 )
                 return
 
-            try:
-                max_attempts = max(1, int(
-                    job_data.get("max_attempts")
-                    or env.get("CLIPPYME_JOB_MAX_ATTEMPTS")
-                    or os.environ.get("CLIPPYME_JOB_MAX_ATTEMPTS", "3")
-                ))
-            except (TypeError, ValueError):
-                max_attempts = 3
-
+            max_attempts = _bounded_max_attempts(job_data, env)
             jobs[job_id]["status"] = "processing"
             jobs[job_id]["max_attempts"] = max_attempts
             jobs[job_id]["logs"].append("Job started by worker.")
@@ -160,7 +173,13 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                 jobs[job_id]["logs"].append(
                     f"Pipeline attempt {attempt}/{max_attempts} started."
                 )
-                logger.info("Executing job %s attempt %d/%d: %s", job_id, attempt, max_attempts, " ".join(cmd))
+                logger.info(
+                    "Executing job %s attempt %d/%d: %s",
+                    job_id,
+                    attempt,
+                    max_attempts,
+                    " ".join(cmd),
+                )
                 _notify()
 
                 process = subprocess.Popen(
@@ -197,10 +216,16 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                     jobs[job_id]["logs"].append("Process terminated (cancelled).")
                     break
                 if status == "stopped":
-                    partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
+                    partial = await asyncio.to_thread(
+                        load_partial_result,
+                        job_id,
+                        output_dir,
+                    )
                     if partial:
                         jobs[job_id]["result"] = partial
-                    count = len((jobs[job_id].get("result") or {}).get("clips", []) or [])
+                    count = len(
+                        (jobs[job_id].get("result") or {}).get("clips", []) or []
+                    )
                     jobs[job_id]["logs"].append(
                         f"Process stopped by user; kept {count} finished clip(s)."
                     )
@@ -210,9 +235,16 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                     jobs[job_id]["logs"].append("Process finished successfully.")
                     if not glob.glob(os.path.join(output_dir, "*_metadata.json")):
                         await asyncio.to_thread(
-                            relocate_root_job_artifacts, job_id, output_dir, output_root
+                            relocate_root_job_artifacts,
+                            job_id,
+                            output_dir,
+                            output_root,
                         )
-                    final = await asyncio.to_thread(load_final_result, job_id, output_dir)
+                    final = await asyncio.to_thread(
+                        load_final_result,
+                        job_id,
+                        output_dir,
+                    )
                     if final:
                         jobs[job_id]["result"] = final
                     else:
@@ -220,8 +252,7 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                         jobs[job_id]["logs"].append("No metadata file generated.")
                     break
 
-                # The orchestrator reserves exit 2 for deterministic validation or
-                # preflight rejection. Retrying cannot change those inputs.
+                # Exit 2 is deterministic validation/preflight rejection.
                 retryable = returncode != 2 and attempt < max_attempts
                 if retryable:
                     delay = min(30, 2 ** (attempt - 1))
@@ -236,7 +267,11 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                     continue
 
                 jobs[job_id]["status"] = "failed"
-                reason = "non-retryable input/preflight error" if returncode == 2 else "retry limit reached"
+                reason = (
+                    "non-retryable input/preflight error"
+                    if returncode == 2
+                    else "retry limit reached"
+                )
                 jobs[job_id]["logs"].append(
                     f"Process failed with exit code {returncode} ({reason})."
                 )
