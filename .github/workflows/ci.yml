@@ -193,26 +193,27 @@ jobs:
           from pathlib import Path
 
           source = Path('src/clippyme/pipeline/reframe_track.py')
-          text = source.read_text(encoding='utf-8')
-          old = '''    def get_target(self, face_candidates, frame_number, width):
-              if not face_candidates:
-                  return None
-          '''
-          new = '''    def get_target(self, face_candidates, frame_number, width):
-              # Prune expired identities before matching. Otherwise long streams with
-              # intermittent detections accumulate an ever-growing candidate list.
-              self.known_faces = [
-                  known
-                  for known in self.known_faces
-                  if frame_number - known["last_frame"] <= 30
+          lines = source.read_text(encoding='utf-8').splitlines()
+          needle = '    def get_target(self, face_candidates, frame_number, width):'
+          try:
+              index = lines.index(needle)
+          except ValueError as exc:
+              raise SystemExit('tracker get_target definition not found') from exc
+          nearby = '\n'.join(lines[index:index + 14])
+          if 'Prune expired identities before matching' not in nearby:
+              if index + 1 >= len(lines) or lines[index + 1].strip() != 'if not face_candidates:':
+                  raise SystemExit('tracker get_target preamble changed unexpectedly')
+              insertion = [
+                  '        # Prune expired identities before matching. Otherwise long',
+                  '        # streams accumulate an ever-growing candidate list.',
+                  '        self.known_faces = [',
+                  '            known',
+                  '            for known in self.known_faces',
+                  '            if frame_number - known["last_frame"] <= 30',
+                  '        ]',
               ]
-              if not face_candidates:
-                  return None
-          '''
-          if old in text:
-              source.write_text(text.replace(old, new, 1), encoding='utf-8')
-          elif 'Prune expired identities before matching' not in text:
-              raise SystemExit('tracker block did not match the audited source')
+              lines[index + 1:index + 1] = insertion
+              source.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
           tests = Path('tests/pipeline/test_reframe_subject_tracking.py')
           text = tests.read_text(encoding='utf-8')
