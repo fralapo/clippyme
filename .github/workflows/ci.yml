@@ -33,16 +33,18 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
-      - name: Install patched ESLint toolchain
+      - name: Install maintained ESLint 10 plugins
         working-directory: dashboard
-        run: >-
-          npm install --save-dev --save-exact --legacy-peer-deps
-          eslint@10.8.0 @eslint/js@10.8.0 globals@latest
-          eslint-plugin-react@latest
-          eslint-plugin-jsx-a11y@latest
-          eslint-plugin-react-hooks@latest
-          eslint-plugin-react-refresh@latest
-          --no-audit --no-fund
+        shell: bash
+        run: |
+          npm uninstall eslint-plugin-react eslint-plugin-jsx-a11y --legacy-peer-deps --no-audit --no-fund
+          npm install --save-dev --save-exact --legacy-peer-deps \
+            eslint@10.8.0 @eslint/js@10.8.0 globals@latest \
+            @eslint-react/eslint-plugin@5.18.0 \
+            @htmlacademy/eslint-plugin-jsx-a11y@6.11.0 \
+            eslint-plugin-react-hooks@latest \
+            eslint-plugin-react-refresh@latest \
+            --no-audit --no-fund
       - name: Verify full dependency audit
         id: security-audit
         continue-on-error: true
@@ -79,7 +81,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add dashboard/package.json dashboard/package-lock.json
-          git commit -m "chore: update frontend lint security toolchain"
+          git commit -m "chore: migrate frontend lint security toolchain"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
 
   backend:
