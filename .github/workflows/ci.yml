@@ -33,40 +33,42 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
-      - name: Pin patched transitive expansion library
+      - name: Install patched ESLint toolchain
         working-directory: dashboard
-        shell: bash
-        run: |
-          version="$(npm view brace-expansion version)"
-          node -e "const [major,minor,patch]=process.argv[1].split('.').map(Number); if (major < 5 || (major === 5 && minor === 0 && patch < 8)) process.exit(1)" "$version"
-          npm pkg set "overrides.brace-expansion=$version"
-          npm install --package-lock-only --no-audit --no-fund
-          npm ci --no-audit --no-fund
+        run: >-
+          npm install --save-dev --save-exact --legacy-peer-deps
+          eslint@10.8.0 @eslint/js@10.8.0 globals@latest
+          eslint-plugin-react@latest
+          eslint-plugin-jsx-a11y@latest
+          eslint-plugin-react-hooks@latest
+          eslint-plugin-react-refresh@latest
+          --no-audit --no-fund
       - name: Verify full dependency audit
-        working-directory: dashboard
-        run: npm audit --package-lock-only --audit-level=high
-      - name: Verify lint compatibility
-        id: security-lint
+        id: security-audit
         continue-on-error: true
         shell: bash
         working-directory: dashboard
         run: |
-          set -o pipefail
-          npm run lint 2>&1 | tee ../frontend-security-lint.log
-      - name: Upload lint compatibility diagnostics
+          set +e
+          npm audit --package-lock-only --audit-level=high --json > ../frontend-security-audit.json
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Upload security audit diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-security-lint
-          path: frontend-security-lint.log
+          name: frontend-security-audit
+          path: frontend-security-audit.json
           if-no-files-found: error
           retention-days: 2
-      - name: Enforce lint compatibility
-        if: steps.security-lint.outcome != 'success'
+      - name: Enforce full dependency audit
+        if: steps.security-audit.outputs.exit_code != '0'
         run: exit 1
-      - name: Verify tests and build
+      - name: Verify frontend
         working-directory: dashboard
         run: |
+          npm run lint
           npm test -- --coverage
           npm run build
       - name: Commit verified dependency update
@@ -77,7 +79,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add dashboard/package.json dashboard/package-lock.json
-          git commit -m "chore: pin patched frontend transitive dependency"
+          git commit -m "chore: update frontend lint security toolchain"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
 
   backend:
