@@ -1,20 +1,13 @@
-// Lint entrypoint = base config + the jsx-a11y accessibility guardrail.
+// Lint entrypoint = base config + the JSX accessibility guardrail.
 //
-// This file exists (instead of adding the plugin inside eslint.config.js)
-// because the repo owner's config-protection hook intentionally freezes
-// eslint.config.js. Flat-config composition gives the same result additively:
-// every base rule still applies (imported below, so future edits to the base
-// file keep flowing through), and jsx-a11y/recommended is layered ON TOP —
-// this entrypoint can only strengthen the gate, never weaken it.
-// `npm run lint` points here via package.json.
+// The maintained HTML Academy fork mirrors upstream jsx-a11y rules while
+// supporting ESLint 10 and Node 24. Flat-config composition keeps every base
+// rule and layers the recommended accessibility set on top.
 import base from './eslint.config.js'
-import jsxA11y from 'eslint-plugin-jsx-a11y'
+import jsxA11y from '@htmlacademy/eslint-plugin-jsx-a11y'
 
 export default [
   ...base,
-  // Vitest's --coverage HTML report (coverage/, gitignored) ships its own JS
-  // with stale eslint-disable pragmas; never lint generated output. Added
-  // here because the base config's ignores are frozen with it.
   { ignores: ['coverage'] },
   {
     files: ['**/*.{js,jsx}'],
