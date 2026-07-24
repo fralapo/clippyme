@@ -583,11 +583,8 @@ def _cleanup_completed(
             print(f"⚠️ Could not clean downloaded source: {exc}", flush=True)
     if not all_clips_ready or _enabled("CLIPPYME_KEEP_CHECKPOINTS", "0"):
         return
-    for path in Path(output_dir).glob("source_*.mp4"):
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    # Preserve source_<clip>.mp4: POST /api/reframe needs these slices
+    # to change framing without downloading/transcribing again.
     try:
         shutil.rmtree(state.checkpoint_dir)
     except FileNotFoundError:
