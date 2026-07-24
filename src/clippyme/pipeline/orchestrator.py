@@ -358,6 +358,15 @@ def _load_or_analyze(
     clips_data["transcript"] = transcript
     clips_data["aspect"] = args.aspect
     shorts = clips_data.get("shorts") or []
+    max_clips = _max_clips_from_env()
+    if max_clips and len(shorts) > max_clips:
+        print(
+            f"✂️ CLIPPYME_MAX_CLIPS={max_clips}: keeping the highest-ranked "
+            f"{max_clips} of {len(shorts)} candidates",
+            flush=True,
+        )
+        shorts = shorts[:max_clips]
+        clips_data["shorts"] = shorts
 
     if shorts and not args.skip_analysis:
         from clippyme.pipeline.cut_ops import flatten_words, snap_clips_to_transcript
