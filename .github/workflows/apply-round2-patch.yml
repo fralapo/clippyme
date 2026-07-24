@@ -1,15 +1,15 @@
 name: Apply round 2 audit patch
 
 on:
-  push:
-    branches: ["audit/round2-2026-07-23"]
+  pull_request:
+    branches: ["main"]
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    if: github.event.head_commit.message == 'chore(audit): activate round2 patch'
+    if: github.head_ref == 'audit/round2-2026-07-23'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
