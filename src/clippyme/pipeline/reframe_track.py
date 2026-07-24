@@ -374,6 +374,13 @@ class SpeakerTracker:
         return min(variance * 200.0, 3.0)
 
     def get_target(self, face_candidates, frame_number, width):
+        # Prune expired identities before matching. Otherwise long
+        # streams accumulate an ever-growing candidate list.
+        self.known_faces = [
+            known
+            for known in self.known_faces
+            if frame_number - known["last_frame"] <= 30
+        ]
         if not face_candidates:
             return None
         maximum_area = max(

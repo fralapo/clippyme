@@ -42,3 +42,14 @@ def test_wide_group_target_forces_camera_to_zoom_out():
     camera.current_zoom = 1.5
     camera.update_target([200, 100, 1400, 200])
     assert camera.target_zoom == 1.0
+
+
+def test_stale_face_identities_are_pruned_on_long_streams(monkeypatch):
+    monkeypatch.setenv("REFRAME_DIALOGUE_GROUP", "0")
+    tracker = SpeakerTracker(cooldown_frames=1)
+    tracker.known_faces = [
+        {"id": index, "box": [index, 0, 10, 10], "last_frame": 0}
+        for index in range(500)
+    ]
+    tracker.get_target([], 31, 1920)
+    assert tracker.known_faces == []
