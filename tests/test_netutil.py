@@ -45,3 +45,34 @@ def test_hung_resolver_raises_timeout_quickly(monkeypatch):
         netutil.resolve_host_addresses("slow.example", timeout=0.1)
     # The caller is freed at the bound, not when the resolver finishes.
     assert time.monotonic() - started < 2.0
+
+
+def test_resolver_capacity_is_bounded(monkeypatch):
+    import threading
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def hang(host, port):
+        entered.set()
+        release.wait(2)
+        return []
+
+    monkeypatch.setattr(netutil, "_dns_slots", threading.BoundedSemaphore(1))
+    monkeypatch.setattr(netutil.socket, "getaddrinfo", hang)
+    errors = []
+
+    def first_lookup():
+        try:
+            netutil.resolve_host_addresses("first.example", timeout=0.05)
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=first_lookup)
+    thread.start()
+    assert entered.wait(1)
+    with pytest.raises(TimeoutError, match="capacity"):
+        netutil.resolve_host_addresses("second.example", timeout=0.05)
+    thread.join(1)
+    assert any(isinstance(exc, TimeoutError) for exc in errors)
+    release.set()

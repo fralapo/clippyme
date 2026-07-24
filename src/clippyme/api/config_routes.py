@@ -11,7 +11,11 @@ does its own magic-byte / size / name-allow-list validation on uploads. The
 bodies are unchanged from their previous inline form in ``app.py``.
 """
 import asyncio
+import contextlib
+import io
 import os
+import struct
+import tempfile
 from typing import Optional
 
 from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
@@ -38,6 +42,51 @@ from clippyme.domain.subtitles import (
 router = APIRouter()
 
 
+def _atomic_write_bytes(path: str, content: bytes, mode: int) -> None:
+    """Write a config upload atomically so crashes cannot leave partial secrets/assets."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".upload-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+        with contextlib.suppress(OSError):
+            os.chmod(tmp_path, mode)
+        os.replace(tmp_path, path)
+        tmp_path = None
+        with contextlib.suppress(OSError):
+            os.chmod(path, mode)
+        try:
+            directory_fd = os.open(directory, os.O_RDONLY)
+        except OSError:
+            directory_fd = None
+        if directory_fd is not None:
+            try:
+                os.fsync(directory_fd)
+            except OSError:
+                pass
+            finally:
+                os.close(directory_fd)
+    finally:
+        if tmp_path:
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
+
+
+def _delete_uploaded_font(name: str) -> bool:
+    removed = False
+    for ext in _FONT_EXTS:
+        path = os.path.join(_USER_FONTS_DIR, f"{name}{ext}")
+        try:
+            os.remove(path)
+            removed = True
+        except FileNotFoundError:
+            pass
+    return removed
+
+
 @router.get("/api/config/models")
 async def list_gemini_models(
     request: Request,
@@ -52,7 +101,7 @@ async def list_gemini_models(
 async def get_config(request: Request):
     """Return current active configuration (keys are partially masked for safety)."""
     require_trusted_config_request(request)
-    config = load_persistent_config()
+    config = await asyncio.to_thread(load_persistent_config)
     # Secret keys are never returned verbatim — even short values are masked so
     # a brief key can't leak. Non-secret flags (model/provider) pass through.
     secret_keys = {"GEMINI_API_KEY", "HF_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY",
@@ -70,7 +119,7 @@ async def get_config(request: Request):
 async def update_config(req: ConfigUpdateRequest, request: Request):
     """Update and persist API keys."""
     require_trusted_config_request(request)
-    if save_persistent_config(req.keys):
+    if await asyncio.to_thread(save_persistent_config, req.keys):
         return {"success": True, "message": "Configuration updated and persisted."}
     else:
         raise HTTPException(status_code=500, detail="Failed to save configuration.")
@@ -106,9 +155,7 @@ async def upload_cookies(request: Request, cookies_file: UploadFile = File(...))
     if "Netscape HTTP Cookie File" not in text_head and "\t" not in text_head:
         raise HTTPException(status_code=400, detail="File does not look like a Netscape cookies.txt")
 
-    fd = os.open(cookies_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(content)
+    await asyncio.to_thread(_atomic_write_bytes, cookies_path, content, 0o600)
     return {"status": "ok", "message": "Cookies saved"}
 
 
@@ -117,7 +164,7 @@ async def cookies_status(request: Request):
     """Check if a cookies file is configured."""
     require_trusted_config_request(request)
     cookies_path = os.path.join("data", "cookies.txt")
-    return {"configured": os.path.exists(cookies_path)}
+    return {"configured": await asyncio.to_thread(os.path.exists, cookies_path)}
 
 
 @router.delete("/api/config/cookies")
@@ -125,8 +172,10 @@ async def delete_cookies(request: Request):
     """Remove the persisted cookies file."""
     require_trusted_config_request(request)
     cookies_path = os.path.join("data", "cookies.txt")
-    if os.path.exists(cookies_path):
-        os.remove(cookies_path)
+    try:
+        await asyncio.to_thread(os.remove, cookies_path)
+    except FileNotFoundError:
+        pass
     return {"status": "ok", "message": "Cookies removed"}
 
 
@@ -136,11 +185,42 @@ FONT_MAX_BYTES = 20 * 1024 * 1024  # 20 MB hard cap per face
 _FONT_MAGIC = (b"\x00\x01\x00\x00", b"OTTO", b"true", b"ttcf")
 
 
+def _valid_sfnt(content: bytes) -> bool:
+    """Cheap structural validation for a TTF/OTF/TTC upload."""
+    try:
+        offset = 0
+        if content.startswith(b"ttcf"):
+            if len(content) < 16:
+                return False
+            count = struct.unpack(">I", content[8:12])[0]
+            if count < 1 or count > 256 or len(content) < 12 + 4 * count:
+                return False
+            offset = struct.unpack(">I", content[12:16])[0]
+        if len(content) < offset + 12:
+            return False
+        if content[offset:offset + 4] not in _FONT_MAGIC[:3]:
+            return False
+        table_count = struct.unpack(">H", content[offset + 4:offset + 6])[0]
+        if table_count < 1 or table_count > 4096:
+            return False
+        directory_end = offset + 12 + table_count * 16
+        if directory_end > len(content):
+            return False
+        for index in range(table_count):
+            record = offset + 12 + index * 16
+            table_offset, table_length = struct.unpack(">II", content[record + 8:record + 16])
+            if table_offset > len(content) or table_length > len(content) - table_offset:
+                return False
+        return True
+    except (struct.error, ValueError):
+        return False
+
+
 @router.get("/api/config/fonts")
 async def list_fonts(request: Request):
     """List every font face available for burn-in (bundled + user-uploaded)."""
     require_trusted_config_request(request)
-    return {"fonts": _list_fonts()}
+    return {"fonts": await asyncio.to_thread(_list_fonts)}
 
 
 @router.post("/api/config/fonts")
@@ -165,15 +245,12 @@ async def upload_font(request: Request, font_file: UploadFile = File(...)):
             raise HTTPException(status_code=413, detail="Font file too large (max 20 MB)")
         chunks.append(chunk)
     content = b"".join(chunks)
-    if not content.startswith(_FONT_MAGIC):
+    if not _valid_sfnt(content):
         raise HTTPException(status_code=400, detail="File is not a valid TrueType/OpenType font")
 
-    os.makedirs(_USER_FONTS_DIR, exist_ok=True)
     dest = os.path.join(_USER_FONTS_DIR, f"{stem}{ext.lower()}")
-    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-    with os.fdopen(fd, "wb") as f:
-        f.write(content)
-    return {"status": "ok", "name": stem, "fonts": _list_fonts()}
+    await asyncio.to_thread(_atomic_write_bytes, dest, content, 0o644)
+    return {"status": "ok", "name": stem, "fonts": await asyncio.to_thread(_list_fonts)}
 
 
 @router.delete("/api/config/fonts/{name}")
@@ -182,15 +259,10 @@ async def delete_font(name: str, request: Request):
     require_trusted_config_request(request)
     if not _FONT_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid font name")
-    removed = False
-    for ext in _FONT_EXTS:
-        p = os.path.join(_USER_FONTS_DIR, f"{name}{ext}")
-        if os.path.exists(p):
-            os.remove(p)
-            removed = True
+    removed = await asyncio.to_thread(_delete_uploaded_font, name)
     if not removed:
         raise HTTPException(status_code=404, detail="Font not found")
-    return {"status": "ok", "fonts": _list_fonts()}
+    return {"status": "ok", "fonts": await asyncio.to_thread(_list_fonts)}
 
 
 # --- Brand logo / watermark overlay ----------------------------------------
@@ -198,13 +270,35 @@ LOGO_MAX_BYTES = 10 * 1024 * 1024  # 10 MB hard cap
 _LOGO_PATH = os.path.join("data", "logo.png")
 # PNG signature only — the overlay pipeline assumes RGBA PNG for clean alpha.
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_LOGO_MAX_DIMENSION = 8192
+_LOGO_MAX_PIXELS = 32_000_000
+
+
+def _validate_logo_png(content: bytes) -> None:
+    """Decode/verify a bounded PNG before it reaches ffmpeg's image parser."""
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            width, height = image.size
+            if image.format != "PNG":
+                raise ValueError("not PNG")
+            if (
+                width < 1 or height < 1
+                or width > _LOGO_MAX_DIMENSION or height > _LOGO_MAX_DIMENSION
+                or width * height > _LOGO_MAX_PIXELS
+            ):
+                raise ValueError("dimensions out of range")
+            image.verify()
+    except (OSError, UnidentifiedImageError, ValueError, Image.DecompressionBombError) as exc:
+        raise HTTPException(status_code=400, detail="Logo must be a valid, reasonably-sized PNG") from exc
 
 
 @router.get("/api/config/logo/status")
 async def logo_status(request: Request):
     """Check whether a brand logo has been uploaded."""
     require_trusted_config_request(request)
-    return {"configured": os.path.exists(_LOGO_PATH)}
+    return {"configured": await asyncio.to_thread(os.path.exists, _LOGO_PATH)}
 
 
 @router.post("/api/config/logo")
@@ -221,10 +315,8 @@ async def upload_logo(request: Request, logo_file: UploadFile = File(...)):
     content = b"".join(chunks)
     if not content.startswith(_PNG_MAGIC):
         raise HTTPException(status_code=400, detail="Logo must be a PNG (transparent recommended)")
-    os.makedirs("data", exist_ok=True)
-    fd = os.open(_LOGO_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-    with os.fdopen(fd, "wb") as f:
-        f.write(content)
+    await asyncio.to_thread(_validate_logo_png, content)
+    await asyncio.to_thread(_atomic_write_bytes, _LOGO_PATH, content, 0o644)
     return {"status": "ok", "message": "Logo saved"}
 
 
@@ -232,8 +324,10 @@ async def upload_logo(request: Request, logo_file: UploadFile = File(...)):
 async def delete_logo(request: Request):
     """Remove the persisted brand logo."""
     require_trusted_config_request(request)
-    if os.path.exists(_LOGO_PATH):
-        os.remove(_LOGO_PATH)
+    try:
+        await asyncio.to_thread(os.remove, _LOGO_PATH)
+    except FileNotFoundError:
+        pass
     return {"status": "ok", "message": "Logo removed"}
 
 
@@ -241,35 +335,36 @@ async def delete_logo(request: Request):
 async def get_zernio_config(request: Request):
     """Return persisted Zernio settings (api_key masked)."""
     require_trusted_config_request(request)
-    return zernio_config_status()
+    return await asyncio.to_thread(zernio_config_status)
 
 
 @router.post("/api/config/zernio")
 async def update_zernio_config(req: ZernioConfigRequest, request: Request):
     """Update Zernio API key + accounts + timezone (merge semantics)."""
     require_trusted_config_request(request)
-    ok = save_zernio_config(
+    ok = await asyncio.to_thread(
+        save_zernio_config,
         api_key=req.api_key,
         accounts=req.accounts,
         timezone=req.timezone,
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to save Zernio config")
-    return zernio_config_status()
+    return await asyncio.to_thread(zernio_config_status)
 
 
 @router.get("/api/zernio/accounts")
 async def list_zernio_accounts(request: Request):
     """Discovery: list connected social accounts via Zernio API."""
     require_trusted_config_request(request)
-    cfg = load_zernio_config()
+    cfg = await asyncio.to_thread(load_zernio_config)
     api_key = cfg.get("api_key")
     if not api_key:
         raise HTTPException(status_code=400, detail="Zernio API key not configured")
     from clippyme.integrations.social_publisher import ZernioClient, ZernioError
     try:
         client = ZernioClient(api_key)
-        accounts = client.list_accounts()
+        accounts = await asyncio.to_thread(client.list_accounts)
     except ZernioError as e:
         raise HTTPException(status_code=502, detail=f"Zernio API error: {e}")
     return {"accounts": accounts}

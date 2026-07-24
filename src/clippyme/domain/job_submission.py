@@ -6,6 +6,7 @@ build ``cmd``/``env`` and call :func:`submit_job`.
 """
 import asyncio
 import logging
+import os
 import shutil
 
 from clippyme.domain.errors import ClippyMeError
@@ -21,7 +22,8 @@ class QueueFullError(ClippyMeError):
 
 async def submit_job(*, jobs: dict, job_queue: asyncio.Queue, job_id: str,
                      cmd: list, env: dict, job_output_dir: str,
-                     batch: bool = False, on_change=None) -> None:
+                     batch: bool = False, on_change=None, cleanup_paths=(),
+                     input_path: str | None = None) -> None:
     """Register a queued job entry and enqueue it.
 
     On ``asyncio.QueueFull`` the entry is rolled back (removed from ``jobs``,
@@ -35,12 +37,21 @@ async def submit_job(*, jobs: dict, job_queue: asyncio.Queue, job_id: str,
         'cmd': cmd,
         'env': env,
         'output_dir': job_output_dir,
+        'input_path': input_path,
     }
     try:
         job_queue.put_nowait(job_id)
     except asyncio.QueueFull:
         jobs.pop(job_id, None)
         await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
+        for path in cleanup_paths or ():
+            if path:
+                try:
+                    await asyncio.to_thread(os.remove, path)
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    logger.warning("failed to remove rejected submission input %s", path, exc_info=True)
         raise QueueFullError("Server busy. Please try again later.")
     if on_change is not None:
         try:

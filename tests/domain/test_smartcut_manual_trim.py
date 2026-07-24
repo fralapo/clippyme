@@ -117,3 +117,11 @@ def test_clip_transcript_segments_segment_level_fallback():
     t = {"segments": [{"text": "no word timing", "start": 3.0, "end": 6.0}]}
     segs = sc.clip_transcript_segments(t, 2.0, 10.0)
     assert segs == [{"index": 0, "text": "no word timing", "start": 1.0, "end": 4.0}]
+
+
+def test_normalize_discards_non_finite_ranges():
+    assert sc.normalize_drop_ranges([
+        [0, float("nan")],
+        [0, float("inf")],
+        [float("-inf"), 1],
+    ]) == []

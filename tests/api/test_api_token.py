@@ -86,3 +86,17 @@ def test_middleware_noop_when_unset(monkeypatch):
     monkeypatch.delenv("CLIPPYME_API_TOKEN", raising=False)
     r = _client().get("/api/history")
     assert r.status_code == 200
+
+
+def test_cors_preflight_allows_authorization_header(monkeypatch):
+    monkeypatch.delenv("CLIPPYME_API_TOKEN", raising=False)
+    response = _client().options(
+        "/api/history",
+        headers={
+            "Origin": "http://localhost:5175",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "Authorization",
+        },
+    )
+    assert response.status_code == 200
+    assert "authorization" in response.headers.get("access-control-allow-headers", "").lower()

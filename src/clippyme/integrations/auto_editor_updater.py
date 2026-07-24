@@ -28,12 +28,14 @@ import json
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import tempfile
 import time
 import urllib.request
 from typing import Iterator, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -63,20 +65,18 @@ VERSION_CACHE = os.path.join(UPDATE_DIR, ".version")
 
 CHECK_INTERVAL_SECONDS = 24 * 3600  # daily
 HTTP_TIMEOUT = 15
+MAX_RELEASE_JSON_BYTES = 2 * 1024 * 1024
 
 
 def auto_update_enabled() -> bool:
     """Whether the runtime auto-updater is allowed to fetch + exec a new binary.
 
-    OFF by default. The Dockerfile already installs a *pinned, sha256-verified*
-    auto-editor binary at build time. The runtime updater, by contrast, pulls
-    from the floating ``releases/latest/download`` URL with no checksum or
-    signature — only TLS, a magic-byte check, and a ``--version`` sanity run.
-    A compromised upstream release (or a registry/CDN/DNS hijack that survives
-    TLS) could therefore land a malicious native binary that is then executed
-    as ``appuser`` with access to every API key in the environment. Because the
-    build-time binary is sufficient, we make the runtime fetch strictly
-    opt-in: set ``AUTO_EDITOR_AUTO_UPDATE=1`` to accept that supply-chain risk.
+    OFF by default. The Dockerfile already installs a pinned, SHA256-verified
+    binary at build time. The optional runtime updater also requires the SHA256
+    digest published in GitHub release metadata, restricts download/redirect
+    hosts, validates executable magic and runs a bounded ``--version`` check.
+    It remains opt-in because executing newly published native code changes the
+    deployment's reviewed supply-chain state without rebuilding the image.
     """
     return os.environ.get("AUTO_EDITOR_AUTO_UPDATE", "0") == "1"
 
@@ -129,22 +129,34 @@ def _fetch_latest_release() -> Optional[dict]:
             GITHUB_LATEST_API,
             headers={"User-Agent": "ClippyMe-AutoEditorUpdater/1.0"},
         )
-        with _API_OPENER.open(req, timeout=HTTP_TIMEOUT) as resp:
-            data = json.load(resp)
+        with _API_OPENER.open(req, timeout=HTTP_TIMEOUT) as resp:  # nosec B310: fixed official API URL, redirects disabled
+            raw = resp.read(MAX_RELEASE_JSON_BYTES + 1)
+        if len(raw) > MAX_RELEASE_JSON_BYTES:
+            raise ValueError("GitHub release response exceeded size cap")
+        data = json.loads(raw.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("GitHub release response was not an object")
     except Exception as e:
         logger.warning("auto-editor updater: GitHub API check failed: %s", e)
         return None
     tag = data.get("tag_name")
-    if not tag:
+    if not isinstance(tag, str) or not re.fullmatch(r"v?[0-9A-Za-z][0-9A-Za-z.+-]{0,63}", tag):
+        return None
+    asset_list = data.get("assets") or []
+    if not isinstance(asset_list, list):
         return None
     assets: dict[str, dict] = {}
-    for a in data.get("assets") or []:
-        name = a.get("name")
-        if not name:
+    for asset in asset_list:
+        if not isinstance(asset, dict):
             continue
+        name = asset.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        url = asset.get("browser_download_url")
+        digest = asset.get("digest")
         assets[name] = {
-            "url": a.get("browser_download_url"),
-            "digest": a.get("digest"),  # "sha256:<hex>" or None on older releases
+            "url": url if isinstance(url, str) else None,
+            "digest": digest if isinstance(digest, str) else None,
         }
     return {"tag": tag.lstrip("v"), "assets": assets}
 
@@ -183,27 +195,54 @@ def _verify_digest(path: str, expected_digest: Optional[str]) -> Optional[bool]:
     if not expected_digest:
         return None
     algo, _, want = expected_digest.partition(":")
-    if algo.lower() != "sha256" or not want:
+    want = want.strip().lower()
+    if algo.lower() != "sha256" or not re.fullmatch(r"[0-9a-f]{64}", want):
         return None
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
-    return h.hexdigest().lower() == want.strip().lower()
+    return h.hexdigest().lower() == want
+
+
+_ALLOWED_DOWNLOAD_HOSTS = frozenset({
+    "github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+})
+
+
+def _allowed_download_url(url: str) -> bool:
+    try:
+        parsed = urlparse((url or "").strip())
+    except ValueError:
+        return False
+    return parsed.scheme == "https" and (parsed.hostname or "").lower() in _ALLOWED_DOWNLOAD_HOSTS
+
+
+class _SafeAssetRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _allowed_download_url(newurl):
+            raise RuntimeError("auto-editor asset redirected to an untrusted host")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_ASSET_OPENER = urllib.request.build_opener(_SafeAssetRedirectHandler)
 
 
 def _download_binary(url: str, target_path: str, expected_digest: Optional[str] = None) -> bool:
     """Atomically download the binary from ``url`` to ``target_path``.
 
     Verifies the SHA256 against ``expected_digest`` (from the release metadata)
-    before the binary is ever made executable. A mismatch aborts the update —
-    this is the integrity gate that makes following the CDN redirect safe. When
-    the release published no digest (older tags) we proceed with only the
-    magic-byte + ``--version`` sanity checks and log that the binary is
-    unverified. Returns True on success.
+    before the binary is ever made executable. Missing, malformed, or mismatched
+    digests abort the update; the updater never executes an unverified asset.
+    Returns True on success.
     """
-    if not url or not url.lower().startswith("https://"):
-        logger.warning("auto-editor updater: refusing non-https download URL: %r", url)
+    if not _allowed_download_url(url):
+        logger.warning("auto-editor updater: refusing untrusted download URL: %r", url)
+        return False
+    if not expected_digest:
+        logger.error("auto-editor updater: release asset has no SHA256 digest; refusing update")
         return False
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
@@ -214,7 +253,7 @@ def _download_binary(url: str, target_path: str, expected_digest: Optional[str] 
             url, headers={"User-Agent": "ClippyMe-AutoEditorUpdater/1.0"}
         )
         total = 0
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT * 4) as resp:
+        with _ASSET_OPENER.open(req, timeout=HTTP_TIMEOUT * 4) as resp:  # nosec B310: HTTPS host and redirects are allowlisted
             with open(tmp_path, "wb") as f:
                 while True:
                     chunk = resp.read(1024 * 1024)
@@ -224,20 +263,16 @@ def _download_binary(url: str, target_path: str, expected_digest: Optional[str] 
                     if total > MAX_BINARY_BYTES:
                         raise RuntimeError("download exceeded size cap")
                     f.write(chunk)
+                f.flush()
+                os.fsync(f.fileno())
         # Integrity gate: a published digest MUST match before we trust the file.
         verdict = _verify_digest(tmp_path, expected_digest)
-        if verdict is False:
+        if verdict is not True:
             logger.error(
-                "auto-editor updater: SHA256 mismatch for downloaded binary — "
-                "rejecting (possible CDN/mirror tampering)"
+                "auto-editor updater: missing/invalid SHA256 or digest mismatch — rejecting asset"
             )
             os.remove(tmp_path)
             return False
-        if verdict is None:
-            logger.warning(
-                "auto-editor updater: no SHA256 digest in release metadata — "
-                "installing unverified binary (magic + --version checks only)"
-            )
         # Reject anything that isn't a native executable before we chmod +x it.
         with open(tmp_path, "rb") as f:
             head = f.read(4)
@@ -245,7 +280,7 @@ def _download_binary(url: str, target_path: str, expected_digest: Optional[str] 
             logger.warning("auto-editor updater: downloaded file is not an executable (magic=%r)", head)
             os.remove(tmp_path)
             return False
-        os.chmod(tmp_path, 0o755)
+        os.chmod(tmp_path, 0o700)
         # Sanity check: must be executable and report a version
         try:
             check = subprocess.check_output(
@@ -283,7 +318,7 @@ def _update_lock() -> Iterator[bool]:
     lock_path = os.path.join(UPDATE_DIR, ".update.lock")
     fd = None
     try:
-        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o644)
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as e:
@@ -294,8 +329,8 @@ def _update_lock() -> Iterator[bool]:
             raise
         yield True
     except OSError as e:
-        logger.debug("auto-editor updater: lock acquisition fell through (%s)", e)
-        yield True
+        logger.warning("auto-editor updater: lock acquisition failed; skipping update (%s)", e)
+        yield False
     finally:
         if fd is not None:
             try:
@@ -331,14 +366,19 @@ def check_and_update_once() -> dict:
                 "message": "Could not reach GitHub releases API"}
     latest = release["tag"]
     asset_meta = (release.get("assets") or {}).get(asset) or {}
-    # Pinned, tag-specific download URL from the API (preferred); fall back to
-    # the floating latest/download base only if the asset isn't in the metadata.
-    download_url = asset_meta.get("url") or f"{GITHUB_DOWNLOAD_BASE}/{asset}"
+    download_url = asset_meta.get("url")
     expected_digest = asset_meta.get("digest")
 
     if current and _versions_equal(current, latest):
         return {"action": "up_to_date", "current": current, "latest": latest,
                 "message": f"auto-editor {current} is current"}
+    if not download_url or not expected_digest:
+        return {
+            "action": "download_failed",
+            "current": current,
+            "latest": latest,
+            "message": "Release asset is missing a trusted URL or SHA256 digest",
+        }
 
     with _update_lock() as acquired:
         if not acquired:

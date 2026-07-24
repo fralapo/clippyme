@@ -87,3 +87,38 @@ def test_smartcut_no_body_still_works(client, monkeypatch):
     r = client.post(f"/api/smartcut/{JOB_ID}/0")
     assert r.status_code == 200, r.text
     assert captured["called"] and captured["drop_ranges"] is None
+
+
+def test_smartcut_rejects_malformed_json(client, monkeypatch):
+    async def should_not_run(**kwargs):
+        raise AssertionError("malformed JSON must not start smartcut")
+
+    monkeypatch.setattr(app_module, "run_smart_cut", should_not_run)
+    response = client.post(
+        f"/api/smartcut/{JOB_ID}/0",
+        content=b'{"drop_ranges": [',
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+
+
+def test_smartcut_rejects_non_object_json(client, monkeypatch):
+    async def should_not_run(**kwargs):
+        raise AssertionError("non-object JSON must not start smartcut")
+
+    monkeypatch.setattr(app_module, "run_smart_cut", should_not_run)
+    response = client.post(f"/api/smartcut/{JOB_ID}/0", json=[[1, 2]])
+    assert response.status_code == 422
+
+
+def test_smartcut_rejects_non_finite_drop_range(client, monkeypatch):
+    async def should_not_run(**kwargs):
+        raise AssertionError("non-finite ranges must not start smartcut")
+
+    monkeypatch.setattr(app_module, "run_smart_cut", should_not_run)
+    response = client.post(
+        f"/api/smartcut/{JOB_ID}/0",
+        content='{"drop_ranges":[[0,NaN]]}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 422

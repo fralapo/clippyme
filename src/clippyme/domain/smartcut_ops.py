@@ -14,6 +14,7 @@ which re-exports every name below for backwards compatibility.
 
 import hashlib
 import json
+import math
 import logging
 import os
 import re
@@ -140,7 +141,7 @@ def _segments_hash(segments: list[tuple[float, float]], lang: str) -> str:
         {"lang": lang or "", "segs": [(round(s, 3), round(e, 3)) for s, e in segments]},
         separators=(",", ":"),
     )
-    return hashlib.sha1(payload.encode()).hexdigest()[:10]
+    return hashlib.sha1(payload.encode(), usedforsecurity=False).hexdigest()[:10]
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +199,7 @@ def normalize_drop_ranges(raw, *, max_ranges: int = 500):
                 s, e = float(item[0]), float(item[1])
         except (TypeError, ValueError, KeyError, IndexError):
             continue
-        if e > s >= 0:
+        if math.isfinite(s) and math.isfinite(e) and e > s >= 0:
             out.append((s, e))
         if len(out) >= max_ranges:
             break

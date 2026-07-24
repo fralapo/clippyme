@@ -203,3 +203,114 @@ def test_manual_mode_accepts_valid_iso_scheduled_for(monkeypatch, tmp_path):
             schedule_mode="manual",
             scheduled_for="2026-06-01T12:30:00",
         )
+
+
+def test_presigned_upload_rejects_redirect_response(monkeypatch, tmp_path):
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"video")
+    monkeypatch.setattr(sp, "_reject_internal_upload_url", lambda url: None)
+
+    class Response:
+        status_code = 307
+        text = "redirect"
+
+    monkeypatch.setattr(sp.requests, "put", lambda *args, **kwargs: Response())
+    client = sp.ZernioClient("sk_test")
+    with pytest.raises(sp.ZernioError) as exc:
+        client.upload_to_presigned("https://upload.example.test/object", str(clip))
+    assert exc.value.status_code == 307
+
+
+def test_zernio_api_rejects_redirect_instead_of_treating_it_as_json_success():
+    class Response:
+        status_code = 302
+        text = "moved"
+
+        def json(self):
+            return {"unexpected": True}
+
+    class Session:
+        def request(self, *args, **kwargs):
+            assert kwargs["allow_redirects"] is False
+            return Response()
+
+    client = sp.ZernioClient("sk_test")
+    client._session = Session()
+    with pytest.raises(sp.ZernioError) as exc:
+        client._request("GET", "/accounts")
+    assert exc.value.status_code == 302
+
+
+def test_scheduler_preserves_requested_timezone():
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Europe/Rome")
+    day = date(2026, 7, 1)
+    now = datetime(2026, 7, 1, 8, 0, tzinfo=tz)
+    occupied = [datetime(2026, 7, 1, 10, 0, tzinfo=tz)]
+    slot = _scheduler(4).find_slot(day, occupied=occupied, now=now)
+    assert slot.tzinfo is not None
+    assert slot.utcoffset() == timedelta(hours=2)
+    assert slot > now
+
+
+def test_auto_schedule_uses_configured_timezone_not_server_local(monkeypatch, tmp_path):
+    from datetime import datetime as RealDateTime, timezone as dt_timezone
+
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"video")
+    captured = {}
+
+    class FixedDateTime(RealDateTime):
+        @classmethod
+        def now(cls, tz=None):
+            instant = RealDateTime(2026, 7, 1, 10, 0, tzinfo=dt_timezone.utc)
+            return instant.astimezone(tz) if tz is not None else instant.replace(tzinfo=None)
+
+    class Client:
+        def __init__(self, api_key):
+            pass
+
+        def list_scheduled_posts(self, date_from, date_to, limit=100):
+            return [{"scheduledFor": "2026-07-01T10:30:00Z"}]
+
+        def presign_upload(self, filename, content_type="video/mp4", size_bytes=None):
+            return {"uploadUrl": "https://upload.example/object", "publicUrl": "https://cdn.example/object"}
+
+        def upload_to_presigned(self, *args, **kwargs):
+            pass
+
+        def create_post(self, **kwargs):
+            captured.update(kwargs)
+            return {"post": {"id": "p1", "status": "scheduled"}}
+
+    monkeypatch.setattr(sp, "datetime", FixedDateTime)
+    monkeypatch.setattr(sp, "ZernioClient", Client)
+    result = sp.publish_clip(
+        api_key="sk_test",
+        clip_path=str(clip),
+        title="title",
+        caption="caption",
+        platform_targets=[{"platform": "youtube", "accountId": "a"}],
+        schedule_mode="auto",
+        timezone="Europe/Rome",
+        start_date="2026-07-01",
+        scheduler=SmartScheduler(rng=random.Random(2)),
+    )
+    assert result["scheduled_for"].endswith("+02:00")
+    assert captured["timezone"] == "Europe/Rome"
+    assert captured["scheduled_for"] == result["scheduled_for"]
+
+
+def test_presigned_upload_dns_failure_is_fail_closed(monkeypatch):
+    import socket
+
+    from clippyme import netutil
+    monkeypatch.setattr(netutil, "resolve_host_addresses", lambda *a, **k: (_ for _ in ()).throw(socket.gaierror()))
+    with pytest.raises(sp.ZernioError, match="safely resolved"):
+        sp._reject_internal_upload_url("https://upload.example.test/object")
+
+
+def test_zernio_client_rejects_non_official_base_url():
+    with pytest.raises(ValueError, match="official"):
+        sp.ZernioClient("sk_test", base_url="https://attacker.example/api")

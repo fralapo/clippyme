@@ -65,3 +65,51 @@ def test_oversize_upload_still_413_when_file_remove_fails(client, monkeypatch):
     # output dir must still be cleaned up.
     assert resp.status_code == 413
     assert os.listdir(outputs) == []
+
+
+def test_empty_upload_returns_400_and_cleans_up(client):
+    tc, uploads, outputs = client
+    resp = tc.post(
+        "/api/process",
+        headers={"X-Gemini-Key": "k"},
+        files={"file": ("v.mp4", b"", "video/mp4")},
+    )
+    assert resp.status_code == 400
+    assert os.listdir(uploads) == []
+    assert os.listdir(outputs) == []
+
+
+def test_build_command_failure_removes_uploaded_input(client, monkeypatch):
+    tc, uploads, outputs = client
+    monkeypatch.setattr(app_module, "MAX_FILE_SIZE_MB", 10)
+    monkeypatch.setattr(
+        app_module,
+        "build_main_cmd",
+        lambda **kwargs: (_ for _ in ()).throw(ValueError("bad command")),
+    )
+    resp = tc.post(
+        "/api/process",
+        headers={"X-Gemini-Key": "k"},
+        files={"file": ("v.mp4", b"valid bytes", "video/mp4")},
+    )
+    assert resp.status_code == 400
+    assert os.listdir(uploads) == []
+    assert os.listdir(outputs) == []
+
+
+def test_queue_full_removes_uploaded_input(client, monkeypatch):
+    import asyncio
+
+    tc, uploads, outputs = client
+    monkeypatch.setattr(app_module, "MAX_FILE_SIZE_MB", 10)
+    queue = asyncio.Queue(maxsize=1)
+    queue.put_nowait("already-full")
+    monkeypatch.setattr(app_module, "job_queue", queue)
+    resp = tc.post(
+        "/api/process",
+        headers={"X-Gemini-Key": "k"},
+        files={"file": ("v.mp4", b"valid bytes", "video/mp4")},
+    )
+    assert resp.status_code == 429
+    assert os.listdir(uploads) == []
+    assert os.listdir(outputs) == []

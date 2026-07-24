@@ -118,3 +118,46 @@ def test_zernio_status_unconfigured(tmp_config):
     status = config_store.zernio_config_status()
     assert status["configured"] is False
     assert status["api_key_masked"] == ""
+
+
+def test_failed_atomic_write_preserves_previous_config(tmp_config, monkeypatch):
+    tmp_config.parent.mkdir(parents=True, exist_ok=True)
+    tmp_config.write_text('{"GEMINI_API_KEY":"old"}', encoding="utf-8")
+    real_dump = config_store.json.dump
+
+    def fail_dump(data, file, *args, **kwargs):
+        file.write("{")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(config_store.json, "dump", fail_dump)
+    assert config_store._write_raw_config({"GEMINI_API_KEY": "new"}) is False
+    monkeypatch.setattr(config_store.json, "dump", real_dump)
+    assert json.loads(tmp_config.read_text()) == {"GEMINI_API_KEY": "old"}
+    assert not list(tmp_config.parent.glob(".config-*.tmp"))
+
+
+def test_concurrent_core_and_zernio_updates_do_not_lose_namespaces(tmp_config, monkeypatch):
+    import threading
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    barrier = threading.Barrier(3)
+
+    def save_core():
+        barrier.wait()
+        for index in range(20):
+            assert config_store.save_persistent_config({"GEMINI_API_KEY": f"g{index}"})
+
+    def save_zernio():
+        barrier.wait()
+        for index in range(20):
+            assert config_store.save_zernio_config(api_key=f"z{index}")
+
+    threads = [threading.Thread(target=save_core), threading.Thread(target=save_zernio)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join()
+    raw = json.loads(tmp_config.read_text())
+    assert raw["GEMINI_API_KEY"].startswith("g")
+    assert raw["zernio"]["api_key"].startswith("z")
