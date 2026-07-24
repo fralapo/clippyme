@@ -3,6 +3,8 @@ name: Source snapshot
 on:
   push:
     branches: ["audit/round2-2026-07-23"]
+  pull_request:
+    branches: ["main"]
   workflow_dispatch: {}
 
 permissions:
@@ -10,6 +12,7 @@ permissions:
 
 jobs:
   snapshot:
+    if: github.event_name != 'pull_request' || github.head_ref == 'audit/round2-2026-07-23'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
