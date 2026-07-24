@@ -134,7 +134,20 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
             jobs[job_id]["process"] = None
             _notify()
 
-            for attempt in range(1, max_attempts + 1):
+            try:
+                completed_attempts = max(0, int(job_data.get("attempt") or 0))
+            except (TypeError, ValueError):
+                completed_attempts = 0
+            first_attempt = completed_attempts + 1
+            if first_attempt > max_attempts:
+                jobs[job_id]["status"] = "failed"
+                jobs[job_id]["logs"].append(
+                    "Retry budget already exhausted before dispatch."
+                )
+                _notify()
+                return
+
+            for attempt in range(first_attempt, max_attempts + 1):
                 status = jobs[job_id].get("status")
                 if job_control.should_skip_dispatch(status):
                     break
