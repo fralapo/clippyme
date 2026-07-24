@@ -39,23 +39,10 @@ def _patch_runner_dependencies(monkeypatch, module):
     monkeypatch.setattr(module, "collect_runtime_metrics", lambda *args, **kwargs: {})
     monkeypatch.setattr(module, "runtime_result_fields", lambda *args, **kwargs: {})
     monkeypatch.setattr(module, "relocate_root_job_artifacts", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module.threading, "Thread", _ImmediateThread)
-
-
-class _ImmediateThread:
-    def __init__(self, target, args=(), **kwargs):
-        self.target = target
-        self.args = args
-        self._alive = False
-
-    def start(self):
-        self.target(*self.args)
-
-    def is_alive(self):
-        return self._alive
-
-    def join(self, timeout=None):
-        self._alive = False
+    # Keep Python's real Thread implementation. Replacing threading.Thread on
+    # the shared module also replaces the implementation used by
+    # asyncio.to_thread's executor, which deadlocks before the worker starts.
+    monkeypatch.setattr(module, "enqueue_output", lambda *args, **kwargs: None)
 
 
 def test_transient_failure_retries_to_limit(monkeypatch, tmp_path):
