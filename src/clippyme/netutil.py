@@ -1,28 +1,33 @@
 """Bounded DNS resolution shared by the SSRF guards.
 
-``socket.getaddrinfo`` has no timeout parameter, and
-``socket.setdefaulttimeout`` does NOT apply to it — it only affects socket
-objects created afterwards. The old guards in ``download`` and
-``social_publisher`` mutated that process-wide default around their
-getaddrinfo calls, which bounded nothing and transiently changed the
-default socket timeout for every other thread in the FastAPI executor.
-
-Here the lookup runs in a daemon thread joined with a timeout: the calling
-thread is freed even if the resolver hangs, the hung thread can't block
-interpreter shutdown, and no global state is touched.
+``socket.getaddrinfo`` has no timeout parameter. Running it in a daemon thread
+lets callers enforce a deadline without mutating process-wide socket defaults.
+A small semaphore also caps the number of resolver threads that may remain
+blocked inside the system resolver, preventing attacker-controlled hostnames
+from creating an unbounded thread leak.
 """
 import ipaddress
 import socket
 import threading
 
+_DNS_MAX_INFLIGHT = 8
+_dns_slots = threading.BoundedSemaphore(_DNS_MAX_INFLIGHT)
+
 
 def resolve_host_addresses(host: str, timeout: float = 5.0) -> list:
-    """Return the ``ipaddress`` objects ``host`` resolves to, within ``timeout``.
+    """Return ``ipaddress`` objects for ``host`` within ``timeout`` seconds.
 
-    Raises ``TimeoutError`` when the resolver exceeds the bound and re-raises
-    ``socket.gaierror``/``OSError`` from getaddrinfo — callers treat all of
-    those as "could not verify" and keep their existing best-effort policy.
+    Raises ``TimeoutError`` when the lookup exceeds the deadline or when the
+    bounded resolver pool is already saturated. Resolver exceptions are
+    propagated to the caller.
     """
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError("host must be a non-empty string")
+    if timeout <= 0:
+        raise ValueError("timeout must be positive")
+    if not _dns_slots.acquire(blocking=False):
+        raise TimeoutError("DNS resolver capacity exhausted")
+
     result: dict = {}
 
     def _worker() -> None:
@@ -30,8 +35,10 @@ def resolve_host_addresses(host: str, timeout: float = 5.0) -> list:
             result["infos"] = socket.getaddrinfo(host, None)
         except BaseException as exc:  # propagated to the caller below
             result["exc"] = exc
+        finally:
+            _dns_slots.release()
 
-    worker = threading.Thread(target=_worker, daemon=True)
+    worker = threading.Thread(target=_worker, daemon=True, name="clippyme-dns")
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
@@ -43,6 +50,6 @@ def resolve_host_addresses(host: str, timeout: float = 5.0) -> list:
     for info in result.get("infos", []):
         try:
             addresses.append(ipaddress.ip_address(info[4][0]))
-        except ValueError:
+        except (ValueError, IndexError, TypeError):
             continue
     return addresses

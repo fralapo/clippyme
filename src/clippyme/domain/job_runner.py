@@ -1,9 +1,4 @@
-"""The per-job subprocess runner (moved out of app.py — thin-handler rule).
-
-``make_run_job`` follows the same closure-factory pattern as
-``job_worker.make_workers``: shared state (the ``jobs`` dict, output root,
-journal hook) stays owned by app.py and is bound once at startup.
-"""
+"""Per-job subprocess runner bound to the shared in-memory job registry."""
 import asyncio
 import glob
 import logging
@@ -21,152 +16,147 @@ logger = logging.getLogger("clippyme")
 
 
 def merge_persistent_config(env: dict, persisted: dict | None) -> dict:
-    """Overlay Settings values onto a job env, in place.
-
-    Non-empty persisted values OVERRIDE the inherited process env: docker
-    compose exports empty-string defaults (DEEPGRAM_API_KEY=, …) and a pinned
-    TRANSCRIPTION_PROVIDER, which used to shadow the keys saved in Settings
-    and silently drop every job to the Whisper fallback. Empty persisted
-    values never clobber a real env value, so env-only deploys (no
-    config.json) keep working. GEMINI_API_KEY is the one exception: the
-    per-request X-Gemini-Key header (already in ``env``) wins, matching the
-    reframe-endpoint behaviour.
-    """
-    for k, v in (persisted or {}).items():
-        if v in (None, ""):
+    """Overlay non-empty persisted settings onto a job environment."""
+    for key, value in (persisted or {}).items():
+        if value in (None, ""):
             continue
-        if k == "GEMINI_API_KEY" and env.get(k):
+        if key == "GEMINI_API_KEY" and env.get(key):
             continue
-        env[str(k)] = str(v)
+        env[str(key)] = str(value)
     return env
 
 
 def make_run_job(*, jobs: dict, output_root: str, on_change=None):
-    """Build the ``run_job(job_id, job_data)`` coroutine bound to shared state.
+    """Build the ``run_job`` coroutine bound to shared application state."""
 
-    ``on_change`` (optional, sync, never raises out) is invoked after every
-    status transition so the job journal stays current on disk.
-    """
-
-    def _notify():
+    def _notify() -> None:
         if on_change is not None:
             try:
                 on_change()
             except Exception:
                 logger.warning("job-journal on_change hook failed", exc_info=True)
 
-    async def run_job(job_id, job_data):
-        """Executes the subprocess for a specific job."""
-        cmd = job_data['cmd']
-        env = job_data['env']
-        output_dir = job_data['output_dir']
-
-        # Merge the LATEST persisted config into the job env at run time (not
-        # at enqueue time). Fixes a race where the user updates a key
-        # (Deepgram / HF / Gemini model / transcription provider) in Settings
-        # between submit and dispatch: without this, the worker would use the
-        # stale values captured at enqueue. Precedence rules live in
-        # merge_persistent_config.
-        try:
-            merge_persistent_config(env, load_persistent_config())
-        except Exception as exc:
-            logger.warning("Could not merge persistent config into job env for %s: %s", job_id, exc)
-
-        # Pre-dispatch guard: a job cancelled/stopped while still ``queued`` must
-        # never launch its subprocess (closes the race noted in job_control).
-        if job_control.should_skip_dispatch(jobs[job_id].get('status', '')):
-            logger.info("Skipping dispatch for already-terminated job %s (%s)",
-                        job_id, jobs[job_id].get('status'))
+    async def _stop_process_tree(job_id: str, process) -> None:
+        if process is None or process.poll() is not None:
             return
+        try:
+            await asyncio.to_thread(job_control.terminate_tree, process.pid, 5.0)
+            await asyncio.to_thread(lambda: process.wait(timeout=5))
+            if process.poll() is None:
+                raise RuntimeError("process tree still running after termination")
+        except Exception:
+            logger.warning("could not terminate process tree for job %s", job_id, exc_info=True)
+            try:
+                process.kill()
+                await asyncio.to_thread(lambda: process.wait(timeout=5))
+            except Exception:
+                logger.error("could not kill orphaned process for job %s", job_id, exc_info=True)
 
-        jobs[job_id]['status'] = 'processing'
-        jobs[job_id]['logs'].append("Job started by worker.")
-        jobs[job_id]['process'] = None  # Will hold Popen reference for cancel
-        logger.info("Executing job %s: %s", job_id, ' '.join(cmd))
-        _notify()
+    async def run_job(job_id, job_data):
+        """Execute one pipeline subprocess and continuously expose partial results."""
+        cmd = job_data["cmd"]
+        env = job_data["env"]
+        output_dir = job_data["output_dir"]
+        process = None
+        log_thread = None
 
         try:
+            try:
+                persisted = await asyncio.to_thread(load_persistent_config)
+                merge_persistent_config(env, persisted)
+            except Exception as exc:
+                logger.warning(
+                    "Could not merge persistent config into job env for %s: %s",
+                    job_id,
+                    exc,
+                )
+
+            if job_control.should_skip_dispatch(jobs[job_id].get("status", "")):
+                logger.info(
+                    "Skipping dispatch for already-terminated job %s (%s)",
+                    job_id,
+                    jobs[job_id].get("status"),
+                )
+                return
+
+            jobs[job_id]["status"] = "processing"
+            jobs[job_id]["logs"].append("Job started by worker.")
+            jobs[job_id]["process"] = None
+            logger.info("Executing job %s: %s", job_id, " ".join(cmd))
+            _notify()
+
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=env,
-                cwd=os.getcwd()
+                cwd=os.getcwd(),
             )
-            jobs[job_id]['process'] = process
-            # The journal can't persist a Popen handle across restarts — record
-            # the pid so startup recovery can kill an orphaned pipeline tree.
-            jobs[job_id]['pid'] = process.pid
-            # The env (with the Gemini API key) is now captured by the child
-            # process; drop it from the in-memory job dict so the secret doesn't
-            # linger in application state for the lifetime of the job.
-            jobs[job_id].pop('env', None)
+            jobs[job_id]["process"] = process
+            jobs[job_id]["pid"] = process.pid
+            jobs[job_id].pop("env", None)
             _notify()
 
-            # We need to capture logs in a thread because Popen isn't async
-            t_log = threading.Thread(target=enqueue_output, args=(process.stdout, job_id, jobs))
-            t_log.daemon = True
-            t_log.start()
+            log_thread = threading.Thread(
+                target=enqueue_output,
+                args=(process.stdout, job_id, jobs),
+                daemon=True,
+                name=f"clippyme-log-{job_id}",
+            )
+            log_thread.start()
 
-            # Async wait for process with incremental partial-result updates.
-            # The partial-result load touches disk, so run it off the event loop
-            # to avoid stalling other handlers while a batch of jobs polls.
             while process.poll() is None:
                 await asyncio.sleep(2)
                 partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
                 if partial:
-                    jobs[job_id]['result'] = partial
+                    jobs[job_id]["result"] = partial
 
             returncode = process.returncode
-
-            if jobs[job_id]['status'] == 'cancelled':
-                jobs[job_id]['logs'].append("Process terminated (cancelled).")
-            elif jobs[job_id]['status'] == 'stopped':
-                # Graceful early stop: the subprocess was killed but we KEEP whatever
-                # clips finished rendering. Promote the partial result to final so
-                # the UI shows them as a normal (editable/publishable) result set.
+            status = jobs[job_id]["status"]
+            if status == "cancelled":
+                jobs[job_id]["logs"].append("Process terminated (cancelled).")
+            elif status == "stopped":
                 partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
                 if partial:
-                    jobs[job_id]['result'] = partial
-                n = len((jobs[job_id].get('result') or {}).get('clips', []) or [])
-                jobs[job_id]['logs'].append(f"Process stopped by user; kept {n} finished clip(s).")
+                    jobs[job_id]["result"] = partial
+                count = len((jobs[job_id].get("result") or {}).get("clips", []) or [])
+                jobs[job_id]["logs"].append(
+                    f"Process stopped by user; kept {count} finished clip(s)."
+                )
             elif returncode == 0:
-                jobs[job_id]['status'] = 'completed'
-                jobs[job_id]['logs'].append("Process finished successfully.")
-                # Backward-compat rescue if outputs were written to output root
+                jobs[job_id]["status"] = "completed"
+                jobs[job_id]["logs"].append("Process finished successfully.")
                 if not glob.glob(os.path.join(output_dir, "*_metadata.json")):
-                    await asyncio.to_thread(relocate_root_job_artifacts, job_id, output_dir, output_root)
+                    await asyncio.to_thread(
+                        relocate_root_job_artifacts, job_id, output_dir, output_root
+                    )
                 final = await asyncio.to_thread(load_final_result, job_id, output_dir)
                 if final:
-                    jobs[job_id]['result'] = final
+                    jobs[job_id]["result"] = final
                 else:
-                    jobs[job_id]['status'] = 'failed'
-                    jobs[job_id]['logs'].append("No metadata file generated.")
+                    jobs[job_id]["status"] = "failed"
+                    jobs[job_id]["logs"].append("No metadata file generated.")
             else:
-                jobs[job_id]['status'] = 'failed'
-                jobs[job_id]['logs'].append(f"Process failed with exit code {returncode}")
+                jobs[job_id]["status"] = "failed"
+                jobs[job_id]["logs"].append(f"Process failed with exit code {returncode}")
 
-        except Exception as e:
-            jobs[job_id]['status'] = 'failed'
-            jobs[job_id]['logs'].append(f"Execution error: {str(e)}")
-            # Surface the full traceback server-side — the user-facing log only gets
-            # str(e), so without this a crash in result-loading/relocation is
-            # invisible to anyone reading the backend logs.
+        except asyncio.CancelledError:
+            await _stop_process_tree(job_id, process)
+            job = jobs.get(job_id)
+            if job and job.get("status") not in job_control.TERMINAL_STATES:
+                job["status"] = "failed"
+                job["logs"].append("Job interrupted by server shutdown.")
+            raise
+        except Exception as exc:
+            job = jobs.get(job_id)
+            if job is not None:
+                job["status"] = "failed"
+                job["logs"].append(f"Execution error: {exc}")
             logger.exception("run_job failed for job_id=%s", job_id)
-            # A crash between Popen and the loop's natural exit (e.g. an unexpected
-            # error from a result loader) must not leave the pipeline subprocess
-            # running: status is now 'failed', so can_cancel() refuses and the
-            # orphan would burn CPU/GPU unkillable via the API — while its
-            # concurrency slot is already released to the next job.
-            proc = jobs.get(job_id, {}).get('process')
-            if proc is not None and proc.poll() is None:
-                try:
-                    proc.kill()
-                    await asyncio.to_thread(lambda: proc.wait(timeout=5))
-                    jobs[job_id]['logs'].append("Pipeline process killed after execution error.")
-                except Exception:
-                    logger.warning("Could not kill orphaned process for job %s", job_id)
+            await _stop_process_tree(job_id, process or (job or {}).get("process"))
         finally:
+            if log_thread is not None and log_thread.is_alive():
+                await asyncio.to_thread(log_thread.join, 5)
             _notify()
 
     return run_job

@@ -150,6 +150,21 @@ def test_fetch_latest_release_tag_handles_network_failure(monkeypatch):
     assert au._fetch_latest_release_tag() is None
 
 
+def test_fetch_latest_release_rejects_oversized_response(monkeypatch):
+    import io
+
+    class _Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(au, "MAX_RELEASE_JSON_BYTES", 16)
+    monkeypatch.setattr(au._API_OPENER, "open", lambda *a, **k: _Resp(b"{" + b"x" * 32))
+    assert au._fetch_latest_release() is None
+
+
 def test_verify_digest_match_mismatch_and_absent(tmp_path):
     import hashlib
 
@@ -157,7 +172,48 @@ def test_verify_digest_match_mismatch_and_absent(tmp_path):
     p.write_bytes(b"\x7fELFpayload")
     good = "sha256:" + hashlib.sha256(b"\x7fELFpayload").hexdigest()
     assert au._verify_digest(str(p), good) is True
-    assert au._verify_digest(str(p), "sha256:deadbeef") is False
+    assert au._verify_digest(str(p), "sha256:" + "0" * 64) is False
+    assert au._verify_digest(str(p), "sha256:deadbeef") is None
     # No digest / unsupported algo → None (caller installs with sanity-only).
     assert au._verify_digest(str(p), None) is None
     assert au._verify_digest(str(p), "md5:whatever") is None
+
+
+def test_download_binary_refuses_missing_digest_before_network(monkeypatch, tmp_path):
+    called = []
+    monkeypatch.setattr(au._ASSET_OPENER, "open", lambda *a, **k: called.append(1))
+    target = tmp_path / "auto-editor"
+    assert au._download_binary(
+        "https://github.com/WyattBlue/auto-editor/releases/download/v1/asset",
+        str(target),
+        expected_digest=None,
+    ) is False
+    assert called == []
+    assert not target.exists()
+
+
+def test_check_update_refuses_release_asset_without_digest(monkeypatch):
+    monkeypatch.setenv("AUTO_EDITOR_AUTO_UPDATE", "1")
+    monkeypatch.setattr(au, "_detect_asset_name", lambda: "auto-editor-linux-x86_64")
+    monkeypatch.setattr(au, "_read_local_version", lambda: "30.0.0")
+    monkeypatch.setattr(
+        au,
+        "_fetch_latest_release",
+        lambda: {
+            "tag": "31.0.0",
+            "assets": {
+                "auto-editor-linux-x86_64": {
+                    "url": "https://github.com/WyattBlue/auto-editor/releases/download/v31/asset",
+                    "digest": None,
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        au,
+        "_download_binary",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not download")),
+    )
+    result = au.check_and_update_once()
+    assert result["action"] == "download_failed"
+    assert "SHA256" in result["message"]

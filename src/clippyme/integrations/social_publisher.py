@@ -30,10 +30,31 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+def _is_official_zernio_url(raw: str) -> bool:
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse((raw or "").strip())
+        port = parsed.port
+    except ValueError:
+        return False
+    host = (parsed.hostname or "").lower()
+    return (
+        parsed.scheme == "https"
+        and (host == "zernio.com" or host.endswith(".zernio.com"))
+        and parsed.username is None
+        and parsed.password is None
+        and port in (None, 443)
+        and not parsed.query
+        and not parsed.fragment
+    )
+
 
 def _safe_zernio_base_url() -> str:
     """Resolve ZERNIO_BASE_URL with a strict allowlist on the host.
@@ -49,19 +70,10 @@ def _safe_zernio_base_url() -> str:
     raw = os.environ.get("ZERNIO_BASE_URL", default).strip()
     if not raw:
         return default
-    try:
-        from urllib.parse import urlparse
-        parsed = urlparse(raw)
-    except Exception:
+    if not _is_official_zernio_url(raw):
+        logger.warning("Ignoring unsafe ZERNIO_BASE_URL: %r", raw)
         return default
-    if parsed.scheme != "https":
-        logger.warning("Ignoring ZERNIO_BASE_URL with non-https scheme: %r", raw)
-        return default
-    host = (parsed.hostname or "").lower()
-    if host != "zernio.com" and not host.endswith(".zernio.com"):
-        logger.warning("Ignoring ZERNIO_BASE_URL with unauthorised host: %r", raw)
-        return default
-    return raw
+    return raw.rstrip("/")
 
 
 def _reject_internal_upload_url(url: str) -> None:
@@ -91,8 +103,10 @@ def _reject_internal_upload_url(url: str) -> None:
         # can't pin a FastAPI thread-pool slot, and nothing global is touched.
         try:
             candidates.update(resolve_host_addresses(host, timeout=5.0))
-        except (socket.gaierror, UnicodeError, OSError, TimeoutError):
-            return
+        except (socket.gaierror, UnicodeError, OSError, TimeoutError) as exc:
+            raise ZernioError("upload URL host could not be safely resolved") from exc
+    if not candidates:
+        raise ZernioError("upload URL host resolved to no usable addresses")
     for ip in candidates:
         if (ip.is_private or ip.is_loopback or ip.is_link_local
                 or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
@@ -103,6 +117,13 @@ ZERNIO_BASE_URL = _safe_zernio_base_url()
 DEFAULT_TIMEZONE = os.environ.get("ZERNIO_DEFAULT_TZ", "Europe/Rome")
 HTTP_TIMEOUT_SECONDS = int(os.environ.get("ZERNIO_HTTP_TIMEOUT", "60"))
 UPLOAD_TIMEOUT_SECONDS = int(os.environ.get("ZERNIO_UPLOAD_TIMEOUT", "600"))
+
+
+def _load_timezone(name: str) -> ZoneInfo:
+    try:
+        return ZoneInfo((name or "").strip())
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError(f"unknown timezone: {name!r}") from exc
 
 # Italian-prime-time slots (CET/CEST), tuned for TikTok / Reels / Shorts.
 # weekday → list of (hour_start, hour_end) windows. Same data as the user's
@@ -138,6 +159,8 @@ class ZernioClient:
     def __init__(self, api_key: str, base_url: str = ZERNIO_BASE_URL):
         if not api_key or not isinstance(api_key, str):
             raise ValueError("api_key is required")
+        if not _is_official_zernio_url(base_url):
+            raise ValueError("base_url must be an official HTTPS zernio.com API URL")
         self._api_key = api_key
         self._base = base_url.rstrip("/")
         self._session = requests.Session()
@@ -166,11 +189,12 @@ class ZernioClient:
     def _request(self, method: str, path: str, **kwargs) -> Any:
         url = f"{self._base}{path}"
         kwargs.setdefault("timeout", HTTP_TIMEOUT_SECONDS)
+        kwargs.setdefault("allow_redirects", False)
         try:
             r = self._session.request(method, url, **kwargs)
         except requests.RequestException as e:
             raise ZernioError(f"network error: {e}") from e
-        if r.status_code >= 400:
+        if not 200 <= r.status_code < 300:
             raise ZernioError(
                 f"Zernio {method} {path} → HTTP {r.status_code}",
                 status_code=r.status_code,
@@ -231,7 +255,7 @@ class ZernioClient:
                 )
             except requests.RequestException as e:
                 raise ZernioError(f"upload network error: {e}") from e
-        if r.status_code >= 400:
+        if not 200 <= r.status_code < 300:
             raise ZernioError(
                 f"upload PUT failed: HTTP {r.status_code}",
                 status_code=r.status_code, body=self._scrub_secrets(r.text[:300]),
@@ -289,33 +313,49 @@ class SmartScheduler:
     def _windows_for(self, weekday: int) -> list[tuple[int, int]]:
         return self.slot_windows.get(weekday, self.slot_windows[0])
 
-    def _is_window_free(self, day: date, window: tuple[int, int], occupied: list[datetime]) -> bool:
-        start = datetime.combine(day, time(hour=window[0]))
-        end = datetime.combine(day, time(hour=window[1]))
-        return not any(start <= t < end for t in occupied)
+    def _is_window_free(
+        self, day: date, window: tuple[int, int], occupied: list[datetime], tzinfo=None
+    ) -> bool:
+        if tzinfo is None and occupied:
+            tzinfo = occupied[0].tzinfo
+        start = datetime.combine(day, time(hour=window[0]), tzinfo=tzinfo)
+        end = datetime.combine(day, time(hour=window[1]), tzinfo=tzinfo)
+        return not any(start <= stamp < end for stamp in occupied)
 
     def _gap_ok(self, candidate: datetime, occupied: list[datetime]) -> bool:
-        return all(abs((candidate - o).total_seconds()) >= self.min_gap_seconds for o in occupied)
+        return all(abs((candidate - stamp).total_seconds()) >= self.min_gap_seconds for stamp in occupied)
 
     def find_slot(self, day: date, occupied: list[datetime], now: Optional[datetime] = None) -> datetime:
         now = now or datetime.now()
+        tzinfo = now.tzinfo
+        normalized_occupied = []
+        for stamp in occupied:
+            if tzinfo is not None:
+                stamp = stamp.replace(tzinfo=tzinfo) if stamp.tzinfo is None else stamp.astimezone(tzinfo)
+            elif stamp.tzinfo is not None:
+                stamp = stamp.replace(tzinfo=None)
+            normalized_occupied.append(stamp)
+        occupied = normalized_occupied
         weekday = day.weekday()
         windows = self._windows_for(weekday)
 
         # 1. Free window
-        free_windows = [w for w in windows if self._is_window_free(day, w, occupied)]
+        free_windows = [
+            window for window in windows
+            if self._is_window_free(day, window, occupied, tzinfo=tzinfo)
+        ]
         if free_windows:
             window = self.rng.choice(free_windows)
             for _ in range(30):
                 hour = self.rng.randint(window[0], window[1] - 1)
                 minute = self.rng.randint(0, 59)
-                candidate = datetime.combine(day, time(hour=hour, minute=minute))
+                candidate = datetime.combine(day, time(hour=hour, minute=minute), tzinfo=tzinfo)
                 if candidate > now and self._gap_ok(candidate, occupied):
                     return candidate
 
         # 2. 15-minute scan inside the safe daytime range
         candidates: list[datetime] = []
-        base = datetime.combine(day, time(hour=7))
+        base = datetime.combine(day, time(hour=7), tzinfo=tzinfo)
         for i in range(0, 16 * 4):
             candidate = base + timedelta(minutes=i * 15)
             if candidate > now and self._gap_ok(candidate, occupied):
@@ -333,6 +373,7 @@ class SmartScheduler:
                 day,
                 time(hour=self.rng.randint(window[0], window[1] - 1),
                      minute=self.rng.randint(0, 59)),
+                tzinfo=tzinfo,
             )
             if candidate > now:
                 return candidate
@@ -405,6 +446,7 @@ def publish_clip(
     _validate_platform_targets(platform_targets)
     if schedule_mode not in ("now", "auto", "manual"):
         raise ValueError(f"unknown schedule_mode: {schedule_mode}")
+    target_timezone = _load_timezone(timezone)
     if schedule_mode == "manual":
         if not scheduled_for:
             raise ValueError("schedule_mode='manual' requires scheduled_for")
@@ -439,7 +481,7 @@ def publish_clip(
         # explicit start_date from the caller (batch publish UI lets the
         # user pick the day the schedule should begin).
         sched = scheduler or SmartScheduler()
-        now = datetime.now()
+        now = datetime.now(target_timezone)
         if start_date:
             try:
                 requested = datetime.strptime(start_date, "%Y-%m-%d").date()
@@ -460,7 +502,12 @@ def publish_clip(
                 if not ts:
                     continue
                 try:
-                    occupied.append(datetime.fromisoformat(ts).replace(tzinfo=None))
+                    stamp = datetime.fromisoformat(ts)
+                    if stamp.tzinfo is None:
+                        stamp = stamp.replace(tzinfo=target_timezone)
+                    else:
+                        stamp = stamp.astimezone(target_timezone)
+                    occupied.append(stamp)
                 except ValueError:
                     continue
         except ZernioError as e:

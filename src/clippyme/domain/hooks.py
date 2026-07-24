@@ -1,8 +1,11 @@
 import logging
 import os
 import re
+import contextlib
 import subprocess
+import tempfile
 import urllib.request
+from urllib.parse import urlparse
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
@@ -17,18 +20,68 @@ _FONT_MAX_BYTES = 25 * 1024 * 1024
 _FONT_HTTP_TIMEOUT = 30
 
 
+_FONT_ALLOWED_HOSTS = frozenset({"github.com", "raw.githubusercontent.com"})
+_FONT_MAGICS = (b"\x00\x01\x00\x00", b"OTTO", b"true", b"ttcf")
+
+
+class _SafeFontRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        parsed = urlparse(newurl)
+        if parsed.scheme != "https" or (parsed.hostname or "").lower() not in _FONT_ALLOWED_HOSTS:
+            raise RuntimeError("font download redirected to an untrusted host")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_FONT_OPENER = urllib.request.build_opener(_SafeFontRedirectHandler)
+
+
+def runtime_font_download_enabled() -> bool:
+    """Runtime font network access is opt-in; bundled/user fonts remain available."""
+    return os.environ.get("CLIPPYME_RUNTIME_FONT_DOWNLOAD", "0") == "1"
+
+
+def _is_valid_font_file(path: str) -> bool:
+    try:
+        with open(path, "rb") as file:
+            head = file.read(4)
+        return any(head.startswith(magic) for magic in _FONT_MAGICS)
+    except OSError:
+        return False
+
+
 def _download_capped(req, out_path):
-    """Stream a urllib request to disk, aborting past _FONT_MAX_BYTES."""
-    with urllib.request.urlopen(req, timeout=_FONT_HTTP_TIMEOUT) as response, open(out_path, "wb") as out_file:
-        total = 0
-        while True:
-            chunk = response.read(64 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > _FONT_MAX_BYTES:
-                raise RuntimeError("font download exceeded size cap")
-            out_file.write(chunk)
+    """Atomically stream a trusted font request to disk with a hard cap."""
+    parsed = urlparse(req.full_url)
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() not in _FONT_ALLOWED_HOSTS:
+        raise RuntimeError("untrusted font download URL")
+    directory = os.path.dirname(out_path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".font-", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as out_file:
+            with _FONT_OPENER.open(req, timeout=_FONT_HTTP_TIMEOUT) as response:  # nosec B310: HTTPS host and every redirect are allowlisted
+                total = 0
+                head = b""
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > _FONT_MAX_BYTES:
+                        raise RuntimeError("font download exceeded size cap")
+                    if len(head) < 4:
+                        head = (head + chunk)[:4]
+                    out_file.write(chunk)
+                out_file.flush()
+                os.fsync(out_file.fileno())
+        if not any(head.startswith(magic) for magic in _FONT_MAGICS):
+            raise RuntimeError("downloaded payload is not a TrueType/OpenType font")
+        os.replace(tmp_path, out_path)
+        tmp_path = None
+    finally:
+        if tmp_path:
+            with contextlib.suppress(OSError):
+                os.remove(tmp_path)
 
 # Resolve bundled fonts dir by walking up from __file__ (→ repo-root/fonts).
 # A bare CWD-relative "fonts" broke for any caller not launched from the
@@ -48,7 +101,13 @@ FONT_PATH = os.path.join(FONT_DIR, "NotoSerif-Bold.ttf")
 def download_font_if_needed():
     """Downloads a serif font for the hook text if not present."""
     os.makedirs(FONT_DIR, exist_ok=True)
-    if not os.path.exists(FONT_PATH):
+    if not _is_valid_font_file(FONT_PATH):
+        if not runtime_font_download_enabled():
+            logger.warning(
+                "Bundled hook font is missing/invalid; runtime download is disabled "
+                "(set CLIPPYME_RUNTIME_FONT_DOWNLOAD=1 to enable)"
+            )
+            return
         logger.info("⬇️ Downloading font from %s...", FONT_URL)
         try:
             req = urllib.request.Request(FONT_URL, headers={"User-Agent": "Mozilla/5.0"})
@@ -65,7 +124,10 @@ EMOJI_FONT_PATH = os.path.join(FONT_DIR, "NotoColorEmoji.ttf")
 def download_emoji_font_if_needed():
     """Downloads the Noto Color Emoji font if not present."""
     os.makedirs(FONT_DIR, exist_ok=True)
-    if not os.path.exists(EMOJI_FONT_PATH):
+    if not _is_valid_font_file(EMOJI_FONT_PATH):
+        if not runtime_font_download_enabled():
+            logger.debug("Emoji font missing; runtime font download is disabled")
+            return
         logger.info("Downloading emoji font...")
         try:
             req = urllib.request.Request(EMOJI_FONT_URL, headers={"User-Agent": "Mozilla/5.0"})

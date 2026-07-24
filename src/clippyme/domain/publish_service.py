@@ -116,12 +116,18 @@ async def publish_clip_flow(*, job_id: str, clip_index: int,
     # Best-effort: the publish already succeeded, so a metadata-write hiccup
     # here must not fail the response — just leave the history badge stale.
     try:
-        record_clip_publish(job_id, clip_index, os.path.dirname(job_dir), {
-            "platforms": req.get("platforms"),
-            "post_id": result.get("post_id"),
-            "scheduled_for": result.get("scheduled_for"),
-            "at": datetime.now(timezone.utc).isoformat(),
-        })
+        await asyncio.to_thread(
+            record_clip_publish,
+            job_id,
+            clip_index,
+            os.path.dirname(job_dir),
+            {
+                "platforms": req.get("platforms"),
+                "post_id": result.get("post_id"),
+                "scheduled_for": result.get("scheduled_for"),
+                "at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
     except Exception as e:
         logger.warning("publish: failed to persist publish record for %s/%d: %s", job_id, clip_index, e)
 

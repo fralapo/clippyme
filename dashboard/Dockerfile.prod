@@ -10,7 +10,7 @@
 # The build output gets the CSP meta tag injected (vite.config.js cspPlugin
 # is build-only) and nginx serves immutable hashed assets.
 
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 
 WORKDIR /app
 

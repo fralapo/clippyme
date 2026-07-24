@@ -38,3 +38,67 @@ def test_gemini_settings_key_fills_missing_env():
     env = {}
     merge_persistent_config(env, {"GEMINI_API_KEY": "settings-key"})
     assert env["GEMINI_API_KEY"] == "settings-key"
+
+
+def test_cancelling_runner_terminates_process_tree(monkeypatch, tmp_path):
+    import asyncio
+    import io
+
+    from clippyme.domain import job_runner as module
+
+    class Proc:
+        def __init__(self):
+            self.pid = 123
+            self.stdout = io.BytesIO(b"")
+            self.running = True
+            self.returncode = None
+
+        def poll(self):
+            return None if self.running else -15
+
+        def wait(self, timeout=None):
+            self.running = False
+            self.returncode = -15
+            return -15
+
+        def kill(self):
+            self.wait()
+
+    proc = Proc()
+    terminated = []
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(module, "load_persistent_config", lambda: {})
+    monkeypatch.setattr(module, "load_partial_result", lambda *a, **k: None)
+
+    def terminate(pid, timeout):
+        terminated.append(pid)
+        proc.wait()
+        return 1
+
+    monkeypatch.setattr(module.job_control, "terminate_tree", terminate)
+    jobs = {
+        "j": {
+            "status": "queued",
+            "logs": [],
+            "cmd": ["python", "-m", "x"],
+            "env": {},
+            "output_dir": str(tmp_path),
+        }
+    }
+    run_job = module.make_run_job(jobs=jobs, output_root=str(tmp_path))
+
+    async def scenario():
+        task = asyncio.create_task(run_job("j", jobs["j"]))
+        while jobs["j"].get("process") is None:
+            await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(scenario())
+    assert terminated == [123]
+    assert proc.running is False
+    assert jobs["j"]["status"] == "failed"
+    assert any("shutdown" in line.lower() for line in jobs["j"]["logs"])

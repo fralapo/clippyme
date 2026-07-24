@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 from datetime import datetime
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator
 
-from clippyme.domain.job_results import ALLOWED_LANGUAGES, MAX_INSTRUCTIONS_LEN
+from clippyme.domain.job_results import ALLOWED_LANGUAGES, GEMINI_MODEL_RE, MAX_INSTRUCTIONS_LEN
 from clippyme.netutil import resolve_host_addresses
 from clippyme.schemas import ViralClip, ViralClipsResponse  # noqa: F401
 
@@ -131,15 +132,31 @@ class BatchRequest(BaseModel):
         return _validate_language(value)
 
 
+_ALLOWED_CONFIG_KEYS = frozenset({
+    "GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES", "HF_TOKEN",
+    "HUGGINGFACE_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY",
+    "TRANSCRIPTION_PROVIDER", "TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET",
+})
+
+
 class ConfigUpdateRequest(BaseModel):
     keys: Dict[str, str]
 
     @field_validator("keys")
     @classmethod
-    def _cap_values(cls, values: Dict[str, str]) -> Dict[str, str]:
+    def _validate_keys(cls, values: Dict[str, str]) -> Dict[str, str]:
+        unknown = set(values) - _ALLOWED_CONFIG_KEYS
+        if unknown:
+            raise ValueError(f"unknown config keys: {sorted(unknown)}")
         for name, value in values.items():
-            if value is not None and len(value) > 4096:
+            if len(value) > 4096:
                 raise ValueError(f"config value for {name!r} too long (max 4096)")
+        provider = values.get("TRANSCRIPTION_PROVIDER")
+        if provider not in (None, "", "deepgram", "elevenlabs", "whisper"):
+            raise ValueError("TRANSCRIPTION_PROVIDER must be deepgram, elevenlabs or whisper")
+        model = values.get("GEMINI_MODEL")
+        if model and not GEMINI_MODEL_RE.fullmatch(model):
+            raise ValueError("GEMINI_MODEL is not a valid Gemini model id")
         return values
 
 
@@ -166,7 +183,7 @@ def _validate_overlay_params(value):
         elif isinstance(item, bool):
             continue
         elif isinstance(item, (int, float)):
-            if abs(item) > _OVERLAY_MAX_ABS_NUM:
+            if not math.isfinite(item) or abs(item) > _OVERLAY_MAX_ABS_NUM:
                 raise ValueError(f"value for {key!r} out of range")
         elif item is None:
             continue
@@ -196,8 +213,25 @@ def _validate_drop_ranges(value):
         for number in numbers:
             if not isinstance(number, (int, float)) or isinstance(number, bool):
                 raise ValueError("drop range bounds must be numbers")
-            if abs(number) > _DROP_MAX_SECONDS:
+            if not math.isfinite(number) or abs(number) > _DROP_MAX_SECONDS:
                 raise ValueError("drop range bound out of range")
+    return value
+
+
+_ALLOWED_TOGGLES = frozenset({"smartcut", "hook", "subtitles", "logo", "grade", "banner"})
+
+
+def _validate_toggles(value):
+    if value is None:
+        return value
+    if not isinstance(value, dict):
+        raise ValueError("toggles must be an object")
+    extra = set(value) - _ALLOWED_TOGGLES
+    if extra:
+        raise ValueError(f"unknown toggles: {sorted(extra)}")
+    for key, enabled in value.items():
+        if not isinstance(enabled, bool):
+            raise ValueError(f"toggle {key!r} must be boolean")
     return value
 
 
@@ -229,6 +263,11 @@ class ComposeRequest(BaseModel):
     grade_params: dict = Field(default_factory=dict)
     banner_params: dict = Field(default_factory=dict)
     drop_ranges: list = Field(default_factory=list)
+
+    @field_validator("toggles")
+    @classmethod
+    def _bound_toggles(cls, value):
+        return _validate_toggles(value)
 
     @field_validator(
         "hook_params", "subtitle_params", "logo_params", "grade_params", "banner_params"
@@ -283,6 +322,11 @@ class PublishRequest(BaseModel):
         except (ValueError, AttributeError) as exc:
             raise ValueError("scheduled_for must be an ISO 8601 timestamp") from exc
         return value
+
+    @field_validator("toggles")
+    @classmethod
+    def _bound_toggles(cls, value):
+        return _validate_toggles(value)
 
     @field_validator(
         "hook_params", "subtitle_params", "logo_params", "grade_params", "banner_params"
@@ -360,6 +404,9 @@ class LiveMonitorStartRequest(BaseModel):
         for key, item in value.items():
             if isinstance(item, dict):
                 _validate_overlay_params(item)
+            elif isinstance(item, (int, float)) and not isinstance(item, bool):
+                if not math.isfinite(item):
+                    raise ValueError(f"compose[{key!r}] must be finite")
             elif not isinstance(item, (str, int, float, bool)) and item is not None:
                 raise ValueError(f"compose[{key!r}] must be a scalar or object")
         return value

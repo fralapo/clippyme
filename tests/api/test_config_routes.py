@@ -18,6 +18,9 @@ TestClient is used WITHOUT its context manager so the FastAPI lifespan
 (workers, journal recovery) never starts — we only want the routing + handler
 bodies.
 """
+import base64
+import struct
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -28,9 +31,14 @@ import clippyme.api.config_routes as config_module
 # via its Origin branch without needing a private client IP.
 ORIGIN = {"Origin": "http://localhost:5175"}
 
-# Valid sfnt / PNG signatures the upload validators require.
-TTF_MAGIC = b"\x00\x01\x00\x00" + b"\x00" * 64
-PNG_MAGIC = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+# Tiny structurally-valid sfnt and a real 1x1 PNG.
+TTF_MAGIC = (
+    b"\x00\x01\x00\x00" + struct.pack(">HHHH", 1, 0, 0, 0)
+    + b"head" + b"\x00" * 4 + struct.pack(">II", 28, 4) + b"data"
+)
+PNG_MAGIC = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 NETSCAPE_COOKIES = b"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t0\tk\tv\n"
 
 
@@ -75,6 +83,20 @@ def test_config_short_secret_fully_masked(client):
     client.post("/api/config", json={"keys": {"HF_TOKEN": "short"}})
     got = client.get("/api/config").json()
     assert got["HF_TOKEN"] == "********"
+
+
+def test_config_rejects_unknown_key(client):
+    response = client.post("/api/config", json={"keys": {"GEMNI_API_KEY": "typo"}})
+    assert response.status_code == 422
+
+
+def test_config_rejects_invalid_provider_and_model(client):
+    assert client.post(
+        "/api/config", json={"keys": {"TRANSCRIPTION_PROVIDER": "other"}}
+    ).status_code == 422
+    assert client.post(
+        "/api/config", json={"keys": {"GEMINI_MODEL": "not-gemini"}}
+    ).status_code == 422
 
 
 # --- /api/config/models (network call stubbed) ------------------------------
@@ -166,6 +188,13 @@ def test_logo_upload_status_delete(client):
 def test_logo_reject_non_png(client):
     r = client.post("/api/config/logo", files={"logo_file": ("logo.png", b"GIF89a not a png")})
     assert r.status_code == 400
+
+
+def test_logo_rejects_truncated_png(client):
+    response = client.post(
+        "/api/config/logo", files={"logo_file": ("logo.png", b"\x89PNG\r\n\x1a\n" + b"broken")}
+    )
+    assert response.status_code == 400
 
 
 # --- zernio -----------------------------------------------------------------

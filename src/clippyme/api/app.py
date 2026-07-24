@@ -242,7 +242,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
-    allow_headers=["Content-Type", "X-Gemini-Key", "X-API-Token"],
+    allow_headers=["Content-Type", "Authorization", "X-Gemini-Key", "X-API-Token"],
 )
 
 # Mount static files for serving videos.
@@ -252,8 +252,11 @@ app.add_middleware(
 # composed clips, covers and thumbnails are user-facing. SafeStaticFiles
 # 404s the sensitive patterns while serving everything else as before.
 class SafeStaticFiles(StaticFiles):
-    _BLOCKED_SUFFIXES = ("_metadata.json",)
-    _BLOCKED_PREFIXES = ("source_",)
+    # Only user-facing media belongs under /videos. Metadata, transcript
+    # sidecars and temporary renderer files can contain full transcripts,
+    # prompts, local paths or source footage and must never be served.
+    _BLOCKED_SUFFIXES = (".json", ".ass", ".srt", ".tmp", ".part")
+    _BLOCKED_PREFIXES = ("source_", ".")
 
     async def get_response(self, path, scope):
         leaf = os.path.basename(path.replace("\\", "/"))
@@ -389,12 +392,22 @@ async def process_endpoint(
             )
         input_path = os.path.join(UPLOAD_DIR, f"{job_id}{raw_ext}")
         try:
-            await stream_upload_within_limit(file, input_path, MAX_FILE_SIZE_MB * 1024 * 1024)
+            upload_size = await stream_upload_within_limit(
+                file, input_path, MAX_FILE_SIZE_MB * 1024 * 1024
+            )
         except FileTooLarge as exc:
-            # The helper already removed the partial upload; we still own the
-            # per-job output dir, so clean that up before surfacing the 413.
-            shutil.rmtree(job_output_dir, ignore_errors=True)
+            await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
             raise HTTPException(status_code=413, detail=str(exc)) from exc
+        except BaseException:
+            await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
+            raise
+        if upload_size == 0:
+            await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
+            try:
+                await asyncio.to_thread(os.remove, input_path)
+            except FileNotFoundError:
+                pass
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     try:
         cmd = build_main_cmd(
@@ -411,13 +424,19 @@ async def process_endpoint(
             model=model,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        await asyncio.to_thread(shutil.rmtree, job_output_dir, True)
+        if input_path:
+            try:
+                await asyncio.to_thread(os.remove, input_path)
+            except FileNotFoundError:
+                pass
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    # Enqueue Job (QueueFullError propagates → 429 via the ClippyMeError handler)
+    # Queue-full rollback removes both the output directory and uploaded input.
     await submit_job(
         jobs=jobs, job_queue=job_queue, job_id=job_id,
         cmd=cmd, env=env, job_output_dir=job_output_dir,
-        on_change=persist_jobs,
+        on_change=persist_jobs, cleanup_paths=(input_path,), input_path=input_path,
     )
 
     return {"job_id": job_id, "status": "queued"}
@@ -508,9 +527,10 @@ async def cancel_job(job_id: str, request: Request):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    result = await cancel_job_action(job_id, jobs[job_id])
-    persist_jobs()
-    return result
+    try:
+        return await cancel_job_action(job_id, jobs[job_id])
+    finally:
+        persist_jobs()
 
 
 @app.post("/api/pause/{job_id}")
@@ -576,9 +596,10 @@ async def stop_job(job_id: str, request: Request):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    result = await stop_job_action(job_id, jobs[job_id])
-    persist_jobs()
-    return result
+    try:
+        return await stop_job_action(job_id, jobs[job_id])
+    finally:
+        persist_jobs()
 
 @app.post("/api/smartcut/{job_id}/{clip_index}")
 async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
@@ -593,12 +614,15 @@ async def smart_cut_clip(job_id: str, clip_index: int, request: Request):
     # Optional manual-trim spans (flycut-style interactive cut). Legacy callers
     # POST no body — tolerate that and fall back to pure auto Smart Cut.
     drop_ranges = None
-    try:
-        body = await request.json()
-        if isinstance(body, dict):
-            drop_ranges = body.get("drop_ranges")
-    except Exception:
-        pass
+    raw_body = await request.body()
+    if raw_body:
+        try:
+            body = await request.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Malformed JSON body") from exc
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=422, detail="Request body must be a JSON object")
+        drop_ranges = body.get("drop_ranges")
     # This raw-body path bypasses Pydantic, so apply the same bound check the
     # ComposeRequest/PublishRequest schemas use — rejects an oversized or
     # malformed list before the engine iterates it (DoS gate).
@@ -720,12 +744,32 @@ async def delete_history(job_id: str, request: Request):
     require_trusted_config_request(request)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
+    job = jobs.get(job_id)
+    if job is not None and not job_control.can_purge(job.get("status")):
+        raise HTTPException(
+            status_code=409,
+            detail="Active jobs must be stopped or cancelled before deletion",
+        )
     job_dir = os.path.join(OUTPUT_DIR, job_id)
+    if os.path.islink(job_dir):
+        raise HTTPException(status_code=409, detail="Refusing to delete a symbolic link")
     if not os.path.isdir(job_dir):
         raise HTTPException(status_code=404, detail="Job not found on disk")
-    await asyncio.to_thread(shutil.rmtree, job_dir, True)
+    try:
+        await asyncio.to_thread(shutil.rmtree, job_dir)
+    except OSError as exc:
+        logger.error("Could not delete history directory %s", job_dir, exc_info=True)
+        raise HTTPException(status_code=500, detail="Could not delete job files") from exc
     if job_id in jobs:
+        input_path = jobs[job_id].get("input_path")
         del jobs[job_id]
+        if input_path:
+            try:
+                await asyncio.to_thread(os.remove, input_path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logger.warning("Could not remove uploaded input %s", input_path, exc_info=True)
         persist_jobs()
     logger.info("Deleted job %s and all files", job_id)
     return {"success": True}
@@ -787,9 +831,10 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     resolved = await asyncio.to_thread(
         resolve_clip, job_id, clip_index, OUTPUT_DIR, require_file=False)
 
+    zernio_cfg = await asyncio.to_thread(load_zernio_config)
     return await publish_clip_flow(
         job_id=job_id, clip_index=clip_index, resolved=resolved,
-        req=req.model_dump(), zernio_cfg=load_zernio_config(),
+        req=req.model_dump(), zernio_cfg=zernio_cfg,
     )
 
 

@@ -1,7 +1,10 @@
 """Persistent configuration loader/saver for ClippyMe."""
+import contextlib
 import json
 import logging
 import os
+import tempfile
+import threading
 
 logger = logging.getLogger("clippyme")
 
@@ -14,98 +17,123 @@ VALID_CONFIG_KEYS = (
     "HF_TOKEN",
     "DEEPGRAM_API_KEY",
     "ELEVENLABS_API_KEY",
-    "TRANSCRIPTION_PROVIDER",  # "deepgram" (default), "elevenlabs", or "whisper"
-    "TWITCH_CLIENT_ID",        # Helix app creds for the twitch content monitor
+    "TRANSCRIPTION_PROVIDER",
+    "TWITCH_CLIENT_ID",
     "TWITCH_CLIENT_SECRET",
 )
-
-# Zernio config lives in a separate namespace under the same config.json file
-# so existing config flows aren't disturbed. Stored as a sub-object:
-#   { "zernio": { "api_key": "sk_...", "accounts": {...}, "timezone": "..." } }
 ZERNIO_CONFIG_NAMESPACE = "zernio"
+_CONFIG_LOCK = threading.RLock()
 
 
 def _read_raw_config() -> dict:
-    if not os.path.exists(CONFIG_FILE):
-        return {}
-    try:
-        with open(CONFIG_FILE, "r") as f:
-            return json.load(f) or {}
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning("Error reading config.json: %s", e)
-        return {}
+    with _CONFIG_LOCK:
+        if not os.path.exists(CONFIG_FILE):
+            return {}
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as file:
+                data = json.load(file) or {}
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError, TypeError) as exc:
+            logger.warning("Error reading config.json: %s", exc)
+            return {}
 
 
 def _write_raw_config(data: dict) -> bool:
-    try:
-        # 0o700 so the secrets dir isn't world-listable: only config.json is
-        # locked to 0o600, but other files dropped here (cookies.txt) inherit
-        # the parent dir's perms, and a 0o755 dir lets other host processes
-        # enumerate the directory. chmod too in case the dir already exists.
-        os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
+    """Atomically replace config.json with owner-only permissions.
+
+    Writing to a sibling temporary file and then ``os.replace`` prevents a
+    crash, disk-full condition, or concurrent reader from observing a
+    half-truncated JSON document containing secrets.
+    """
+    with _CONFIG_LOCK:
+        tmp_path = None
         try:
-            os.chmod(DATA_DIR, 0o700)
-        except OSError as e:
-            logger.warning("Could not enforce 0o700 on data dir: %s", e)
-        # Write with mode 0o600 so the file (which holds Gemini, Deepgram and
-        # Zernio API keys) is not world-readable under the default Docker umask.
-        fd = os.open(CONFIG_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=4)
-        # O_CREAT only applies the mode at *creation* (and the umask narrows
-        # it further); an already-existing file keeps its old, possibly
-        # world-readable perms. chmod unconditionally so the file holding the
-        # API keys is always owner-only. Best-effort on platforms (Windows)
-        # where POSIX perms don't fully apply.
-        try:
-            os.chmod(CONFIG_FILE, 0o600)
-        except OSError as e:
-            logger.warning("Could not enforce 0o600 on config.json: %s", e)
-        return True
-    except OSError as e:
-        logger.error("Error writing config.json: %s", e)
-        return False
+            os.makedirs(DATA_DIR, mode=0o700, exist_ok=True)
+            with contextlib.suppress(OSError):
+                os.chmod(DATA_DIR, 0o700)
+
+            fd, tmp_path = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=DATA_DIR)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as file:
+                    json.dump(data, file, indent=4)
+                    file.flush()
+                    os.fsync(file.fileno())
+                with contextlib.suppress(OSError):
+                    os.chmod(tmp_path, 0o600)
+                os.replace(tmp_path, CONFIG_FILE)
+                tmp_path = None
+                with contextlib.suppress(OSError):
+                    os.chmod(CONFIG_FILE, 0o600)
+                # Persist the rename itself on POSIX filesystems when possible.
+                try:
+                    dir_fd = os.open(DATA_DIR, os.O_RDONLY)
+                except OSError:
+                    dir_fd = None
+                if dir_fd is not None:
+                    try:
+                        os.fsync(dir_fd)
+                    except OSError:
+                        pass
+                    finally:
+                        os.close(dir_fd)
+                return True
+            except Exception:
+                # fdopen owns/closes fd once entered; close only if creation
+                # failed before that ownership transfer.
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+                raise
+        except (OSError, TypeError, ValueError) as exc:
+            logger.error("Error writing config.json: %s", exc)
+            return False
+        finally:
+            if tmp_path:
+                with contextlib.suppress(OSError):
+                    os.remove(tmp_path)
 
 
 def load_zernio_config() -> dict:
-    """Return persisted Zernio settings (or an empty dict)."""
     raw = _read_raw_config()
-    z = raw.get(ZERNIO_CONFIG_NAMESPACE) or {}
+    zernio = raw.get(ZERNIO_CONFIG_NAMESPACE) or {}
+    if not isinstance(zernio, dict):
+        zernio = {}
+    accounts = zernio.get("accounts", {})
     return {
-        "api_key": z.get("api_key", ""),
-        "accounts": z.get("accounts", {}),
-        "timezone": z.get("timezone", "Europe/Rome"),
+        "api_key": zernio.get("api_key", ""),
+        "accounts": accounts if isinstance(accounts, dict) else {},
+        "timezone": zernio.get("timezone", "Europe/Rome"),
     }
 
 
 def save_zernio_config(api_key: str = None, accounts: dict = None, timezone: str = None) -> bool:
-    """Merge-update Zernio settings. Pass None to leave a field unchanged.
-    Pass empty string for api_key to clear it.
-    """
-    raw = _read_raw_config()
-    current = raw.get(ZERNIO_CONFIG_NAMESPACE) or {}
-    if api_key is not None:
-        if api_key == "":
-            current.pop("api_key", None)
-        else:
-            current["api_key"] = api_key
-    if accounts is not None:
-        # Merge so partial updates work
-        merged = current.get("accounts") or {}
-        for k, v in accounts.items():
-            if v in (None, ""):
-                merged.pop(k, None)
+    """Merge-update Zernio settings as one locked read-modify-write."""
+    with _CONFIG_LOCK:
+        raw = _read_raw_config()
+        current = raw.get(ZERNIO_CONFIG_NAMESPACE) or {}
+        if not isinstance(current, dict):
+            current = {}
+        if api_key is not None:
+            if api_key == "":
+                current.pop("api_key", None)
             else:
-                merged[k] = v
-        current["accounts"] = merged
-    if timezone is not None:
-        current["timezone"] = timezone
-    raw[ZERNIO_CONFIG_NAMESPACE] = current
-    return _write_raw_config(raw)
+                current["api_key"] = api_key
+        if accounts is not None:
+            merged = current.get("accounts") or {}
+            if not isinstance(merged, dict):
+                merged = {}
+            for key, value in accounts.items():
+                if value in (None, ""):
+                    merged.pop(key, None)
+                else:
+                    merged[key] = value
+            current["accounts"] = merged
+        if timezone is not None:
+            current["timezone"] = timezone
+        raw[ZERNIO_CONFIG_NAMESPACE] = current
+        return _write_raw_config(raw)
 
 
 def zernio_config_status() -> dict:
-    """Mask the API key for safe display in UI / logs."""
     cfg = load_zernio_config()
     api_key = cfg.get("api_key", "")
     masked = f"{api_key[:6]}...{api_key[-4:]}" if api_key and len(api_key) > 10 else ""
@@ -117,16 +145,10 @@ def zernio_config_status() -> dict:
     }
 
 
-def _normalize_incoming_keys(d: dict) -> dict:
-    """Alias legacy / alternate key spellings to canonical ones.
-
-    ``HUGGINGFACE_TOKEN`` is accepted as an alias for ``HF_TOKEN`` so users
-    who set the env var the long way (or configured it via the dashboard)
-    end up with the same persisted key the rest of the code reads.
-    """
-    if not d:
+def _normalize_incoming_keys(data: dict) -> dict:
+    if not data:
         return {}
-    out = dict(d)
+    out = dict(data)
     if "HUGGINGFACE_TOKEN" in out and not out.get("HF_TOKEN"):
         out["HF_TOKEN"] = out.pop("HUGGINGFACE_TOKEN")
     else:
@@ -135,18 +157,11 @@ def _normalize_incoming_keys(d: dict) -> dict:
 
 
 def load_persistent_config() -> dict:
-    """Load core API keys, falling back to env vars."""
     config = {
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"),
         "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", ""),
-        # Accept either HF_TOKEN or HUGGINGFACE_TOKEN from the environment;
-        # persist under HF_TOKEN (the canonical key used by the rest of the code).
-        "HF_TOKEN": (
-            os.environ.get("HF_TOKEN")
-            or os.environ.get("HUGGINGFACE_TOKEN")
-            or ""
-        ),
+        "HF_TOKEN": os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or "",
         "DEEPGRAM_API_KEY": os.environ.get("DEEPGRAM_API_KEY", ""),
         "ELEVENLABS_API_KEY": os.environ.get("ELEVENLABS_API_KEY", ""),
         "TRANSCRIPTION_PROVIDER": os.environ.get("TRANSCRIPTION_PROVIDER", "deepgram"),
@@ -154,42 +169,32 @@ def load_persistent_config() -> dict:
         "TWITCH_CLIENT_SECRET": os.environ.get("TWITCH_CLIENT_SECRET", ""),
     }
     raw = _read_raw_config()
-    filtered = {k: v for k, v in raw.items() if k in VALID_CONFIG_KEYS}
-    config.update(filtered)
+    config.update({key: value for key, value in raw.items() if key in VALID_CONFIG_KEYS})
     return config
 
 
 def save_persistent_config(new_config: dict) -> bool:
-    """Save core API keys to JSON file and mirror into os.environ.
-
-    Preserves any non-core namespaces (like 'zernio') so the Zernio settings
-    aren't wiped when the user updates the Gemini key. Also mirrors
-    ``HF_TOKEN`` into ``HUGGINGFACE_TOKEN`` in ``os.environ`` so third-party
-    libraries (pyannote, huggingface_hub) that only read the long form keep
-    working.
-    """
-    raw = _read_raw_config()
-    new_config = _normalize_incoming_keys(new_config)
-    sanitized = {k: new_config.get(k) for k in VALID_CONFIG_KEYS if k in new_config}
-    # Stage the change on the disk image FIRST; defer os.environ until the write
-    # actually succeeds. Otherwise a failed write (e.g. data/ not writable) still
-    # mutates the live process env — the key "works" until the next restart and
-    # then silently vanishes, masking the persistence failure from the user.
-    for key, value in sanitized.items():
-        if value in (None, ""):
-            raw.pop(key, None)
-        else:
-            raw[key] = value
-    if not _write_raw_config(raw):
-        return False
-    # Disk write succeeded — now it's safe to mirror into os.environ.
-    for key, value in sanitized.items():
-        if value in (None, ""):
-            os.environ.pop(key, None)
-            if key == "HF_TOKEN":
-                os.environ.pop("HUGGINGFACE_TOKEN", None)
-        else:
-            os.environ[key] = str(value)
-            if key == "HF_TOKEN":
-                os.environ["HUGGINGFACE_TOKEN"] = str(value)
-    return True
+    """Persist core keys without racing the separate Zernio namespace."""
+    with _CONFIG_LOCK:
+        raw = _read_raw_config()
+        normalized = _normalize_incoming_keys(new_config)
+        sanitized = {
+            key: normalized.get(key) for key in VALID_CONFIG_KEYS if key in normalized
+        }
+        for key, value in sanitized.items():
+            if value in (None, ""):
+                raw.pop(key, None)
+            else:
+                raw[key] = value
+        if not _write_raw_config(raw):
+            return False
+        for key, value in sanitized.items():
+            if value in (None, ""):
+                os.environ.pop(key, None)
+                if key == "HF_TOKEN":
+                    os.environ.pop("HUGGINGFACE_TOKEN", None)
+            else:
+                os.environ[key] = str(value)
+                if key == "HF_TOKEN":
+                    os.environ["HUGGINGFACE_TOKEN"] = str(value)
+        return True

@@ -35,10 +35,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[host-tests]"
-          pip install pytest pytest-cov pip-audit ruff
+          pip install pytest pytest-cov pip-audit ruff bandit
 
       - name: Lint (ruff — bug-class rules)
         run: ruff check src/clippyme tests --select E9,F63,F7,F82
+
+      - name: Static security scan (Bandit medium/high)
+        run: bandit -q -r src/clippyme -ll -ii
 
       - name: Run host test suite (excludes integration)
         id: host-tests
@@ -74,7 +77,7 @@ jobs:
         run: exit 1
 
   frontend-audit:
-    name: Frontend production dependency audit
+    name: Frontend dependency audit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
@@ -83,26 +86,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Generate production audit report
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Generate full dependency audit report
         id: audit
         shell: bash
         run: |
           set +e
-          npm audit --package-lock-only --omit=dev --audit-level=high --json > npm-audit.json
+          npm audit --package-lock-only --audit-level=high --json > npm-audit.json
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
-      - name: Upload production audit report
+      - name: Upload full dependency audit report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: npm-production-audit
+          name: npm-full-audit
           path: dashboard/npm-audit.json
           if-no-files-found: error
           retention-days: 7
 
-      - name: Enforce production audit
+      - name: Enforce full dependency audit
         if: steps.audit.outputs.exit_code != '0'
         run: |
           node -e "const r=require('./npm-audit.json'); for (const [n,v] of Object.entries(r.vulnerabilities||{})) console.error(n, v.severity, v.via);"
@@ -120,7 +129,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 

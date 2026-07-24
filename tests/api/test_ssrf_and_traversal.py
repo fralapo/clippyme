@@ -82,3 +82,22 @@ def test_security_headers_present():
     assert r.headers.get("x-content-type-options") == "nosniff"
     assert r.headers.get("x-frame-options") == "DENY"
     assert "default-src 'none'" in r.headers.get("content-security-policy", "")
+
+
+def test_video_static_mount_blocks_internal_sidecars(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from clippyme.api.app import SafeStaticFiles
+
+    (tmp_path / "clip.mp4").write_bytes(b"video")
+    (tmp_path / "job_metadata.json").write_text("{}")
+    (tmp_path / "composed_subs_0.srt").write_text("secret transcript")
+    (tmp_path / "source_clip.mp4").write_bytes(b"source")
+    app = FastAPI()
+    app.mount("/videos", SafeStaticFiles(directory=str(tmp_path)), name="videos")
+    client = TestClient(app)
+    assert client.get("/videos/clip.mp4").status_code == 200
+    assert client.get("/videos/job_metadata.json").status_code == 404
+    assert client.get("/videos/composed_subs_0.srt").status_code == 404
+    assert client.get("/videos/source_clip.mp4").status_code == 404

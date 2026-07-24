@@ -49,7 +49,7 @@ logger = logging.getLogger("clippyme")
 
 _SLUG_RE = re.compile(r"^[a-z0-9_-]+$")           # kick / twitch login
 _YT_HANDLE_RE = re.compile(r"^@[A-Za-z0-9._-]{1,64}$")
-_YT_UC_RE = re.compile(r"^UC[A-Za-z0-9_-]{20,40}$")
+_YT_UC_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
 _PLATFORMS = ("kick", "twitch", "youtube")
 _TERMINAL_STATUSES = {"completed", "failed", "cancelled", "stopped"}
 # A segment shorter than this (stream ended mid-capture) is only worth
@@ -204,7 +204,7 @@ def _validate_channel(platform: str, raw) -> str:
     if len(ch) > 256 or any(c.isspace() for c in ch):
         raise ValidationError("invalid youtube channel (@handle, UC id, or channel URL)")
     if not (_YT_HANDLE_RE.match(ch) or _YT_UC_RE.match(ch)
-            or ch.lower().startswith(("http://", "https://", "youtube.com", "www.youtube.com"))):
+            or ch.lower().startswith(("https://", "youtube.com", "www.youtube.com"))):
         raise ValidationError("youtube channel must be an @handle, UC… id, or channel URL")
     return ch
 

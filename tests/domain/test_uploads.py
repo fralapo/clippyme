@@ -40,3 +40,39 @@ def test_raises_and_removes_partial_when_over_limit(tmp_path):
     assert exc.value.limit_mb == 2000 // (1024 * 1024)
     # Partial upload must not be left on disk.
     assert not os.path.exists(dest)
+
+
+class FailingUpload:
+    def __init__(self):
+        self.calls = 0
+
+    async def read(self, n: int) -> bytes:
+        self.calls += 1
+        if self.calls == 1:
+            return b"partial"
+        raise OSError("client stream failed")
+
+
+def test_removes_partial_when_input_stream_fails(tmp_path):
+    dest = tmp_path / "out.mp4"
+    with pytest.raises(OSError, match="stream failed"):
+        asyncio.run(stream_upload_within_limit(FailingUpload(), str(dest), limit_bytes=100))
+    assert not dest.exists()
+
+
+def test_removes_partial_when_task_is_cancelled(tmp_path):
+    dest = tmp_path / "out.mp4"
+
+    class CancelledUpload:
+        def __init__(self):
+            self.calls = 0
+
+        async def read(self, n: int) -> bytes:
+            self.calls += 1
+            if self.calls == 1:
+                return b"partial"
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(stream_upload_within_limit(CancelledUpload(), str(dest), limit_bytes=100))
+    assert not dest.exists()

@@ -75,3 +75,45 @@ def test_on_change_hook_called_after_enqueue(tmp_path):
 
     asyncio.run(run())
     assert calls == [1]
+
+
+def test_queue_full_removes_extra_cleanup_paths(tmp_path):
+    async def run():
+        jobs, queue = {}, asyncio.Queue(maxsize=1)
+        accepted = tmp_path / "accepted"
+        rejected = tmp_path / "rejected"
+        upload = tmp_path / "upload.mp4"
+        accepted.mkdir()
+        rejected.mkdir()
+        upload.write_bytes(b"partial")
+        await submit_job(
+            jobs=jobs, job_queue=queue, job_id=JOB_A,
+            cmd=["x"], env={}, job_output_dir=str(accepted),
+        )
+        with pytest.raises(QueueFullError):
+            await submit_job(
+                jobs=jobs, job_queue=queue, job_id=JOB_B,
+                cmd=["y"], env={}, job_output_dir=str(rejected),
+                cleanup_paths=(str(upload),), input_path=str(upload),
+            )
+        return jobs, rejected, upload
+
+    jobs, rejected, upload = asyncio.run(run())
+    assert JOB_B not in jobs
+    assert not rejected.exists()
+    assert not upload.exists()
+
+
+def test_submit_persists_input_path(tmp_path):
+    async def run():
+        jobs, queue = {}, asyncio.Queue(maxsize=1)
+        output = tmp_path / JOB_A
+        output.mkdir()
+        upload = str(tmp_path / "input.mp4")
+        await submit_job(
+            jobs=jobs, job_queue=queue, job_id=JOB_A,
+            cmd=["x"], env={}, job_output_dir=str(output), input_path=upload,
+        )
+        return jobs
+
+    assert asyncio.run(run())[JOB_A]["input_path"].endswith("input.mp4")

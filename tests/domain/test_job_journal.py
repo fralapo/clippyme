@@ -15,7 +15,8 @@ JOB_DONE = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 def test_snapshot_keeps_only_active_jobs_and_no_secrets():
     jobs = {
         JOB_Q: {"status": "queued", "cmd": ["python", "-m", "x"], "env": {"GEMINI_API_KEY": "sk-secret"},
-                "output_dir": "/out/q", "logs": ["a"], "process": object(), "pid": 123},
+                "output_dir": "/out/q", "input_path": "/uploads/q.mp4",
+                "logs": ["a"], "process": object(), "pid": 123},
         JOB_DONE: {"status": "completed", "cmd": [], "output_dir": "/out/d"},
         "failed-job": {"status": "failed", "cmd": [], "output_dir": "/out/f"},
     }
@@ -23,6 +24,7 @@ def test_snapshot_keeps_only_active_jobs_and_no_secrets():
     assert set(records) == {JOB_Q}
     rec = records[JOB_Q]
     assert rec["status"] == "queued" and rec["pid"] == 123
+    assert rec["input_path"] == "/uploads/q.mp4"
     serialized = json.dumps(records)
     assert "sk-secret" not in serialized
     assert "env" not in rec and "process" not in rec and "logs" not in rec
@@ -94,16 +96,26 @@ def test_kill_stale_tree_kills_on_match(monkeypatch):
         def cmdline(self):
             return ["python", "-m", "clippyme.pipeline.main", "url"]
 
-        def children(self, recursive=True):
-            return []
+    import psutil
+    monkeypatch.setattr(psutil, "Process", FakeProc)
+    monkeypatch.setattr(jj, "terminate_tree", lambda pid, timeout=5: killed.append((pid, timeout)) or 1)
+    assert jj.kill_stale_tree(
+        4321, ["python", "-m", "clippyme.pipeline.main", "url"]
+    ) is True
+    assert killed == [(4321, 5.0)]
 
-        def kill(self):
-            killed.append(True)
+
+def test_kill_stale_tree_refuses_partial_command_match(monkeypatch):
+    class FakeProc:
+        def __init__(self, pid):
+            pass
+
+        def cmdline(self):
+            return ["python", "-m", "unrelated.module", "--dangerous"]
 
     import psutil
     monkeypatch.setattr(psutil, "Process", FakeProc)
-    assert jj.kill_stale_tree(4321, ["python", "-m", "clippyme.pipeline.main"]) is True
-    assert killed == [True]
+    assert jj.kill_stale_tree(4321, ["python", "-m", "clippyme.pipeline.main"]) is False
 
 
 def test_kill_stale_tree_no_pid_is_noop():

@@ -43,6 +43,17 @@ def client(monkeypatch):
     # Neutralise the psutil tree calls — return a fixed count, touch nothing.
     monkeypatch.setattr(app_module.job_control, "suspend_tree", lambda pid: 1)
     monkeypatch.setattr(app_module.job_control, "resume_tree", lambda pid: 1)
+
+    def terminate_tree(pid, timeout=5):
+        for job in app_module.jobs.values():
+            proc = job.get("process")
+            if proc is not None and proc.pid == pid:
+                proc.killed = True
+                proc._running = False
+                return 1
+        return 0
+
+    monkeypatch.setattr(app_module.job_control, "terminate_tree", terminate_tree)
     app_module.jobs.pop(JOB_ID, None)
     yield TestClient(app_module.app, headers=ORIGIN)
     app_module.jobs.pop(JOB_ID, None)
@@ -88,6 +99,14 @@ def test_stop_keeps_finished_clips(client, monkeypatch):
     assert body["status"] == "stopped" and body["kept_clips"] == 2
     assert app_module.jobs[JOB_ID]["status"] == "stopped"
     assert proc.killed is True  # subprocess was actually killed
+
+
+def test_stop_refused_when_process_already_exited(client):
+    proc = FakeProc(running=False)
+    _seed("processing", proc)
+    response = client.post(f"/api/stop/{JOB_ID}")
+    assert response.status_code == 409
+    assert app_module.jobs[JOB_ID]["status"] == "processing"
 
 
 def test_stop_queued_job_before_launch(client):
@@ -178,3 +197,32 @@ def test_controls_404_for_unknown_job(client):
 
 def test_controls_400_for_bad_job_id(client):
     assert client.post("/api/pause/not-a-uuid").status_code == 400
+
+
+def test_delete_history_refuses_active_job(client, monkeypatch, tmp_path):
+    output_root = tmp_path / "output"
+    job_dir = output_root / JOB_ID
+    job_dir.mkdir(parents=True)
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", str(output_root))
+    _seed("processing", FakeProc())
+    response = client.delete(f"/api/history/{JOB_ID}")
+    assert response.status_code == 409
+    assert job_dir.exists()
+    assert JOB_ID in app_module.jobs
+
+
+def test_delete_history_terminal_job_removes_output_and_upload(client, monkeypatch, tmp_path):
+    output_root = tmp_path / "output"
+    job_dir = output_root / JOB_ID
+    job_dir.mkdir(parents=True)
+    upload = tmp_path / "upload.mp4"
+    upload.write_bytes(b"x")
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", str(output_root))
+    monkeypatch.setattr(app_module, "persist_jobs", lambda: None)
+    _seed("completed", None)
+    app_module.jobs[JOB_ID]["input_path"] = str(upload)
+    response = client.delete(f"/api/history/{JOB_ID}")
+    assert response.status_code == 200
+    assert not job_dir.exists()
+    assert not upload.exists()
+    assert JOB_ID not in app_module.jobs

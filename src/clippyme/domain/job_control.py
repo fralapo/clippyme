@@ -26,6 +26,11 @@ import logging
 
 logger = logging.getLogger("clippyme")
 
+
+class ProcessTreeTerminationError(RuntimeError):
+    """Raised when one or more processes survive terminate + kill."""
+
+
 # Non-terminal states a job can be in while its subprocess is alive.
 ACTIVE_STATES = ("queued", "processing", "paused")
 # Terminal states. ``stopped`` is terminal-with-clips (graceful early stop).
@@ -111,3 +116,49 @@ def resume_tree(pid: int) -> int:
         except Exception as exc:
             logger.warning("resume pid=%s failed: %s", getattr(proc, "pid", "?"), exc)
     return resumed
+
+
+def terminate_tree(pid: int, timeout: float = 5.0) -> int:
+    """Terminate a process tree and escalate survivors to a hard kill.
+
+    Children are signalled before the parent so the parent cannot leave a
+    detached ffmpeg/yt-dlp child behind. Suspended processes are resumed first,
+    because a paused tree may not handle graceful termination promptly.
+    Returns the number of process objects observed as gone after termination.
+    """
+    import psutil
+
+    try:
+        parent = psutil.Process(pid)
+        targets = parent.children(recursive=True) + [parent]
+    except psutil.NoSuchProcess:
+        return 0
+
+    for proc in targets:
+        try:
+            proc.resume()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    for proc in targets:
+        try:
+            proc.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+            logger.warning("terminate pid=%s failed: %s", getattr(proc, "pid", "?"), exc)
+
+    gone, alive = psutil.wait_procs(targets, timeout=max(0.0, timeout))
+    for proc in alive:
+        try:
+            proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+            logger.warning("kill pid=%s failed: %s", getattr(proc, "pid", "?"), exc)
+    if alive:
+        killed, still_alive = psutil.wait_procs(alive, timeout=max(0.0, timeout))
+        gone.extend(killed)
+        if still_alive:
+            survivor_pids = [getattr(proc, "pid", "?") for proc in still_alive]
+            logger.error("processes survived terminate+kill: %s", survivor_pids)
+            raise ProcessTreeTerminationError(
+                f"processes survived terminate+kill: {survivor_pids}"
+            )
+    return len(gone)

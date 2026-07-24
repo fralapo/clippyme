@@ -100,3 +100,35 @@ def test_publish_bounds_platform_specific_data():
             {"platform": "youtube", "accountId": "a",
              "platformSpecificData": {"evil": {"deep": 1}}},
         ])
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_overlay_rejects_non_finite_numbers(value):
+    with pytest.raises(ValidationError):
+        ComposeRequest(hook_params={"offset_y": value})
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_drop_ranges_reject_non_finite_numbers(value):
+    with pytest.raises(ValidationError):
+        ComposeRequest(drop_ranges=[[0.0, value]])
+
+
+def test_compose_rejects_unknown_or_non_boolean_toggles():
+    with pytest.raises(ValidationError):
+        ComposeRequest(toggles={"shell": True})
+    with pytest.raises(ValidationError):
+        ComposeRequest(toggles={"hook": "false"})
+
+
+def test_publish_accepts_only_known_boolean_toggles():
+    ok = PublishRequest(
+        platforms=[{"platform": "youtube", "accountId": "a"}],
+        toggles={"hook": True, "subtitles": False},
+    )
+    assert ok.toggles == {"hook": True, "subtitles": False}
+    with pytest.raises(ValidationError):
+        PublishRequest(
+            platforms=[{"platform": "youtube", "accountId": "a"}],
+            toggles={"hook": 1},
+        )

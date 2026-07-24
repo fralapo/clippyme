@@ -58,6 +58,7 @@ def make_workers(
 
     Returns a tuple ``(cleanup_jobs, process_queue, run_job_wrapper)``.
     """
+    active_job_tasks: set[asyncio.Task] = set()
 
     async def cleanup_jobs() -> None:
         """Background task to remove old jobs, uploads, and cache entries."""
@@ -130,16 +131,48 @@ def make_workers(
             logger.info("Released slot for job: %s", job_id)
 
     async def process_queue() -> None:
-        """Dispatch loop: pull jobs from the queue, respect concurrency limit."""
+        """Dispatch jobs and retain child tasks until they finish.
+
+        Keeping strong references follows asyncio's task-lifecycle contract and
+        the ``finally`` block guarantees that application shutdown cancels and
+        awaits every active job wrapper instead of leaving subprocess workers
+        running after the dispatcher itself has stopped.
+        """
         logger.info("Job queue worker started with %d concurrent slots", max_concurrent_jobs)
-        while True:
-            try:
-                job_id = await job_queue.get()
-                await concurrency_semaphore.acquire()
-                logger.info("Acquired slot for job: %s", job_id)
-                asyncio.create_task(run_job_wrapper(job_id))
-            except Exception as e:
-                logger.error("Queue dispatch error: %s", e)
-                await asyncio.sleep(1)
+        try:
+            while True:
+                job_id = None
+                dispatched = False
+                slot_acquired = False
+                try:
+                    job_id = await job_queue.get()
+                    await concurrency_semaphore.acquire()
+                    slot_acquired = True
+                    logger.info("Acquired slot for job: %s", job_id)
+                    task = asyncio.create_task(
+                        run_job_wrapper(job_id), name=f"clippyme-job-{job_id}"
+                    )
+                    active_job_tasks.add(task)
+                    task.add_done_callback(active_job_tasks.discard)
+                    dispatched = True
+                except asyncio.CancelledError:
+                    if slot_acquired and not dispatched:
+                        concurrency_semaphore.release()
+                    if job_id is not None and not dispatched:
+                        job_queue.task_done()
+                    raise
+                except Exception as e:
+                    logger.exception("Queue dispatch error: %s", e)
+                    if slot_acquired and not dispatched:
+                        concurrency_semaphore.release()
+                    if job_id is not None and not dispatched:
+                        job_queue.task_done()
+                    await asyncio.sleep(1)
+        finally:
+            tasks = list(active_job_tasks)
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     return cleanup_jobs, process_queue, run_job_wrapper

@@ -29,14 +29,17 @@ every processing one. This module persists just enough state to recover:
 import json
 import logging
 import os
+import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 
-from clippyme.domain.job_control import ACTIVE_STATES
+from clippyme.domain.job_control import ACTIVE_STATES, terminate_tree
 
 logger = logging.getLogger("clippyme")
 
 JOURNAL_FILENAME = "jobs_journal.json"
+_JOURNAL_LOCK = threading.RLock()
 
 
 def snapshot(jobs: dict) -> dict:
@@ -51,6 +54,7 @@ def snapshot(jobs: dict) -> dict:
             "status": status,
             "cmd": list(job.get("cmd") or []),
             "output_dir": job.get("output_dir", ""),
+            "input_path": job.get("input_path"),
             "pid": job.get("pid"),
             "updated_at": time.time(),
         }
@@ -58,20 +62,43 @@ def snapshot(jobs: dict) -> dict:
 
 
 def save_journal(path: str, records: dict) -> None:
-    """Atomic write (tmp + os.replace, 0o600 — same pattern as job_artifacts)."""
-    tmp_path = path + ".tmp"
-    try:
-        fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(records, f)
-        os.replace(tmp_path, path)
-    except Exception:
-        if os.path.exists(tmp_path):
+    """Durably and atomically replace the owner-only job journal."""
+    directory = os.path.dirname(path) or "."
+    with _JOURNAL_LOCK:
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(prefix=".jobs-journal-", suffix=".tmp", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as file:
+                json.dump(records, file)
+                file.flush()
+                os.fsync(file.fileno())
             try:
-                os.remove(tmp_path)
+                os.chmod(tmp_path, 0o600)
             except OSError:
                 pass
-        raise
+            os.replace(tmp_path, path)
+            tmp_path = None
+            try:
+                os.chmod(path, 0o600)
+            except OSError:
+                pass
+            try:
+                directory_fd = os.open(directory, os.O_RDONLY)
+            except OSError:
+                directory_fd = None
+            if directory_fd is not None:
+                try:
+                    os.fsync(directory_fd)
+                except OSError:
+                    pass
+                finally:
+                    os.close(directory_fd)
+        finally:
+            if tmp_path:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
 
 def load_journal(path: str) -> dict:
@@ -117,6 +144,20 @@ def plan_recovery(records: dict) -> RecoveryPlan:
     return plan
 
 
+def _command_matches(actual, expected) -> bool:
+    """Require the complete recorded argv, allowing only argv[0] path changes."""
+    actual = [str(value) for value in (actual or [])]
+    expected = [str(value) for value in (expected or [])]
+    if not actual or len(actual) != len(expected):
+        return False
+
+    def executable_name(value: str) -> str:
+        name = os.path.basename(value).casefold()
+        return name[:-4] if name.endswith(".exe") else name
+
+    return executable_name(actual[0]) == executable_name(expected[0]) and actual[1:] == expected[1:]
+
+
 def kill_stale_tree(pid, expected_cmd) -> bool:
     """Kill the process tree at ``pid`` iff its argv still matches the job's
     recorded cmd prefix (guards against pid reuse). Best-effort; returns
@@ -128,15 +169,9 @@ def kill_stale_tree(pid, expected_cmd) -> bool:
 
         proc = psutil.Process(int(pid))
         cmdline = proc.cmdline()
-        expected = [str(c) for c in (expected_cmd or [])][:2]
-        if not expected or cmdline[: len(expected)] != expected:
+        if not _command_matches(cmdline, expected_cmd):
             return False
-        for child in proc.children(recursive=True):
-            try:
-                child.kill()
-            except Exception:
-                pass
-        proc.kill()
+        terminate_tree(int(pid), timeout=5.0)
         return True
     except Exception:
         return False
@@ -166,6 +201,7 @@ def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) 
             # run-time persistent-config merge in run_job fills missing ones.
             "env": os.environ.copy(),
             "output_dir": record.get("output_dir", ""),
+            "input_path": record.get("input_path"),
         }
         try:
             jobs[job_id] = entry
@@ -199,6 +235,7 @@ def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) 
             "cmd": record.get("cmd") or [],
             "env": {},
             "output_dir": output_dir,
+            "input_path": record.get("input_path"),
         }
         counts["failed"] += 1
 

@@ -45,3 +45,49 @@ def test_log_list_is_trimmed_to_max():
 def test_unknown_job_id_is_ignored():
     jobs = _run(b"orphan line\n", job_id="missing", jobs={"other": {"logs": []}})
     assert jobs["other"]["logs"] == []
+
+
+def test_dispatcher_shutdown_cancels_and_awaits_active_jobs(tmp_path):
+    import asyncio
+
+    async def scenario():
+        from clippyme.domain.job_worker import make_workers
+
+        jobs = {"j": {"status": "queued"}}
+        queue = asyncio.Queue()
+        semaphore = asyncio.Semaphore(1)
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def run_job(job_id, job):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        _, process_queue, _ = make_workers(
+            jobs=jobs,
+            job_queue=queue,
+            concurrency_semaphore=semaphore,
+            run_job=run_job,
+            output_dir=str(tmp_path / "output"),
+            upload_dir=str(tmp_path / "uploads"),
+            data_dir=str(tmp_path / "data"),
+            job_retention_seconds=0,
+            max_concurrent_jobs=1,
+        )
+        queue.put_nowait("j")
+        dispatcher = asyncio.create_task(process_queue())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        dispatcher.cancel()
+        try:
+            await dispatcher
+        except asyncio.CancelledError:
+            pass
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+        await asyncio.wait_for(queue.join(), timeout=1)
+        assert semaphore._value == 1
+
+    asyncio.run(scenario())
