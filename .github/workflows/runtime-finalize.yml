@@ -12,12 +12,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  prune-stale-identities:
+  finalize:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
       - name: Patch tracker and regression test
         run: |
           python - <<'PY'
@@ -62,6 +67,12 @@ jobs:
           '''
               tests.write_text(text, encoding='utf-8')
           PY
+      - name: Update patched PostCSS release
+        working-directory: dashboard
+        run: npm install --save-dev --save-exact postcss@8.5.22 --no-audit --no-fund
+      - name: Verify dependency audit immediately
+        working-directory: dashboard
+        run: npm audit --package-lock-only --audit-level=high
       - name: Commit patch when needed
         run: |
           if git diff --quiet; then
@@ -69,6 +80,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/clippyme/pipeline/reframe_track.py tests/pipeline/test_reframe_subject_tracking.py
-          git commit -m "fix(reframe): prune expired identities on long videos"
+          git add src/clippyme/pipeline/reframe_track.py tests/pipeline/test_reframe_subject_tracking.py dashboard/package.json dashboard/package-lock.json
+          git commit -m "fix: prune stale tracking identities and update postcss"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
