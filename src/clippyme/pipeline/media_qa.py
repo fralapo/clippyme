@@ -1,7 +1,7 @@
 """FFprobe/FFmpeg-backed output inspection for rendered clips.
 
 The expensive signal pass is bounded by timeouts and degrades gracefully when a
-particular ffmpeg filter is unavailable.  Structural probe failures are critical;
+particular ffmpeg filter is unavailable. Structural probe failures are critical;
 optional black/audio metrics become warnings through ``evaluate_clip_qa``.
 """
 from __future__ import annotations
@@ -51,19 +51,30 @@ def probe_media(path: str, timeout: float = 25.0) -> dict[str, Any]:
         return report
 
     command = [
-        "ffprobe", "-v", "error", "-show_streams", "-show_format",
-        "-of", "json", path,
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_streams",
+        "-show_format",
+        "-of",
+        "json",
+        path,
     ]
     try:
-        proc = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        process = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         report["probe_error"] = str(exc)
         return report
-    if proc.returncode != 0:
-        report["probe_error"] = (proc.stderr or "ffprobe failed")[-1000:]
+    if process.returncode != 0:
+        report["probe_error"] = (process.stderr or "ffprobe failed")[-1000:]
         return report
     try:
-        payload = json.loads(proc.stdout or "{}")
+        payload = json.loads(process.stdout or "{}")
     except json.JSONDecodeError as exc:
         report["probe_error"] = f"invalid ffprobe JSON: {exc}"
         return report
@@ -92,8 +103,18 @@ def probe_media(path: str, timeout: float = 25.0) -> dict[str, Any]:
     return report
 
 
-def inspect_signal(path: str, duration: float | None, timeout: float = 90.0) -> dict[str, Any]:
-    """Measure full-frame black/freeze time and audio level in one bounded pass."""
+def inspect_signal(
+    path: str,
+    duration: float | None,
+    timeout: float = 90.0,
+) -> dict[str, Any]:
+    """Measure black/freeze time and audio level in one bounded pass.
+
+    FFmpeg filter availability can differ between container builds. A non-zero
+    process exit is therefore exposed as ``signal_error`` even when one filter
+    emitted partial metrics. Callers can retain a structurally valid clip while
+    making the incomplete optional analysis observable.
+    """
     metrics: dict[str, Any] = {
         "black_seconds": None,
         "black_ratio": None,
@@ -104,33 +125,55 @@ def inspect_signal(path: str, duration: float | None, timeout: float = 90.0) -> 
         "signal_error": None,
     }
     command = [
-        "ffmpeg", "-hide_banner", "-nostdin", "-i", path,
-        "-vf", "blackdetect=d=0.5:pix_th=0.10,freezedetect=n=-60dB:d=2",
-        "-af", "volumedetect", "-f", "null", "-",
+        "ffmpeg",
+        "-hide_banner",
+        "-nostdin",
+        "-i",
+        path,
+        "-vf",
+        "blackdetect=d=0.5:pix_th=0.10,freezedetect=n=-60dB:d=2",
+        "-af",
+        "volumedetect",
+        "-f",
+        "null",
+        "-",
     ]
     try:
-        proc = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                              text=True, timeout=timeout)
+        process = subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout,
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         metrics["signal_error"] = str(exc)
         return metrics
-    text = proc.stderr or ""
-    black_seconds = sum(float(value) for value in _BLACK_RE.findall(text))
-    freeze_seconds = sum(float(value) for value in _FREEZE_RE.findall(text))
-    metrics["black_seconds"] = round(black_seconds, 3)
-    metrics["freeze_seconds"] = round(freeze_seconds, 3)
-    if duration and duration > 0:
-        metrics["black_ratio"] = round(min(1.0, black_seconds / duration), 4)
-        metrics["freeze_ratio"] = round(min(1.0, freeze_seconds / duration), 4)
+
+    text = process.stderr or ""
+    black_matches = _BLACK_RE.findall(text)
+    freeze_matches = _FREEZE_RE.findall(text)
     mean_match = _MEAN_RE.search(text)
     max_match = _MAX_RE.search(text)
+
+    # A successful pass with no black/freeze events means a measured zero. On a
+    # failed pass, leave missing channels as None rather than fabricating zeros.
+    if black_matches or process.returncode == 0:
+        black_seconds = sum(float(value) for value in black_matches)
+        metrics["black_seconds"] = round(black_seconds, 3)
+        if duration and duration > 0:
+            metrics["black_ratio"] = round(min(1.0, black_seconds / duration), 4)
+    if freeze_matches or process.returncode == 0:
+        freeze_seconds = sum(float(value) for value in freeze_matches)
+        metrics["freeze_seconds"] = round(freeze_seconds, 3)
+        if duration and duration > 0:
+            metrics["freeze_ratio"] = round(min(1.0, freeze_seconds / duration), 4)
     if mean_match and mean_match.group(1).lower() != "-inf":
         metrics["mean_volume_db"] = _float(mean_match.group(1))
     if max_match and max_match.group(1).lower() != "-inf":
         metrics["max_volume_db"] = _float(max_match.group(1))
-    if proc.returncode != 0 and not any(value is not None for key, value in metrics.items()
-                                        if key != "signal_error"):
-        metrics["signal_error"] = text[-1000:] or f"ffmpeg exited {proc.returncode}"
+    if process.returncode != 0:
+        metrics["signal_error"] = text[-1000:] or f"ffmpeg exited {process.returncode}"
     return metrics
 
 
@@ -143,7 +186,11 @@ def inspect_clip(
     run_signal_checks: bool = True,
 ) -> dict[str, Any]:
     probe = probe_media(path)
-    signal = inspect_signal(path, probe.get("duration")) if run_signal_checks and probe.get("has_video") else {}
+    signal = (
+        inspect_signal(path, probe.get("duration"))
+        if run_signal_checks and probe.get("has_video")
+        else {}
+    )
     metrics = {**probe, **signal}
     verdict = evaluate_clip_qa(
         actual_duration=probe.get("duration"),
