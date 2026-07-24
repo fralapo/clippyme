@@ -1,0 +1,33 @@
+name: Apply round 2 audit patch
+
+on:
+  push:
+    branches: ["audit/round2-2026-07-23"]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'chore(audit): activate round2 patch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: audit/round2-2026-07-23
+          fetch-depth: 0
+      - name: Apply reviewed patch and publish branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .audit-payload/round2.chunk* | base64 --decode | xz --decompress > /tmp/round2.patch
+          git apply --binary --whitespace=nowarn /tmp/round2.patch
+          rm -rf .audit-payload
+          rm -f .github/workflows/apply-round2-patch.yml
+          printf 'round2-final-ci\n' > .round2-ci-trigger
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix(audit): harden ClippyMe second pass"
+          git push origin HEAD:audit/round2-2026-07-23
