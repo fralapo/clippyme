@@ -36,8 +36,23 @@ replace_once(
 
 replace_once(
     "dashboard/src/redesign/LazyVideo.test.jsx",
+    "import { render } from '@testing-library/react';",
+    "import { act, render } from '@testing-library/react';",
+)
+replace_once(
+    "dashboard/src/redesign/LazyVideo.test.jsx",
     "  globalThis.IntersectionObserver = vi.fn((cb) => { callback = cb; return { observe: vi.fn(), disconnect: vi.fn() }; });",
     "  globalThis.IntersectionObserver = vi.fn(function IntersectionObserverMock(cb) { callback = cb; return { observe: vi.fn(), disconnect: vi.fn() }; });",
+)
+replace_once(
+    "dashboard/src/redesign/LazyVideo.test.jsx",
+    "  callback([{ isIntersecting: true }]);\n  expect(video.getAttribute('src')).toBe('/clip.mp4');",
+    "  act(() => callback([{ isIntersecting: true }]));\n  expect(video.getAttribute('src')).toBe('/clip.mp4');",
+)
+replace_once(
+    "dashboard/src/redesign/primitives.test.jsx",
+    "  fireEvent.keyDown(screen.getByRole('radio', { name: 'A' }), { key: 'ArrowRight' });",
+    "  fireEvent.keyDown(screen.getByRole('button', { name: 'A' }), { key: 'ArrowRight' });",
 )
 
 print("frontend accessibility and compatibility fixes applied")
