@@ -161,9 +161,13 @@ def kill_stale_tree(pid, expected_cmd) -> bool:
 
 def _positive_int(value, default: int) -> int:
     try:
-        return max(1, int(value))
+        parsed = int(value)
     except (TypeError, ValueError):
-        return max(1, int(default))
+        try:
+            parsed = int(default)
+        except (TypeError, ValueError):
+            parsed = 3
+    return min(10, max(1, parsed))
 
 
 def _recovered_entry(job_id: str, record: dict, message: str) -> dict:
