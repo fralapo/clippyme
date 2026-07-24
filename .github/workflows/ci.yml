@@ -50,14 +50,14 @@ jobs:
           pytest -m "not integration" -vv
           --timeout=120 --timeout-method=thread
           --cov=clippyme --cov-report=term
-          --junitxml=pytest-report.xml
+          --junitxml="$RUNNER_TEMP/pytest-report.xml"
 
       - name: Upload backend test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: backend-pytest-report
-          path: pytest-report.xml
+          path: ${{ runner.temp }}/pytest-report.xml
           if-no-files-found: error
           retention-days: 7
 
