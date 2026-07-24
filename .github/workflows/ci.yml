@@ -19,8 +19,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  frontend-security-finalizer:
-    name: Temporary frontend security finalizer
+  frontend-lock-finalizer:
+    name: Temporary frontend lock finalizer
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -28,70 +28,81 @@ jobs:
         with:
           ref: codex/runtime-quality-roadmap-20260724
           fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
-      - name: Install secure ESLint and accessibility tooling
+
+      - name: Resolve maintained frontend dependencies
         working-directory: dashboard
-        shell: bash
-        run: |
-          npm uninstall eslint-plugin-react eslint-plugin-jsx-a11y @htmlacademy/eslint-plugin-jsx-a11y --legacy-peer-deps --no-audit --no-fund
-          npm install --save-dev --save-exact --legacy-peer-deps \
-            eslint@10.8.0 @eslint/js@10.8.0 globals@latest \
-            @eslint-react/eslint-plugin@5.18.0 \
-            axe-core@latest \
-            eslint-plugin-react-hooks@latest \
-            eslint-plugin-react-refresh@latest \
-            --no-audit --no-fund
-      - name: Verify full dependency audit
-        id: security-audit
-        continue-on-error: true
-        shell: bash
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Verify installed frontend toolchain
         working-directory: dashboard
         run: |
-          set +e
-          npm audit --package-lock-only --audit-level=high --json > ../frontend-security-audit.json
-          code=$?
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Upload security audit diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-security-audit
-          path: frontend-security-audit.json
-          if-no-files-found: error
-          retention-days: 2
-      - name: Enforce full dependency audit
-        if: steps.security-audit.outputs.exit_code != '0'
-        run: exit 1
-      - name: Verify lint
-        id: security-lint
+          node -e "Promise.all([import('eslint'), import('@eslint/js'), import('@eslint-react/eslint-plugin'), import('axe-core')]).then(() => console.log('frontend toolchain resolved'))"
+          npm ls eslint @eslint/js @eslint-react/eslint-plugin axe-core --depth=0
+
+      - name: Verify frontend dependency security
+        id: finalizer-audit
         continue-on-error: true
         shell: bash
         working-directory: dashboard
         run: |
           set -o pipefail
-          npm run lint 2>&1 | tee ../frontend-security-lint.log
-      - name: Upload lint diagnostics
+          npm audit --package-lock-only --audit-level=high 2>&1 | tee ../frontend-finalizer-audit.log
+
+      - name: Verify frontend lint
+        id: finalizer-lint
+        continue-on-error: true
+        shell: bash
+        working-directory: dashboard
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee ../frontend-finalizer-lint.log
+
+      - name: Verify frontend tests
+        id: finalizer-tests
+        continue-on-error: true
+        shell: bash
+        working-directory: dashboard
+        run: |
+          set -o pipefail
+          npm test -- --coverage 2>&1 | tee ../frontend-finalizer-tests.log
+
+      - name: Verify frontend production build
+        id: finalizer-build
+        continue-on-error: true
+        shell: bash
+        working-directory: dashboard
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee ../frontend-finalizer-build.log
+
+      - name: Upload frontend finalizer diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-security-lint
-          path: frontend-security-lint.log
+          name: frontend-finalizer-diagnostics
+          path: |
+            frontend-finalizer-audit.log
+            frontend-finalizer-lint.log
+            frontend-finalizer-tests.log
+            frontend-finalizer-build.log
           if-no-files-found: error
-          retention-days: 2
-      - name: Enforce lint
-        if: steps.security-lint.outcome != 'success'
+          retention-days: 7
+
+      - name: Enforce frontend verification
+        if: >-
+          steps.finalizer-audit.outcome != 'success' ||
+          steps.finalizer-lint.outcome != 'success' ||
+          steps.finalizer-tests.outcome != 'success' ||
+          steps.finalizer-build.outcome != 'success'
         run: exit 1
-      - name: Verify tests and build
-        working-directory: dashboard
-        run: |
-          npm test -- --coverage
-          npm run build
-      - name: Commit verified dependency update
+
+      - name: Commit verified frontend lockfile
         run: |
           if git diff --quiet -- dashboard/package.json dashboard/package-lock.json; then
             exit 0
@@ -99,7 +110,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add dashboard/package.json dashboard/package-lock.json
-          git commit -m "chore: migrate frontend lint and accessibility toolchain"
+          git commit -m "chore: finalize secure frontend toolchain"
           git push origin HEAD:codex/runtime-quality-roadmap-20260724
 
   backend:
