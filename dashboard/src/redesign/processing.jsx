@@ -30,8 +30,8 @@ function Metric({ label, value, hint }) {
 
 function Operations({ runtime, preflight }) {
   if (!runtime && !preflight) return null;
-  return <section className="operations" aria-label="Job operations">
-    <div className="stream-head"><h3>Operations</h3>{runtime?.stage && <Badge tone="out">{runtime.stage}</Badge>}</div>
+  return <section className="operations" aria-labelledby="operations-title">
+    <div className="stream-head"><h3 id="operations-title" aria-level="2">Operations</h3>{runtime?.stage && <Badge tone="out">{runtime.stage}</Badge>}</div>
     <div className="operation-grid">
       <Metric label="attempt" value={runtime?.attempt || '—'} hint="bounded retry" />
       <Metric label="verified clips" value={runtime?.clips || '0/0'} hint="QA passed" />
@@ -106,9 +106,11 @@ export function ProcessingView({ media, status, logs = [], step, clips = [], onC
           {!failed && <div aria-hidden="true"><span className="cursor" /></div>}
         </div>
       </Panel>
-      <div className="stream-head"><h3>Clips</h3>{clips.length > 0 ? <Badge tone="teal" icon="check">{clips.length} ready</Badge> : <Badge tone="out">{failed ? 'no clips' : 'finding moments…'}</Badge>}</div>
-      <div className="stream">{clips.slice(0, 8).map((clip, index) => <MiniClip key={clip.original_index ?? index} clip={clip} />)}
-        {!failed && clips.length < 4 && Array.from({ length: 4 - clips.length }).map((_, index) => <div key={`slot${index}`} className="slot">{index === 0 ? <div className="sk" /> : null}</div>)}</div>
+      <section aria-labelledby="clips-title">
+        <div className="stream-head"><h3 id="clips-title" aria-level="2">Clips</h3>{clips.length > 0 ? <Badge tone="teal" icon="check">{clips.length} ready</Badge> : <Badge tone="out">{failed ? 'no clips' : 'finding moments…'}</Badge>}</div>
+        <div className="stream">{clips.slice(0, 8).map((clip, index) => <MiniClip key={clip.original_index ?? index} clip={clip} />)}
+          {!failed && clips.length < 4 && Array.from({ length: 4 - clips.length }).map((_, index) => <div key={`slot${index}`} className="slot">{index === 0 ? <div className="sk" /> : null}</div>)}</div>
+      </section>
       </div>
     </div>
   </main>;
