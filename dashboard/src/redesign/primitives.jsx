@@ -61,14 +61,14 @@ export function Stepper({ value, set, min = 1, max = 12, label = 'Value' }) {
   );
 }
 
-export function Panel({ title, sub, icon, headRight, pad = true, children, className, style, as: Tag = 'section' }) {
+export function Panel({ title, sub, icon, headRight, pad = true, children, className, style, as: Tag = 'section', headingAs: Heading = 'h2' }) {
   const titleId = useId();
   return (
     <Tag className={`panel${className ? ` ${className}` : ''}`} style={style} aria-labelledby={title ? titleId : undefined}>
       {title && (
         <div className="panel-head">
           {icon && <div className="ico" aria-hidden="true"><Icon n={icon} /></div>}
-          <div><h3 id={titleId}>{title}</h3>{sub && <div className="sub">{sub}</div>}</div>
+          <div><Heading id={titleId}>{title}</Heading>{sub && <div className="sub">{sub}</div>}</div>
           {headRight && <div className="right">{headRight}</div>}
         </div>
       )}
