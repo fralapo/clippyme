@@ -26,7 +26,7 @@ import { useHistory } from '../hooks/useHistory';
 import { useClipStates } from '../hooks/useClipStates';
 import { recordTasteEvent } from '../lib/taste';
 import { useBackendStatus } from '../hooks/useBackendStatus';
-import { useSessionPersistence } from '../hooks/useSessionPersistence';
+import { useSessionPersistence, loadPersistedSession, clearPersistedSession } from '../hooks/useSessionPersistence';
 
 const DEFAULT_OPTS = {
   mode: 'single', source: 'url', url: '', file: null, fileName: '', batch: '', batchFiles: [], instructions: '',
@@ -59,14 +59,15 @@ function Confetti() {
   );
 }
 
-function Toasts({ items }) {
+function Toasts({ items, onDismiss }) {
   const ic = { success: 'circle-check', warn: 'triangle-alert', info: 'info', error: 'triangle-alert' };
   return (
-    <div className="toasts">
+    <div className="toasts" aria-live="polite" aria-relevant="additions">
       {items.map((t) => (
-        <div key={t.id} className={'toast ' + (t.type === 'error' ? 'warn' : t.type)}>
-          <span className="ti"><Icon n={ic[t.type] || 'info'} /></span>
+        <div key={t.id} role={t.type === 'error' ? 'alert' : 'status'} className={'toast ' + (t.type === 'error' ? 'warn' : t.type)}>
+          <span className="ti" aria-hidden="true"><Icon n={ic[t.type] || 'info'} /></span>
           <span>{t.msg}</span>
+          <button type="button" className="toast-close" aria-label="Dismiss notification" onClick={() => onDismiss(t.id)}><Icon n="x" /></button>
         </div>
       ))}
     </div>
@@ -74,6 +75,7 @@ function Toasts({ items }) {
 }
 
 export default function RedesignApp() {
+  const restoredSession = useMemo(() => loadPersistedSession(), []);
   // The Gemini key is persisted in localStorage in cleartext. This is an
   // accepted tradeoff for the single-user self-host model (no server-side
   // session store, key never leaves the browser except as the X-Gemini-Key
@@ -83,13 +85,13 @@ export default function RedesignApp() {
   // server-issued token or sessionStorage.
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
   const [showKeyModal, setShowKeyModal] = useState(false);
-  const [tab, setTab] = useState('create');
-  const [jobId, setJobId] = useState(null);
-  const [status, setStatus] = useState('idle'); // idle | processing | complete | error
-  const [results, setResults] = useState(null);
+  const [tab, setTab] = useState(restoredSession?.activeTab || 'create');
+  const [jobId, setJobId] = useState(restoredSession?.jobId || null);
+  const [status, setStatus] = useState(restoredSession?.status || 'idle'); // idle | processing | complete | error
+  const [results, setResults] = useState(restoredSession?.results || null);
   const [logs, setLogs] = useState([]);
   const [currentStep, setCurrentStep] = useState(null);
-  const [processingMedia, setProcessingMedia] = useState(null);
+  const [processingMedia, setProcessingMedia] = useState(restoredSession?.processingMedia || null);
   const [paused, setPaused] = useState(false);
   // Seed Create from the user's default preset (if any) so their preferred
   // settings are already applied on load.
@@ -100,7 +102,7 @@ export default function RedesignApp() {
   // external (localStorage) state, so bumping the version must force a recompute.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const presetList = useMemo(() => allPresets(), [presetsVersion]);
-  const [preselections, setPreselectionsRaw] = useState(null);
+  const [preselections, setPreselectionsRaw] = useState(restoredSession?.preselections || null);
   const [confetti, setConfetti] = useState(false);
   const [toasts, setToasts] = useState([]);
   // Track all auto-dismiss timer ids so they can be cleared if the component
@@ -145,9 +147,11 @@ export default function RedesignApp() {
   }, [tab, viewingHistory]);
   useSessionPersistence({ status, jobId, results, processingMedia, activeTab: tab, preselections });
 
+  const dismissToast = useCallback((id) => setToasts((items) => items.filter((item) => item.id !== id)), []);
+
   const pushToast = useCallback((type, msg) => {
     const id = Date.now() + Math.random();
-    setToasts((t) => [...t, { id, type, msg }]);
+    setToasts((t) => [...t.slice(-4), { id, type, msg }]);
     const tid = setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3600);
     toastTimerIds.current.push(tid);
   }, []);
@@ -279,7 +283,7 @@ export default function RedesignApp() {
     if (status === 'processing' && jobId) cancelJob(jobId);
     setStatus('idle'); setJobId(null); setResults(null); setLogs([]); setProcessingMedia(null);
     setCurrentStep(null); setViewingHistory(false); setTab('create'); setPaused(false);
-    try { localStorage.removeItem('clippyme_session'); } catch { /* */ }
+    clearPersistedSession();
   };
 
   // Job controls (backend: /api/pause, /api/resume, /api/stop).
@@ -461,7 +465,7 @@ export default function RedesignApp() {
       )}
       {showKeyModal && <ApiKeyModal onClose={() => setShowKeyModal(false)} onGoToSettings={() => { setShowKeyModal(false); setTab('settings'); }} />}
 
-      <Toasts items={toasts} />
+      <Toasts items={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

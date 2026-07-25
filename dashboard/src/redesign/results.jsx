@@ -1,33 +1,42 @@
-// ClippyMe redesign — Results: real clip cards (video + score + reframe +
-// download + publish + captions) and multi-select for batch actions.
-import { useState } from 'react';
+
+import { memo, useCallback, useMemo, useState } from 'react';
 import { Icon, Btn, Badge } from './primitives';
+import { LazyVideo } from './LazyVideo';
 import { clipPreviewSrc, fmtDuration, downloadClip, exportClip } from './realApi';
 
-// 'object' kept as a legacy alias of 'subject' (FrameShift face-first) so a clip
-// whose metadata still says 'object' renders the right badge.
 const REFRAME_ICON = { auto: 'crop', subject: 'scan-face', object: 'scan-face', disabled: 'square' };
 const REFRAME_LABEL = { auto: 'Auto', subject: 'Subject', object: 'Subject', disabled: 'Off' };
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, onApplyToAll, selectMode, onPublish, pushToast }) {
+const ClipCard = memo(function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, onApplyToAll, selectMode, onPublish, pushToast }) {
   const [downloading, setDownloading] = useState(false);
   const selected = state?.selected !== false;
   const score = Math.round(clip.viral_score || 0);
-  // Read-only here — reframe mode is changed (and applied) inside the Edit
-  // modal, not by an instant click on the card.
   const mode = state?.reframeMode || clip.reframe_mode || 'auto';
   const title = clip.video_title_for_youtube_short || `Clip ${index + 1}`;
   const processing = !!state?.processing;
+  const selectionProps = selectMode ? {
+    role: 'checkbox',
+    tabIndex: 0,
+    'aria-checked': selected,
+    onClick: () => onUpdate(index, { selected: !selected }),
+    onKeyDown: (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onUpdate(index, { selected: !selected });
+      }
+    },
+  } : {};
 
-  const doDownload = async (e) => {
-    e.stopPropagation();
-    if (downloading) return;
+  const doDownload = async (event) => {
+    event.stopPropagation();
+    if (downloading || processing) return;
     setDownloading(true);
     try {
       const kind = await exportClip(jobId, index, clip, state, preselections);
       pushToast?.('success', kind === 'composed' ? 'Composed clip downloaded' : 'Clip downloaded');
     } catch {
-      pushToast?.('warn', 'Compose failed, downloaded the raw clip instead');
+      pushToast?.('warn', 'Compose failed; downloading the raw clip instead');
       downloadClip(clip, index);
     } finally {
       setDownloading(false);
@@ -35,143 +44,100 @@ function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, 
   };
 
   return (
-    <div className={'clip' + (score >= 90 ? ' top' : '') + (selectMode && selected ? ' sel' : '')}
-      role={selectMode ? 'button' : undefined} tabIndex={selectMode ? 0 : undefined}
-      aria-pressed={selectMode ? selected : undefined}
-      onClick={() => selectMode && onUpdate(index, { selected: !selected })}
-      onKeyDown={(e) => { if (selectMode && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onUpdate(index, { selected: !selected }); } }}>
+    <article {...selectionProps} className={`clip${score >= 90 ? ' top' : ''}${selectMode && selected ? ' sel' : ''}`}>
       <div className="clip-media" style={{ padding: 0, background: '#000' }}>
-        {/* Captions are burned into the pixels by the subtitle layer — no separate text track exists. */}
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video src={clipPreviewSrc(clip, state)} controls={!selectMode} playsInline preload="metadata"
-          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
+        <LazyVideo src={clipPreviewSrc(clip, state)} controls={!selectMode} playsInline muted={selectMode}
+          aria-label={`Preview ${title}`} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
         <div className="clip-top" style={{ padding: 10 }}>
-          <span className="score"><Icon n="flame" style={{ width: 12, height: 12 }} />{score}</span>
-          {selectMode
-            ? <span className="clip-check"><Icon n="check" /></span>
-            : <span className="rf-badge" title={`Reframe: ${REFRAME_LABEL[mode] || mode}`}>
-                <Icon n={REFRAME_ICON[mode] || 'crop'} />{REFRAME_LABEL[mode] || 'Auto'}
-              </span>}
+          <span className="score"><Icon n="flame" />{score}</span>
+          {selectMode ? <span className="clip-check" aria-hidden="true"><Icon n="check" /></span>
+            : <span className="rf-badge" title={`Reframe: ${REFRAME_LABEL[mode] || mode}`}><Icon n={REFRAME_ICON[mode] || 'crop'} />{REFRAME_LABEL[mode] || 'Auto'}</span>}
         </div>
         <div className="clip-bottom" style={{ padding: 10 }}>
           {state?.publishedAt && <span className="clip-pub"><Icon n="check" />published</span>}
           <span className="dur" style={{ marginLeft: state?.publishedAt ? 8 : 0 }}>{fmtDuration(clip.start, clip.end)}</span>
         </div>
-        {processing && (
-          <div className="clip-busy" aria-live="polite">
-            <Icon n="loader" /><span>Reprocessing…</span>
-          </div>
-        )}
+        {processing && <div className="clip-busy" role="status"><Icon n="loader" /><span>Reprocessing…</span></div>}
       </div>
       {!selectMode && (
-        <button className="clip-edit" disabled={processing}
-          onClick={(e) => { e.stopPropagation(); if (!processing) onEdit(clip, index); }}
-          title={processing ? 'Reprocessing — please wait' : 'Set reframe, captions, smart cut & hook — then apply'}>
-          <Icon n={processing ? 'loader' : 'sliders-horizontal'} />{processing ? 'Reprocessing…' : 'Edit & reprocess'}
-        </button>
+        <button type="button" className="clip-edit" disabled={processing} onClick={(event) => { event.stopPropagation(); onEdit(clip, index); }}
+          aria-label={`Edit and reprocess ${title}`}><Icon n={processing ? 'loader' : 'sliders-horizontal'} />{processing ? 'Reprocessing…' : 'Edit & reprocess'}</button>
       )}
       <div className="clip-foot">
         <span className="ttl" title={title}>{title}</span>
-        {!selectMode && (
-          <button type="button" className="mini" title="Apply this clip's settings to all clips (not the manual trim)"
-            aria-label="Apply settings to all clips" disabled={processing}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (processing) return;
-              if (window.confirm("Apply this clip's settings (reframe, captions, smart cut, hook, logo) to every other clip? Manual trim and per-clip hook text are not copied. Each clip will reprocess.")) {
-                onApplyToAll(index);
-              }
-            }}><Icon n="copy" /></button>
-        )}
-        <button type="button" className="mini" title="Download (applies your edits)" aria-label="Download clip" onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></button>
-        <button type="button" className="mini" title="Publish" aria-label="Publish clip" onClick={(e) => { e.stopPropagation(); onPublish({ ...clip, _idx: index, _apiIdx: clip.original_index ?? index }); }}><Icon n="send" /></button>
-        <button type="button" className="mini" title="Remove clip from the grid (file stays on disk)" aria-label="Remove clip" onClick={(e) => {
-          e.stopPropagation();
-          if (window.confirm('Remove this clip from the grid? The file stays on disk.')) {
-            onUpdate(index, { deleted: true });
-            pushToast?.('info', 'Clip removed');
-          }
+        {!selectMode && <button type="button" className="mini" title="Apply these settings to all clips" aria-label="Apply settings to all clips" disabled={processing}
+          onClick={(event) => { event.stopPropagation(); if (!processing && window.confirm("Apply this clip's settings to every other clip? Manual trim and per-clip hook text are not copied.")) onApplyToAll(index); }}><Icon n="copy" /></button>}
+        <button type="button" className="mini" title="Download with edits" aria-label={`Download ${title}`} disabled={downloading || processing} onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></button>
+        <button type="button" className="mini" title="Publish" aria-label={`Publish ${title}`} disabled={processing} onClick={(event) => { event.stopPropagation(); onPublish({ ...clip, _idx: index, _apiIdx: clip.original_index ?? index }); }}><Icon n="send" /></button>
+        <button type="button" className="mini" title="Remove from grid" aria-label={`Remove ${title}`} onClick={(event) => {
+          event.stopPropagation();
+          if (window.confirm('Remove this clip from the grid? The file stays on disk.')) { onUpdate(index, { deleted: true }); pushToast?.('info', 'Clip removed'); }
         }}><Icon n="trash-2" /></button>
       </div>
-    </div>
+    </article>
   );
-}
+});
 
 export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUpdateClipState,
   doneIn, onBack, onPublish, onPublishAll, onEdit, onApplyToAll, onEditSelected, embedded, pushToast }) {
   const [selectMode, setSelectMode] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const visible = useMemo(() => clips.map((clip, index) => ({ c: clip, i: index })).filter(({ i }) => !clipStates[i]?.deleted), [clips, clipStates]);
+  const selected = useMemo(() => visible.filter(({ i }) => clipStates[i]?.selected !== false), [visible, clipStates]);
+  const topScore = useMemo(() => visible.length ? Math.max(...visible.map(({ c }) => Math.round(c.viral_score || 0))) : 0, [visible]);
+  const allSelected = visible.length > 0 && selected.length === visible.length;
 
-  const visible = clips.map((c, i) => ({ c, i })).filter(({ i }) => !clipStates[i]?.deleted);
-  const selectedIdx = visible.filter(({ i }) => clipStates[i]?.selected !== false).map(({ i }) => i);
-  const topScore = clips.length ? Math.max(...clips.map((c) => Math.round(c.viral_score || 0))) : 0;
-
-  const allSelected = visible.length > 0 && selectedIdx.length === visible.length;
-  const setSelectedAll = (sel) => visible.forEach(({ i }) => onUpdateClipState(i, { selected: sel }));
-  const publishMany = (list) => onPublishAll(list.map(({ c, i }) => ({ ...c, _idx: i, _apiIdx: c.original_index ?? i })));
-  // Bulk export composes each clip (applying its toggles) just like the single
-  // download, sequentially so we don't spawn N ffmpeg jobs at once.
+  const setSelectedAll = useCallback((value) => visible.forEach(({ i }) => onUpdateClipState(i, { selected: value })), [visible, onUpdateClipState]);
+  const publishMany = useCallback((list) => onPublishAll(list.map(({ c, i }) => ({ ...c, _idx: i, _apiIdx: c.original_index ?? i }))), [onPublishAll]);
   const exportMany = async (list) => {
     if (exporting || !list.length) return;
     setExporting(true);
-    let ok = 0;
-    for (const { c, i } of list) {
-      try { await exportClip(jobId, i, c, clipStates[i], preselections); ok += 1; }
-      catch { downloadClip(c, i); }
-      await new Promise((r) => setTimeout(r, 250));
-    }
-    setExporting(false);
-    pushToast?.('success', `Exported ${ok}/${list.length} clips`);
+    let composed = 0;
+    let rawFallback = 0;
+    try {
+      for (const { c, i } of list) {
+        try { await exportClip(jobId, i, c, clipStates[i], preselections); composed += 1; }
+        catch { downloadClip(c, i); rawFallback += 1; }
+        await delay(150);
+      }
+      pushToast?.(rawFallback ? 'warn' : 'success', rawFallback
+        ? `Exported ${list.length} clips; ${rawFallback} used the raw fallback`
+        : `Exported ${composed}/${list.length} clips`);
+    } finally { setExporting(false); }
   };
 
   return (
-    <div className="container fade-in">
+    <main className="container fade-in">
       <div className="results-head">
-        {!embedded && <Btn variant="icon" icon="arrow-left" onClick={onBack} title="Start over" />}
+        {!embedded && <Btn variant="icon" icon="arrow-left" onClick={onBack} title="Start over" aria-label="Start over" />}
         <h2>{visible.length} clips ready</h2>
         {doneIn && <Badge tone="teal" icon="check">done in {doneIn}</Badge>}
         <div className="rh-right">
-          <Btn variant="secondary" size="sm" icon={selectMode ? 'x' : 'check-square'}
-            onClick={() => setSelectMode((v) => {
-              // Entering select-mode: start with NOTHING selected so a bulk
-              // Edit/Publish/Export only ever touches clips the user explicitly
-              // ticks (the `selected !== false` default would otherwise pre-tick
-              // every clip → one click reprocesses the whole batch).
-              if (!v) visible.forEach(({ i }) => onUpdateClipState(i, { selected: false }));
-              return !v;
-            })}>
-            {selectMode ? 'Cancel' : 'Select'}
-          </Btn>
-          {!selectMode && <Btn variant="secondary" size="sm" icon={exporting ? 'loader' : 'download'} disabled={exporting} onClick={() => exportMany(visible)}>{exporting ? 'Exporting…' : 'Export all'}</Btn>}
-          {!selectMode && <Btn variant="grad" size="sm" icon="send" onClick={() => publishMany(visible)}>Publish all</Btn>}
+          <Btn variant="secondary" size="sm" icon={selectMode ? 'x' : 'check-square'} onClick={() => setSelectMode((current) => {
+            if (!current) visible.forEach(({ i }) => onUpdateClipState(i, { selected: false }));
+            return !current;
+          })}>{selectMode ? 'Cancel' : 'Select'}</Btn>
+          {!selectMode && <Btn variant="secondary" size="sm" icon="download" loading={exporting} disabled={!visible.length} onClick={() => exportMany(visible)}>{exporting ? 'Exporting…' : 'Export all'}</Btn>}
+          {!selectMode && <Btn variant="grad" size="sm" icon="send" disabled={!visible.length} onClick={() => publishMany(visible)}>Publish all</Btn>}
         </div>
       </div>
       <div className="results-sub">Sorted by virality score · top moment {topScore}</div>
 
-      {selectMode && (
-        <div className="actionbar">
-          <span className="sel-n">{selectedIdx.length} selected</span>
-          <Btn variant="ghost" size="sm" icon="check-check" onClick={() => setSelectedAll(!allSelected)}>
-            {allSelected ? 'Deselect all' : 'Select all'}
-          </Btn>
-          <div className="ab-right">
-            <Btn variant="secondary" size="sm" icon="sliders-horizontal" disabled={!selectedIdx.length}
-              onClick={() => onEditSelected(visible.filter(({ i }) => clipStates[i]?.selected !== false))}>Edit {selectedIdx.length || ''}</Btn>
-            <Btn variant="secondary" size="sm" icon={exporting ? 'loader' : 'download'} disabled={!selectedIdx.length || exporting}
-              onClick={() => exportMany(visible.filter(({ i }) => clipStates[i]?.selected !== false))}>{exporting ? 'Exporting…' : 'Export'}</Btn>
-            <Btn variant="grad" size="sm" icon="send" disabled={!selectedIdx.length}
-              onClick={() => publishMany(visible.filter(({ i }) => clipStates[i]?.selected !== false))}>Publish {selectedIdx.length || ''}</Btn>
-          </div>
+      {selectMode && <div className="actionbar" role="toolbar" aria-label="Selected clip actions">
+        <span className="sel-n" aria-live="polite">{selected.length} selected</span>
+        <Btn variant="ghost" size="sm" icon="check-check" onClick={() => setSelectedAll(!allSelected)}>{allSelected ? 'Deselect all' : 'Select all'}</Btn>
+        <div className="ab-right">
+          <Btn variant="secondary" size="sm" icon="sliders-horizontal" disabled={!selected.length} onClick={() => onEditSelected(selected)}>Edit {selected.length || ''}</Btn>
+          <Btn variant="secondary" size="sm" icon="download" loading={exporting} disabled={!selected.length} onClick={() => exportMany(selected)}>{exporting ? 'Exporting…' : 'Export'}</Btn>
+          <Btn variant="grad" size="sm" icon="send" disabled={!selected.length} onClick={() => publishMany(selected)}>Publish {selected.length || ''}</Btn>
         </div>
-      )}
+      </div>}
 
-      <div className="results-grid">
-        {visible.map(({ c, i }) => (
-          <ClipCard key={c.original_index ?? i} clip={c} index={i} jobId={jobId}
-            state={clipStates[i]} preselections={preselections} onUpdate={onUpdateClipState} selectMode={selectMode}
-            onPublish={onPublish} onEdit={onEdit} onApplyToAll={onApplyToAll} pushToast={pushToast} />
-        ))}
-      </div>
-    </div>
+      {visible.length ? <div className="results-grid" role="list" aria-label="Generated clips">
+        {visible.map(({ c, i }) => <ClipCard key={c.original_index ?? i} clip={c} index={i} jobId={jobId} state={clipStates[i]}
+          preselections={preselections} onUpdate={onUpdateClipState} selectMode={selectMode} onPublish={onPublish}
+          onEdit={onEdit} onApplyToAll={onApplyToAll} pushToast={pushToast} />)}
+      </div> : <div className="empty" role="status"><div className="ei"><Icon n="film" /></div><h3>No visible clips</h3><p>All clips were removed from this view. Start over to generate a new set.</p></div>}
+    </main>
   );
 }

@@ -1,21 +1,11 @@
-import { useEffect } from 'react';
+
+import { useEffect, useRef } from 'react';
 import { pollJob } from '../lib/api';
 import { detectPipelineStep } from '../lib/pipelineStep';
 
-/**
- * Polls the backend for job status every 2 seconds while the job is active,
- * and invokes the provided callbacks on state transitions.
- *
- * @param {{
- *   jobId: string | null,
- *   isActive: boolean,
- *   onResult: (result: object) => void,
- *   onCompleted: (data: object) => void,
- *   onCancelled: () => void,
- *   onFailed: (errorMsg: string) => void,
- *   onProgress: (logs: string[], step: string | null) => void,
- * }} params
- */
+const BASE_DELAY = 2000;
+const MAX_DELAY = 30000;
+
 export function useJobPolling({
   jobId,
   isActive,
@@ -25,72 +15,68 @@ export function useJobPolling({
   onCancelled,
   onFailed,
   onProgress,
+  onPaused,
+  onConnectionChange,
 }) {
+  const callbacks = useRef({});
+  callbacks.current = { onResult, onCompleted, onStopped, onCancelled, onFailed, onProgress, onPaused, onConnectionChange };
+
   useEffect(() => {
     if (!isActive || !jobId) return undefined;
 
-    let cancelled = false;
+    let disposed = false;
     let timer = null;
-    // Stop hammering a dead backend: after this many consecutive poll
-    // failures we surface the error instead of spinning on "processing"
-    // forever (previously errors were swallowed with console.error only).
-    const MAX_CONSECUTIVE_ERRORS = 5;
-    const BASE_DELAY = 2000;
+    let controller = null;
     let consecutiveErrors = 0;
+    let disconnectedAnnounced = false;
 
     const schedule = (delay) => {
-      if (cancelled) return;
-      timer = setTimeout(tick, delay);
+      if (!disposed) timer = setTimeout(tick, delay);
+    };
+
+    const terminal = (callback, data) => {
+      disposed = true;
+      callback?.(data);
     };
 
     const tick = async () => {
+      controller = new AbortController();
       try {
-        const data = await pollJob(jobId);
-        if (cancelled) return;
+        const data = await pollJob(jobId, { signal: controller.signal });
+        if (disposed) return;
         consecutiveErrors = 0;
+        if (disconnectedAnnounced) callbacks.current.onConnectionChange?.(true);
+        disconnectedAnnounced = false;
 
-        if (data.result) onResult(data.result);
-
-        if (data.status === 'completed') {
-          onCompleted(data);
-          return; // stop polling
-        } else if (data.status === 'stopped') {
-          // Graceful early stop — terminal, but keeps the finished clips.
-          (onStopped || onCompleted)(data);
-          return;
-        } else if (data.status === 'cancelled') {
-          onCancelled();
-          return;
-        } else if (data.status === 'failed') {
-          const errorMsg =
-            data.error ||
-            (data.logs && data.logs.length > 0 ? data.logs[data.logs.length - 1] : 'Process failed');
-          onFailed(errorMsg);
-          return;
-        } else if (data.logs) {
-          onProgress(data.logs, detectPipelineStep(data.logs));
+        if (data.result) callbacks.current.onResult?.(data.result);
+        if (data.status === 'completed') return terminal(callbacks.current.onCompleted, data);
+        if (data.status === 'stopped') return terminal(callbacks.current.onStopped || callbacks.current.onCompleted, data);
+        if (data.status === 'cancelled') return terminal(callbacks.current.onCancelled);
+        if (data.status === 'failed') {
+          const errorMsg = data.error || data.logs?.at?.(-1) || 'Process failed';
+          return terminal(callbacks.current.onFailed, errorMsg);
         }
-        schedule(BASE_DELAY);
-      } catch (e) {
-        if (cancelled) return;
+        if (data.status === 'paused') callbacks.current.onPaused?.(data);
+        if (Array.isArray(data.logs)) callbacks.current.onProgress?.(data.logs, data.operations?.stage || detectPipelineStep(data.logs));
+        schedule(typeof document !== 'undefined' && document.hidden ? 10000 : BASE_DELAY);
+      } catch (error) {
+        if (disposed || error?.name === 'AbortError') return;
         consecutiveErrors += 1;
-        console.error(`Polling error (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS})`, e);
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          onFailed('Lost connection to the server. Please refresh the page.');
-          return;
+        if (consecutiveErrors >= 3 && !disconnectedAnnounced) {
+          disconnectedAnnounced = true;
+          callbacks.current.onConnectionChange?.(false, error);
         }
-        // Exponential backoff with a ceiling so transient blips recover
-        // without stampeding the backend.
-        schedule(Math.min(BASE_DELAY * 2 ** consecutiveErrors, 30000));
+        // A network outage is not a pipeline failure. Keep the durable backend
+        // job alive and retry with a ceiling instead of changing its status.
+        schedule(Math.min(BASE_DELAY * 2 ** consecutiveErrors, MAX_DELAY));
       }
     };
 
-    schedule(BASE_DELAY);
-
+    tick();
     return () => {
-      cancelled = true;
+      disposed = true;
       if (timer) clearTimeout(timer);
+      controller?.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive, jobId]);
 }

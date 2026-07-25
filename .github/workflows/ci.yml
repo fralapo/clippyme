@@ -35,7 +35,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[host-tests]"
-          pip install pytest pytest-cov pip-audit ruff bandit
+          pip install pytest pytest-cov pytest-timeout pip-audit ruff bandit
 
       - name: Lint (ruff — bug-class rules)
         run: ruff check src/clippyme tests --select E9,F63,F7,F82
@@ -46,17 +46,23 @@ jobs:
       - name: Run host test suite (excludes integration)
         id: host-tests
         continue-on-error: true
-        run: >-
-          pytest -m "not integration" -q
-          --cov=clippyme --cov-report=term
-          --junitxml=pytest-report.xml
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest -m "not integration" -vv \
+            --timeout=120 --timeout-method=thread \
+            --cov=clippyme --cov-report=term \
+            --junitxml=pytest-report.xml \
+            2>&1 | tee pytest-output.log
 
-      - name: Upload backend test report
+      - name: Upload backend test diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: backend-pytest-report
-          path: pytest-report.xml
+          path: |
+            pytest-report.xml
+            pytest-output.log
           if-no-files-found: error
           retention-days: 7
 

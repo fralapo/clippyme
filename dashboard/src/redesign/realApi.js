@@ -345,8 +345,8 @@ export async function stopLiveMonitor(monitorId) {
   return res.json().catch(() => ({}));
 }
 
-export async function getLiveMonitorStatus() {
-  const res = await apiFetch(getApiUrl('/api/live-monitor/status'));
+export async function getLiveMonitorStatus({ signal } = {}) {
+  const res = await apiFetch(getApiUrl('/api/live-monitor/status'), { signal });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }

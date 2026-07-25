@@ -7,6 +7,7 @@ import { HookStyleControls, HookPreview } from './hookStyle';
 import { SubtitleControls } from './subtitleControls';
 import { LogoControls, GradeControls } from './layerControls';
 import { BannerControls } from './bannerControls';
+import { validateCreateOptions } from '../lib/createValidation';
 
 function PresetCards({ presets, active, defaultId, onPick, onSetDefault, onDelete, onSaveCurrent }) {
   const corner = { position: 'absolute', top: 12, left: 12, display: 'flex', gap: 8, zIndex: 2 };
@@ -72,7 +73,7 @@ function SourcePanel({ opts, set }) {
           {opts.source === 'url' ? (
             <div className="input">
               <Icon n="link" />
-              <input value={opts.url} placeholder="Paste a video link (YouTube, Twitch, Vimeo, …)"
+              <input value={opts.url} placeholder="Paste a video link (YouTube, Twitch, or Kick)"
                 onChange={(e) => set({ url: e.target.value })} />
               <button type="button" className="paste" onClick={async () => {
                 try {
@@ -103,7 +104,7 @@ function SourcePanel({ opts, set }) {
                 <div><b>{opts.fileName}</b><div className="label" style={{ marginTop: 6 }}>Ready · click to remove</div></div>
               ) : (
                 <div>Drop a video or <b style={{ color: 'var(--brand-blue)' }}>browse</b>
-                  <div className="label" style={{ marginTop: 6, textTransform: 'none', letterSpacing: 0 }}>MP4 · MOV · WEBM · up to 2&nbsp;GB</div></div>
+                  <div className="label" style={{ marginTop: 6, textTransform: 'none', letterSpacing: 0 }}>MP4 · MOV · WEBM · up to 16&nbsp;GB</div></div>
               )}
             </div>
           )}
@@ -346,7 +347,7 @@ function OptionsPanel({ opts, set }) {
   );
 }
 
-function SummaryBar({ opts, ready, count, onCreate }) {
+function SummaryBar({ opts, ready, count, onCreate, error }) {
   const chips = [
     opts.aspect || '9:16',
     opts.clipsAuto ? 'auto clips' : `~${opts.clips} clips`,
@@ -363,6 +364,7 @@ function SummaryBar({ opts, ready, count, onCreate }) {
         <div className="s-sub">
           {chips.map((c) => <span key={c} className="chip">{c}</span>)}
         </div>
+        {error && <div className="field-error" role="alert">{error}</div>}
       </div>
       <div className="s-right">
         <Btn variant="grad" size="lg" icon="wand-sparkles" onClick={onCreate} disabled={!ready}>Create clips</Btn>
@@ -372,16 +374,14 @@ function SummaryBar({ opts, ready, count, onCreate }) {
 }
 
 export function CreateView({ opts, set, onPickPreset, onCreate, presets, defaultId, onSetDefault, onDelete, onSaveCurrent }) {
-  const batchCount = opts.batch.split('\n').filter((l) => l.trim()).length + (opts.batchFiles || []).length;
-  const ready = opts.mode === 'single'
-    ? (opts.source === 'url' ? !!opts.url : !!opts.file)
-    : batchCount > 0;
-  const nSources = opts.mode === 'single' ? 1 : Math.max(1, batchCount);
+  const validation = validateCreateOptions(opts);
+  const ready = validation.valid;
+  const nSources = Math.max(1, validation.sourceCount);
   const count = opts.detect ? opts.clips * nSources : nSources;
   return (
     <div className="container fade-in">
       <Hero eyebrow="Drop a link · get scroll-stopping shorts" line1="Long videos in." grad="Viral shorts out."
-        sub="Drop a link from YouTube, Twitch, or Vimeo (or upload a file) and ClippyMe does the rest: transcribes it, finds the best moments, reframes and trims them, and queues the top clips to post." />
+        sub="Drop a link from YouTube, Twitch, or Kick (or upload a file) and ClippyMe does the rest: transcribes it, finds the best moments, reframes and trims them, and queues the top clips to post." />
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
         {/* Order: pick a source first, then optionally start from a preset,
             then fine-tune the recipe by hand. */}
@@ -393,7 +393,7 @@ export function CreateView({ opts, set, onPickPreset, onCreate, presets, default
         </div>
         <OptionsPanel opts={opts} set={set} />
       </div>
-      <SummaryBar opts={opts} ready={ready} count={count} onCreate={onCreate} />
+      <SummaryBar opts={opts} ready={ready} count={count} onCreate={onCreate} error={validation.firstError} />
     </div>
   );
 }

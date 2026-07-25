@@ -1,34 +1,44 @@
-// Polls GET /api/live-monitor/status every `intervalMs` while mounted.
-// Backend now runs multiple concurrent monitors, so this returns the full
-// `monitors` list rather than one status object.
-// ponytail: polls continuously rather than gating on "any running" — the view
-// only mounts while the Live Monitor tab is open, and an all-idle list still
-// needs to be observable (e.g. after a reload); add a backoff-when-idle if
-// the poll ever becomes a real cost concern.
-import { useEffect, useRef, useState, useCallback } from 'react';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getLiveMonitorStatus } from '../redesign/realApi';
 
 export function useLiveMonitorStatus(intervalMs = 5000) {
   const [monitors, setMonitors] = useState([]);
+  const [meta, setMeta] = useState({ loading: true, error: null, updatedAt: null });
   const timerRef = useRef(null);
-  const cancelledRef = useRef(false);
+  const controllerRef = useRef(null);
+  const mountedRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
     try {
-      const s = await getLiveMonitorStatus();
-      if (!cancelledRef.current) setMonitors(Array.isArray(s?.monitors) ? s.monitors : []);
-    } catch {
-      // Backend unreachable — keep the last known list rather than
-      // flashing to an error state on a transient blip.
+      const data = await getLiveMonitorStatus({ signal: controller.signal });
+      if (!mountedRef.current) return;
+      setMonitors(Array.isArray(data?.monitors) ? data.monitors : []);
+      setMeta({ loading: false, error: null, updatedAt: Date.now() });
+    } catch (error) {
+      if (!mountedRef.current || error?.name === 'AbortError') return;
+      setMeta((current) => ({ ...current, loading: false, error }));
     }
   }, []);
 
   useEffect(() => {
-    cancelledRef.current = false;
-    refresh();
-    timerRef.current = setInterval(refresh, intervalMs);
-    return () => { cancelledRef.current = true; clearInterval(timerRef.current); };
+    mountedRef.current = true;
+    let disposed = false;
+    const tick = async () => {
+      await refresh();
+      if (!disposed) timerRef.current = setTimeout(tick, typeof document !== 'undefined' && document.hidden ? intervalMs * 3 : intervalMs);
+    };
+    tick();
+    return () => {
+      disposed = true;
+      mountedRef.current = false;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      controllerRef.current?.abort();
+    };
   }, [intervalMs, refresh]);
 
-  return [monitors, refresh];
+  return [monitors, refresh, meta];
 }

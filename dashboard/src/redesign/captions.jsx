@@ -167,7 +167,6 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
   return (
     // Backdrop click is a mouse-only convenience; keyboard users close via
     // Esc (useModalA11y). currentTarget guard replaces stopPropagation.
-    // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
     <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal wide" ref={panelRef}
         role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
@@ -184,7 +183,6 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
           <div className="clip" style={{ cursor: 'default' }}>
             <div className="clip-media" style={{ padding: 0, background: '#000' }}>
               {/* Captions are burned into the pixels by the subtitle layer — no separate text track exists. */}
-              {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
               <video src={clipPreviewSrc(clip, initial)} controls playsInline preload="metadata"
                 style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
               <div className="clip-top" style={{ padding: 10 }}>
