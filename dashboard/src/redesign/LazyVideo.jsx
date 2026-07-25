@@ -30,7 +30,6 @@ export const LazyVideo = forwardRef(function LazyVideo({ src, rootMargin = '320p
 
   return (
     // Captions are burned into ClippyMe output pixels; there is no separate text track.
-    // eslint-disable-next-line jsx-a11y/media-has-caption
     <video
       {...props}
       ref={assignRef}
