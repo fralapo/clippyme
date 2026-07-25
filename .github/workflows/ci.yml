@@ -12,98 +12,13 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  frontend-lock-finalizer:
-    name: Temporary frontend lock finalizer
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: codex/runtime-quality-roadmap-20260724
-          fetch-depth: 0
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
-
-      - name: Resolve maintained frontend dependencies
-        working-directory: dashboard
-        run: npm install --legacy-peer-deps --no-audit --no-fund
-
-      - name: Remove obsolete source-only accessibility directives
-        working-directory: dashboard
-        shell: bash
-        run: |
-          grep -RIl "eslint-disable-next-line jsx-a11y" src \
-            | xargs -r sed -i '/eslint-disable-next-line jsx-a11y/d'
-
-      - name: Inspect installed frontend toolchain
-        working-directory: dashboard
-        run: |
-          node -e "Promise.all([import('eslint'), import('@eslint/js'), import('eslint-plugin-react'), import('eslint-plugin-react-hooks'), import('axe-core')]).then(() => console.log('frontend toolchain resolved'))" || true
-          npm ls eslint @eslint/js eslint-plugin-react eslint-plugin-react-hooks axe-core --depth=0 || true
-
-      - name: Verify frontend dependency security
-        shell: bash
-        working-directory: dashboard
-        run: |
-          set -o pipefail
-          npm audit --package-lock-only --audit-level=high 2>&1 | tee ../frontend-finalizer-audit.log
-
-      - name: Verify frontend lint
-        shell: bash
-        working-directory: dashboard
-        run: |
-          set -o pipefail
-          npm run lint 2>&1 | tee ../frontend-finalizer-lint.log
-
-      - name: Verify frontend tests
-        shell: bash
-        working-directory: dashboard
-        run: |
-          set -o pipefail
-          npm test -- --coverage 2>&1 | tee ../frontend-finalizer-tests.log
-
-      - name: Verify frontend production build
-        shell: bash
-        working-directory: dashboard
-        run: |
-          set -o pipefail
-          npm run build 2>&1 | tee ../frontend-finalizer-build.log
-
-      - name: Upload frontend finalizer diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-finalizer-diagnostics
-          path: |
-            frontend-finalizer-audit.log
-            frontend-finalizer-lint.log
-            frontend-finalizer-tests.log
-            frontend-finalizer-build.log
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Commit verified frontend lockfile and cleanup
-        run: |
-          if git diff --quiet -- dashboard/package.json dashboard/package-lock.json dashboard/src; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add dashboard/package.json dashboard/package-lock.json dashboard/src
-          git commit -m "chore: finalize secure frontend toolchain"
-          git push origin HEAD:codex/runtime-quality-roadmap-20260724
-
   backend:
     name: Backend (pytest + pip-audit)
     runs-on: ubuntu-latest
