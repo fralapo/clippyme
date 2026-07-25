@@ -45,31 +45,34 @@ test('shared navigation and controls expose an accessible DOM', async () => {
 })
 
 test('processing and empty results states pass the rendered accessibility gate', async () => {
-  const { container } = render(
-    <>
-      <ProcessingView
-        media={{ type: 'url', payload: 'https://youtu.be/example' }}
-        status="processing"
-        logs={['queued', 'transcribing']}
-        step="transcribing"
-        clips={[]}
-        onCancel={vi.fn()}
-        opts={{ aspect: '9:16' }}
-      />
-      <ResultsView
-        clips={[]}
-        jobId="job-1"
-        preselections={{}}
-        clipStates={{}}
-        onUpdateClipState={vi.fn()}
-        onBack={vi.fn()}
-        onPublish={vi.fn()}
-        onPublishAll={vi.fn()}
-        onEdit={vi.fn()}
-        onApplyToAll={vi.fn()}
-        onEditSelected={vi.fn()}
-      />
-    </>,
+  const processing = render(
+    <ProcessingView
+      media={{ type: 'url', payload: 'https://youtu.be/example' }}
+      status="processing"
+      logs={['queued', 'transcribing']}
+      step="transcribing"
+      clips={[]}
+      onCancel={vi.fn()}
+      opts={{ aspect: '9:16' }}
+    />,
   )
-  await expectAccessible(container)
+  await expectAccessible(processing.container)
+  processing.unmount()
+
+  const results = render(
+    <ResultsView
+      clips={[]}
+      jobId="job-1"
+      preselections={{}}
+      clipStates={{}}
+      onUpdateClipState={vi.fn()}
+      onBack={vi.fn()}
+      onPublish={vi.fn()}
+      onPublishAll={vi.fn()}
+      onEdit={vi.fn()}
+      onApplyToAll={vi.fn()}
+      onEditSelected={vi.fn()}
+    />,
+  )
+  await expectAccessible(results.container)
 })
