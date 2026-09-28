@@ -10,29 +10,39 @@
 #
 #     git commit --no-verify
 #
-# Exit non-zero → commit aborted.
+# Exit 0 = clean; 1 = secret found; 2 = the scan itself failed. Any non-zero
+# aborts the commit — a scanner error never reads as "clean".
+#
+# Matching uses bash's own [[ =~ ]] (POSIX ERE), never an external grep: on
+# Windows an MSYS grep.exe from another install (e.g. msys64) earlier on PATH
+# re-parses its argv and mangles brace quantifiers — `hf_[..]{30,}` became a
+# missing-file error and `AIza[..]{35}` a silent non-match. The staged diff is
+# read once, so no file name ever travels through a command line either.
 set -euo pipefail
 
-# Only scan what is staged (added/changed lines), not the whole tree.
-staged_files=$(git diff --cached --name-only --diff-filter=ACM)
-[ -z "$staged_files" ] && exit 0
-
+scan_error() { echo "🚫 pre-commit: secret scanner error: $1" >&2; exit 2; }
 fail=0
 report() { echo "🚫 pre-commit: $1" >&2; fail=1; }
+
+# R included: a renamed-and-edited file must not slip past the scan.
+filter=ACMR
+names=$(git -c core.quotePath=false diff --cached --name-only --diff-filter="$filter") \
+  || scan_error "git diff --name-only failed"
+[ -z "$names" ] && exit 0
 
 # --- 1. Block sensitive files by path -------------------------------------
 # These hold real secrets and must never be committed (they are gitignored,
 # but a `git add -f` would slip them through).
 while IFS= read -r f; do
   case "$f" in
-    data/cookies.txt|data/config.json|.env|*/cookies.txt)
+    data/cookies.txt|data/config.json|.env|*/.env|*/cookies.txt)
       report "refusing to commit secret file: $f" ;;
     tmp/*)
       report "refusing to commit from gitignored tmp/: $f" ;;
   esac
-done <<< "$staged_files"
+done <<< "$names"
 
-# --- 2. Scan staged content for secret patterns ---------------------------
+# --- 2. Scan staged added lines for secret patterns -----------------------
 # Token shapes: Google API key (AIza…), HuggingFace (hf_…), OpenAI (sk-…),
 # ElevenLabs (sk_… — underscore, not hyphen), Deepgram (40-hex), Netscape
 # cookie header, and generic "key=<long>" lines (bare or JSON-quoted values).
@@ -46,22 +56,40 @@ patterns=(
   'Token [a-f0-9]{32,}'
 )
 
-for f in $staged_files; do
-  # Skip binary blobs and this hook itself (its patterns are not secrets).
-  case "$f" in
-    .githooks/pre-commit) continue ;;
-  esac
-  git show ":$f" 2>/dev/null | grep -Iq . || continue   # -I: skip if binary
-  # `|| true`: with pipefail, zero added lines (pure deletions/renames) would
-  # otherwise kill the whole hook silently via grep's exit 1.
-  added=$(git diff --cached -U0 -- "$f" | grep '^+' | grep -v '^+++' || true)
-  [ -z "$added" ] && continue
+diff=$(git -c core.quotePath=false diff --cached -U0 --no-color --no-ext-diff \
+  --diff-filter="$filter") || scan_error "git diff failed"
+
+file="" added=""
+scan_file() {
+  # Skip this hook itself (its patterns are not secrets); binary files carry
+  # no "+" lines in a text diff, so they never reach the matcher.
+  [ -z "$added" ] || [ "$file" = ".githooks/pre-commit" ] && return 0
+  local p rc
   for p in "${patterns[@]}"; do
-    if printf '%s\n' "$added" | grep -Eq "$p"; then
-      report "possible secret in $f (pattern: ${p:0:24}…)"
+    if [[ $added =~ $p ]]; then
+      report "possible secret in $file (pattern: ${p:0:24}…)"
+    else
+      rc=$?
+      [ "$rc" -eq 1 ] || scan_error "pattern ${p:0:24}… could not be evaluated (rc=$rc)"
     fi
   done
-done
+}
+
+header=0
+while IFS= read -r line; do
+  case "$line" in
+    'diff --git '*) scan_file; file="" added=""; header=1 ;;
+    '@@'*) header=0 ;;
+    '+++ '*)
+      if [ "$header" -eq 1 ]; then
+        file=${line#+++ b/}; file=${file%$'\t'}
+      else
+        added+="${line#+}"$'\n'
+      fi ;;
+    '+'*) [ "$header" -eq 0 ] && added+="${line#+}"$'\n' ;;
+  esac
+done <<< "$diff"
+scan_file
 
 if [ "$fail" -ne 0 ]; then
   echo "" >&2

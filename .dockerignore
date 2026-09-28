@@ -40,6 +40,22 @@ output/
 uploads/
 data/
 
+# The backend Dockerfile does `COPY . .`: anything left in the context ends up
+# in an image layer. Local secrets, scratch space, extra git checkouts and
+# agent/tool state never belong there. (.env.example is the template: kept.)
+**/.env
+**/.env.*
+!.env.example
+tmp/
+.worktrees/
+.claude/
+.codex/
+.agents/
+.superpowers/
+.local/
+**/graphify-out/
+.ruff_cache/
+
 # Docker
 Dockerfile
 docker-compose.yml

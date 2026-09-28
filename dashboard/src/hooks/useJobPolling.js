@@ -61,6 +61,10 @@ export function useJobPolling({
         schedule(typeof document !== 'undefined' && document.hidden ? 10000 : BASE_DELAY);
       } catch (error) {
         if (disposed || error?.name === 'AbortError') return;
+        // A permanent HTTP answer (404 job gone, 401/403 token, 400) never
+        // heals by retrying: stop here. The backend job itself is untouched.
+        // Network errors (no status), 408, 429 and 5xx stay retryable.
+        if (error?.status && !error.retryable) return terminal(callbacks.current.onFailed, error.message);
         consecutiveErrors += 1;
         if (consecutiveErrors >= 3 && !disconnectedAnnounced) {
           disconnectedAnnounced = true;
