@@ -40,7 +40,11 @@ _DEFAULT_FFMPEG_TIMEOUT = 600
 
 
 def ffmpeg_timeout() -> int:
-    """Per-pass ffmpeg timeout in seconds — ``CLIPPYME_FFMPEG_TIMEOUT`` (>0) or 600."""
+    """Per-pass ffmpeg timeout in seconds — ``CLIPPYME_FFMPEG_TIMEOUT`` (>0) or 600.
+
+    Compose passes use it as a wall-clock timeout; the pipeline's cut/trim and
+    reframe encode (``pipeline.ffmpeg_exec``) use it as a *no-progress* limit.
+    """
     raw = (os.getenv("CLIPPYME_FFMPEG_TIMEOUT") or "").strip()
     if raw:
         try:

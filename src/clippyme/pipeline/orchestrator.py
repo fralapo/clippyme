@@ -15,13 +15,13 @@ import math
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
 from typing import Any
 
 from clippyme.domain.runtime_state import RuntimeState
+from clippyme.pipeline.ffmpeg_exec import FfmpegError, remove_quietly, run_ffmpeg_atomic
 from clippyme.pipeline.media_qa import inspect_clip, probe_media
 from clippyme.pipeline.preflight import (
     PreflightInputs,
@@ -93,6 +93,31 @@ def _valid_file(path: str | None, minimum: int = 1) -> bool:
         return bool(path and os.path.isfile(path) and os.path.getsize(path) >= minimum)
     except OSError:
         return False
+
+
+def _playable(path: str) -> bool:
+    """ffprobe reads the container and finds a video stream with a duration."""
+    report = probe_media(path)
+    return bool(not report.get("probe_error") and report.get("has_video") and (report.get("duration") or 0) > 0)
+
+
+# A complete cut can fall short of end-start by frame rounding or by the source
+# ending first; an interrupted one (SIGTERM makes ffmpeg finalise what it has)
+# falls short by far more.
+_SLICE_SHORTFALL_SECONDS = 0.5
+
+
+def _reusable_slice(path: str, expected_duration: float) -> bool:
+    """Only a readable slice of (nearly) the planned length is resumed from."""
+    if not _valid_file(path, 10_000):
+        return False
+    report = probe_media(path)
+    duration = float(report.get("duration") or 0.0)
+    return bool(
+        not report.get("probe_error")
+        and report.get("has_video")
+        and duration >= expected_duration * 0.99 - _SLICE_SHORTFALL_SECONDS
+    )
 
 
 def _enabled(name: str, default: str = "1") -> bool:
@@ -198,7 +223,7 @@ def _transcript_cache_key(args: argparse.Namespace) -> str | None:
     return f"{args.url}#start={int(offset)}" if offset > 0 else args.url
 
 
-def _trim_head(input_video: str, output_dir: str, offset: float) -> str:
+def _trim_head(input_video: str, output_dir: str, offset: float) -> tuple[str, float]:
     """Drop the first ``offset`` seconds of the source, stream-copied.
 
     This is the VOD counterpart of the live monitor's prelive skip: the
@@ -206,57 +231,76 @@ def _trim_head(input_video: str, output_dir: str, offset: float) -> str:
     nothing and costs transcription. Every downstream timestamp is relative to
     the trimmed file, so nothing else needs to know about the offset.
 
-    Falls back to the untouched source on any failure (a truncated container, a
-    missing ffmpeg, an offset past the end) — a bad skip must not fail a job.
+    Returns ``(path, seconds skipped)``. Falls back to the untouched source
+    (skipped = 0) on any failure — a truncated container, a missing ffmpeg, an
+    offset past the end, a wedged pass — because a bad skip must not fail a job.
     """
     try:
         seconds = float(offset or 0.0)
     except (TypeError, ValueError):
-        return input_video
+        return input_video, 0.0
     if seconds <= 0:
-        return input_video
+        return input_video, 0.0
 
     trimmed = os.path.join(output_dir, f"trimmed_{os.path.basename(input_video)}")
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{seconds:.3f}", "-i", input_video,
-             "-c", "copy", "-avoid_negative_ts", "make_zero", trimmed],
-            check=True, capture_output=True,
+        run_ffmpeg_atomic(
+            lambda dest: ["ffmpeg", "-y", "-ss", f"{seconds:.3f}", "-i", input_video,
+                          "-c", "copy", "-avoid_negative_ts", "make_zero", dest],
+            trimmed,
+            validate=_playable,
         )
-    except (subprocess.CalledProcessError, OSError) as exc:
+    except (FfmpegError, OSError) as exc:
         print(f"⚠️ start-offset trim failed ({exc}); using the untrimmed source", flush=True)
-        return input_video
-    if not _valid_file(trimmed, 10_000):
-        print("⚠️ start-offset trim produced nothing; using the untrimmed source", flush=True)
-        return input_video
+        return input_video, 0.0
     print(f"✂️ Skipped the first {seconds:.0f}s of the source", flush=True)
-    return os.path.abspath(trimmed)
+    return os.path.abspath(trimmed), seconds
+
+
+def _reusable_source(args: argparse.Namespace, output_dir: str, state: RuntimeState) -> str | None:
+    """The source a previous attempt acquired — already trimmed — if intact.
+
+    The head trim belongs to acquisition: it is applied once, to the original
+    download/upload, and later attempts resume from its result. Trimming
+    whatever the checkpoint points at would skip the offset a second time and
+    shift every reused transcript/clip timestamp by it. The fingerprint recorded
+    with the artefact rejects a file that was replaced or torn since.
+    """
+    if not state.completed("acquiring") or state.artifact("source_url") != args.url:
+        return None
+    recorded = state.artifact("input_video")
+    prior = _safe_output_artifact(recorded, output_dir)
+    if prior is None and args.input and recorded and os.path.abspath(str(recorded)) == os.path.abspath(args.input):
+        prior = os.path.abspath(args.input)  # an upload used untrimmed lives outside the job dir
+    expected = state.artifact("source_fingerprint")
+    if not _valid_file(prior) or not expected or _source_fingerprint(prior) != expected:
+        return None
+    return prior
 
 
 def _prepare_input(args: argparse.Namespace, output_dir: str, state: RuntimeState, legacy):
     state.start("acquiring", "acquiring source media")
+    prior = _reusable_source(args, output_dir, state)
+    if prior:
+        print(f"♻️ Resume: reusing acquired source {os.path.basename(prior)}", flush=True)
+        state.complete_stage("acquiring", detail="source media ready")
+        return prior, str(state.artifact("video_title") or Path(prior).stem)
+
     if args.input:
-        input_video = os.path.abspath(args.input)
-        if not _valid_file(input_video):
-            raise FileNotFoundError(f"Input file not found or empty: {input_video}")
-        video_title = os.path.splitext(os.path.basename(input_video))[0]
+        original = os.path.abspath(args.input)
+        if not _valid_file(original):
+            raise FileNotFoundError(f"Input file not found or empty: {original}")
+        video_title = os.path.splitext(os.path.basename(original))[0]
     else:
-        prior = _safe_output_artifact(state.artifact("input_video"), output_dir)
-        same_url = state.artifact("source_url") == args.url
-        if state.completed("acquiring") and same_url and _valid_file(prior, 10_000):
-            input_video = prior
-            video_title = str(state.artifact("video_title") or Path(prior).stem)
-            print(f"♻️ Resume: reusing downloaded source {os.path.basename(input_video)}", flush=True)
-        else:
-            input_video, video_title = legacy.download_youtube_video(
-                args.url,
-                output_dir,
-                args.cookies,
-            )
-            input_video = os.path.abspath(input_video)
-    if not _valid_file(input_video):
-        raise FileNotFoundError(f"Input file not found or empty: {input_video}")
-    input_video = _trim_head(input_video, output_dir, getattr(args, "start_offset", 0.0))
+        original, video_title = legacy.download_youtube_video(
+            args.url,
+            output_dir,
+            args.cookies,
+        )
+        original = os.path.abspath(original)
+    if not _valid_file(original):
+        raise FileNotFoundError(f"Input file not found or empty: {original}")
+    input_video, skipped = _trim_head(original, output_dir, getattr(args, "start_offset", 0.0))
     state.complete_stage(
         "acquiring",
         artifacts={
@@ -264,6 +308,10 @@ def _prepare_input(args: argparse.Namespace, output_dir: str, state: RuntimeStat
             "video_title": video_title,
             "source_url": args.url,
             "source_fingerprint": _source_fingerprint(input_video),
+            "head_trim_seconds": skipped,
+            # The download the trim was cut from: deleted with the source on
+            # completion (an upload's original belongs to the uploads dir).
+            "untrimmed_source": original if args.url and input_video != original else None,
         },
         detail="source media ready",
     )
@@ -523,20 +571,18 @@ def _render_one_clip(
         f"cutting clip {index + 1}/{total}",
         progress=62 + int(index / max(1, total) * 8),
     )
-    if not _valid_file(clip_source, 10_000):
-        command = build_cut_command(input_video, start, end, clip_source)
-        print(f"✂️ Clip {index + 1}/{total}: {start:.2f}s → {end:.2f}s", flush=True)
-        process = subprocess.run(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            timeout=600,
-        )
-        if process.returncode != 0:
-            tail = (process.stderr or b"").decode("utf-8", errors="replace")[-1000:]
-            raise RuntimeError(f"ffmpeg cut failed for clip {index + 1}: {tail}")
-    else:
+    if _reusable_slice(clip_source, expected_duration):
         print(f"♻️ Resume: reusing source slice for clip {index + 1}", flush=True)
+    else:
+        print(f"✂️ Clip {index + 1}/{total}: {start:.2f}s → {end:.2f}s", flush=True)
+        try:
+            run_ffmpeg_atomic(
+                lambda dest: build_cut_command(input_video, start, end, dest),
+                clip_source,
+                validate=_playable,
+            )
+        except FfmpegError as exc:
+            raise RuntimeError(f"ffmpeg cut failed for clip {index + 1}: {exc}") from exc
 
     state.start(
         "reframing",
@@ -547,10 +593,9 @@ def _render_one_clip(
     last_report: dict[str, Any] | None = None
     for render_attempt in range(1, retries + 2):
         temp_output = clip_final + ".render.tmp.mp4"
-        try:
-            os.remove(temp_output)
-        except FileNotFoundError:
-            pass
+        # Includes the in-place post-pass temps a killed attempt can leave.
+        for stale in (temp_output, temp_output + ".norm.mp4", temp_output + ".zoom.mp4"):
+            remove_quietly(stale)
         success = legacy.process_video_to_vertical(
             clip_source,
             temp_output,
@@ -628,13 +673,17 @@ def _cleanup_completed(
     is_url: bool,
     keep_original: bool,
     all_clips_ready: bool,
+    untrimmed_source: str | None = None,
 ) -> None:
-    if is_url and not keep_original and _valid_file(input_video):
-        try:
-            os.remove(input_video)
-            print("🗑️ Cleaned downloaded source after successful completion", flush=True)
-        except OSError as exc:
-            print(f"⚠️ Could not clean downloaded source: {exc}", flush=True)
+    if is_url and not keep_original:
+        for path in dict.fromkeys(p for p in (input_video, untrimmed_source) if p):
+            if not _valid_file(path):
+                continue
+            try:
+                os.remove(path)
+                print("🗑️ Cleaned downloaded source after successful completion", flush=True)
+            except OSError as exc:
+                print(f"⚠️ Could not clean downloaded source: {exc}", flush=True)
     if not all_clips_ready or _enabled("CLIPPYME_KEEP_CHECKPOINTS", "0"):
         return
     # Preserve source_<clip>.mp4: POST /api/reframe needs these slices
@@ -686,6 +735,7 @@ def run(argv: list[str] | None = None) -> int:
                 input_video=input_video,
                 is_url=bool(args.url),
                 keep_original=args.keep_original,
+                untrimmed_source=_safe_output_artifact(state.artifact("untrimmed_source"), output_dir),
                 all_clips_ready=True,
             )
             print("🚫 No valid clips generated for this job", flush=True)
@@ -733,6 +783,7 @@ def run(argv: list[str] | None = None) -> int:
             input_video=input_video,
             is_url=bool(args.url),
             keep_original=args.keep_original,
+            untrimmed_source=_safe_output_artifact(state.artifact("untrimmed_source"), output_dir),
             all_clips_ready=ready == len(clips),
         )
         print(f"⏱️ Total execution time: {time.time() - started:.2f}s", flush=True)

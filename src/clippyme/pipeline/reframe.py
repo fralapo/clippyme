@@ -25,6 +25,7 @@ import numpy as np
 from tqdm import tqdm
 
 from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
+from clippyme.pipeline.ffmpeg_exec import FfmpegError, FrameEncoder
 from clippyme.pipeline.media_probe import (
     audio_sync_seek_args,
     probe_is_variable_frame_rate,
@@ -615,7 +616,7 @@ def _reframe_comfort_enabled() -> bool:
     return val in ("1", "true", "yes", "on")
 
 
-def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracker,
+def _render_global_smooth(input_video, encoder, cameraman, speaker_tracker,
                           detection_smoother, scene_boundaries, scene_strategies,
                           output_width, output_height, original_width, original_height,
                           total_frames, fps):
@@ -790,7 +791,7 @@ def _render_global_smooth(input_video, ffmpeg_process, cameraman, speaker_tracke
                         output_frame = last_output_frame
                     else:
                         output_frame = np.zeros((output_height, output_width, 3), dtype=np.uint8)
-                ffmpeg_process.stdin.write(output_frame.tobytes())
+                encoder.write(output_frame.tobytes())
                 frame_number += 1
                 pbar.update(1)
     finally:
@@ -954,7 +955,9 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         print(f"   🔍 Ken Burns zoom (1.0→{zoom_end}x) folded into the master encode.")
 
     command = [
-        'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+        # -nostats: the periodic progress line is ~400 B/s of noise in the
+        # failure log; warnings and errors are unaffected.
+        'ffmpeg', '-y', '-nostats', '-f', 'rawvideo', '-vcodec', 'rawvideo',
         '-s', f'{OUTPUT_WIDTH}x{OUTPUT_HEIGHT}', '-pix_fmt', 'bgr24',
         '-r', str(fps), '-i', '-',
         *zoom_vf_args,
@@ -972,10 +975,12 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         '-vsync', 'cfr', '-an', temp_video_output
     ]
 
-    ffmpeg_process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    # FrameEncoder logs ffmpeg's stderr to a temp file (never an unread pipe:
+    # that deadlocks against the stdin writes below) and kills an encoder that
+    # stops consuming frames — see pipeline/ffmpeg_exec.py.
+    encoder = FrameEncoder(command)
 
     cap = cv2.VideoCapture(input_video)
-    stderr_output = ""
     try:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
@@ -1016,7 +1021,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
         )
         if global_smooth:
             _render_global_smooth(
-                input_video, ffmpeg_process, cameraman,
+                input_video, encoder, cameraman,
                 speaker_tracker, detection_smoother,
                 scene_boundaries, scene_strategies,
                 OUTPUT_WIDTH, OUTPUT_HEIGHT,
@@ -1123,7 +1128,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
                     else:
                         output_frame = np.zeros((OUTPUT_HEIGHT, OUTPUT_WIDTH, 3), dtype=np.uint8)
 
-                ffmpeg_process.stdin.write(output_frame.tobytes())
+                encoder.write(output_frame.tobytes())
                 frame_number += 1
                 pbar.update(1)
 
@@ -1133,31 +1138,16 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
             if pct >= 25.0:
                 print(f"   ❗ High drop rate ({pct:.1f}%) — likely a systemic bug, not isolated corrupt frames. Re-run with REFRAME_DEBUG_EXC=1 for full tracebacks.", file=sys.stderr)
     
-        ffmpeg_process.stdin.close()
-        stderr_output = ffmpeg_process.stderr.read().decode()
-        ffmpeg_process.wait()
+        encoder.finish()
+    except FfmpegError as exc:
+        print("\n   ❌ FFmpeg frame processing failed.")
+        print("   Stderr:", exc)
+        return False
     finally:
         cap.release()
-        # If we left the loop abnormally (exception, early break on a
-        # write error), make sure ffmpeg can't linger as a zombie holding
-        # the stdin pipe open.
-        if ffmpeg_process.poll() is None:
-            try:
-                if ffmpeg_process.stdin and not ffmpeg_process.stdin.closed:
-                    ffmpeg_process.stdin.close()
-            except (OSError, ValueError):
-                pass
-            ffmpeg_process.terminate()
-            try:
-                ffmpeg_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                ffmpeg_process.kill()
-                ffmpeg_process.wait()
-
-    if ffmpeg_process.returncode != 0:
-        print("\n   ❌ FFmpeg frame processing failed.")
-        print("   Stderr:", stderr_output)
-        return False
+        # Any exit — including an exception mid-loop — kills and reaps ffmpeg
+        # so it can't linger as a zombie holding the stdin pipe open.
+        encoder.abort()
 
     print("\n   🔊 Step 5: Extracting audio...")
     # A/V-sync fix (ported from kamilstanuch/Autocrop-vertical): many sources —

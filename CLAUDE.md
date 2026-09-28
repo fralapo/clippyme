@@ -89,7 +89,12 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   ever overriding the speaker-attribution rule; the
   per-word payload is TOON-encoded (`encode_words_toon`, ~50% smaller than
   JSON) while the response contract stays JSON),
-  `media_probe.py` (ffprobe + silencedetect wrappers), `texttiling_ops.py`
+  `media_probe.py` (ffprobe + silencedetect wrappers), `ffmpeg_exec.py`
+  (bounded pipeline ffmpeg: stderr to a temp file — never an unread pipe —,
+  tick-counted no-progress watchdog on `CLIPPYME_FFMPEG_TIMEOUT`, and
+  `.partial-` → validate → `os.replace` so an interrupted cut/trim never
+  lands under its final name; the orchestrator trims the source once at
+  acquisition and resumes from the fingerprinted result), `texttiling_ops.py`
   (no-AI topic-segmentation fallback), `deepgram_transcribe.py`,
   `elevenlabs_transcribe.py`, `gemini_service.py`, `gemini_parser.py`,
   `scene_detection.py`, `download.py`, `postprocess.py`, `diarization.py`,

@@ -77,6 +77,11 @@ def normalize_audio(video_path):
             ),
             '-c:v', 'copy',
             '-c:a', 'aac', '-b:a', '192k',
+            # loudnorm's dynamic mode (its fallback whenever linear gain would
+            # break TP/LRA — i.e. most speech) upsamples to 192 kHz and leaves
+            # 96 kHz AAC behind; pin the delivery rate explicitly (FFmpeg docs:
+            # "Use the -ar option ... to explicitly set an output sample rate").
+            '-ar', '48000',
             # +faststart: this is the LAST writer of the base clip (zoom runs
             # before it, then this copy-remux), so the moov atom must land at
             # the front here for the browser <video> to start playing before
@@ -90,7 +95,7 @@ def normalize_audio(video_path):
             os.replace(temp_out, video_path)
             print(f"🔊 Audio normalized to -14 LUFS: {os.path.basename(video_path)}")
         else:
-            print(f"⚠️  Audio normalization failed, keeping original audio")
+            print("⚠️  Audio normalization failed, keeping original audio")
             if os.path.exists(temp_out):
                 os.remove(temp_out)
     except Exception as e:
