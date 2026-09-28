@@ -544,3 +544,112 @@ def test_legacy_composed_file_is_never_uploaded(api):
 
     assert r.status_code == 200, r.text
     assert uploads[0]["clip_path"] == str(job_dir / "vid_clip_1.mp4")
+
+
+# ---------------------------------------------------------------------------
+# G-pub1 — manual publication intent (``intent_id``) end to end
+# ---------------------------------------------------------------------------
+
+INTENT = "5f0c1d2e3a4b4c6d8e9f0a1b2c3d4e5f"
+
+
+@pytest.fixture
+def manual(monkeypatch, tmp_path, zernio):
+    """The real publish endpoint → publish_clip → HTTP-level fake Zernio."""
+    outputs = tmp_path / "output"
+    _job(outputs, titles=("A", "B"))
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", str(outputs))
+    monkeypatch.setattr(app_module, "load_zernio_config", lambda: {"api_key": "sk_test"})
+    monkeypatch.setattr(app_module.live_monitor, "_monitors", {})
+    monkeypatch.setattr(app_module.live_monitor, "_snapshots", {})
+    app_module.jobs[JOB] = {"status": "completed"}
+    yield outputs
+    app_module.jobs.pop(JOB, None)
+
+
+def _publish(client, clip=0, intent=INTENT):
+    body = dict(PUBLISH, **({"intent_id": intent} if intent else {}))
+    return client.post(f"/api/publish/{JOB}/{clip}", json=body)
+
+
+def test_manual_retry_after_a_lost_response_reuses_the_intent_key(manual, zernio):
+    """Provider accepted, the answer never came back (the API returns 502):
+    the client retries the same intent, re-uploading to a new media URL —
+    only a key-only replay keeps it one post."""
+    http = TestClient(app_module.app, headers=ORIGIN)
+    zernio.lose_next_create_response = True
+    first = _publish(http)
+    second = _publish(http)
+
+    assert first.status_code == 502, first.text
+    assert second.status_code == 200, second.text
+    assert [p["_id"] for p in zernio.posts] == ["post1"]
+    assert second.json()["post_id"] == "post1"
+
+
+def test_same_intent_after_a_confirmed_publish_is_answered_from_the_record(manual, zernio):
+    """Browser retry after the API DID answer (response lost client-side):
+    the server finds the intent on the clip's publish record — no second
+    upload, even past the provider's 24 h key window."""
+    http = TestClient(app_module.app, headers=ORIGIN)
+    first = _publish(http)
+    presigns = zernio.presigns
+    second = _publish(http)
+
+    assert first.status_code == second.status_code == 200
+    assert second.json()["post_id"] == first.json()["post_id"] == "post1"
+    assert zernio.presigns == presigns and len(zernio.posts) == 1
+    records = load_job_metadata(JOB, str(manual))[1]["shorts"][0]["published"]
+    assert [r.get("intent_id") for r in records] == [INTENT]
+
+
+def test_concurrent_double_submit_of_one_intent_posts_once(manual, zernio):
+    async def scenario():
+        transport = httpx.ASGITransport(app=app_module.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://localhost",
+                                     headers=ORIGIN) as client:
+            return await asyncio.gather(*(client.post(f"/api/publish/{JOB}/0",
+                                                      json=dict(PUBLISH, intent_id=INTENT))
+                                          for _ in range(2)))
+
+    responses = asyncio.run(scenario())
+    assert [r.status_code for r in responses] == [200, 200]
+    assert {r.json()["post_id"] for r in responses} == {"post1"}
+    assert len(zernio.posts) == 1
+
+
+def test_a_new_intent_is_an_explicit_republish(manual, zernio):
+    http = TestClient(app_module.app, headers=ORIGIN)
+    assert _publish(http).status_code == 200
+    again = _publish(http, intent="0e1d2c3b4a594867a5b4c3d2e1f0a9b8")
+    assert again.status_code == 200
+    assert [p["_id"] for p in zernio.posts] == ["post1", "post2"]
+
+
+def test_one_intent_id_on_two_clips_never_shares_a_provider_key(manual, zernio):
+    http = TestClient(app_module.app, headers=ORIGIN)
+    assert _publish(http, clip=0).status_code == 200
+    assert _publish(http, clip=1).status_code == 200
+    assert len(zernio.posts) == 2 and len(zernio.by_key) == 2
+    assert all(INTENT not in key for key in zernio.by_key)       # derived, not echoed
+
+
+def test_publish_without_an_intent_keeps_the_legacy_behaviour(manual, zernio):
+    http = TestClient(app_module.app, headers=ORIGIN)
+    assert _publish(http, intent=None).status_code == 200
+    assert _publish(http, intent=None).status_code == 200
+    assert len(zernio.posts) == 2 and zernio.by_key == {}
+
+
+@pytest.mark.parametrize("bad", ["short", "has space in it", "x" * 65, "../../etc/passwd"])
+def test_malformed_intent_id_is_rejected(manual, zernio, bad):
+    r = _publish(TestClient(app_module.app, headers=ORIGIN), intent=bad)
+    assert r.status_code == 422
+    assert zernio.posts == []
+
+
+def test_intent_does_not_bypass_monitor_ownership(manual, zernio):
+    app_module.live_monitor._monitors["twitch:foo"] = _owning_monitor(manual, state="retry_wait")
+    r = _publish(TestClient(app_module.app, headers=ORIGIN))
+    assert r.status_code == 409
+    assert zernio.posts == []

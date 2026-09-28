@@ -315,6 +315,9 @@ class PublishRequest(BaseModel):
     grade_params: Optional[dict] = None
     banner_params: Optional[dict] = None
     drop_ranges: Optional[list] = None
+    # One manual publication intent: the client reuses it for every retry of
+    # the same Publish and mints a new one for a deliberate re-publish.
+    intent_id: Optional[str] = Field(None, pattern=r"^[A-Za-z0-9-]{8,64}$")
 
     @field_validator("timezone")
     @classmethod

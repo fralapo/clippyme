@@ -43,6 +43,12 @@ Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
   per-platform strategies: multi-channel Kick/Twitch/YouTube monitor, live +
   vod modes, global `picked_slots` publish spacing, state in
   `data/live_monitor.json`; durable auto-resume via `resume_on_start`;
+  a full job queue is waited out (capped backoff, shown in `last_error`) and
+  a network/yt-dlp failure resolving a YouTube channel is retried, while a bad
+  channel (ValueError) or a bug still stops the monitor; `picked_slots` and
+  the `published` dedup guard are pruned by derived retention (constants and
+  reasoning next to `PICKED_SLOT_RETENTION_SECONDS` /
+  `PUBLISHED_RETENTION_SECONDS`);
   runtime config updates `POST /api/live-monitor/{id}/config` (allow-listed
   fields, apply to future clips); per-segment clip selection
   (`clip_selection: fixed|auto` — `fixed` publishes the top `max_clips` by
@@ -270,11 +276,32 @@ through verbatim (the frontend parses per-platform 429 daily limits).
   the metadata file until then). Manual publish also answers 409 while a live
   monitor owns the clip (`LiveMonitorRegistry.publication_owner`: job not yet
   handed off, or entry queued/in_flight/retry_wait) — a failed entry releases it.
-- **Publish idempotency**: the monitor's durable `request_id` goes to Zernio as
-  `Idempotency-Key` (key-only replay, 24 h — `x-request-id` also needs the same
-  media URL, which every retry's fresh presign changes). A 409
-  `idempotency_conflict` is retried with the same key, never counted as
-  accepted. Delivery stays at-least-once: nothing survives past that window.
+- **Lock order** (never take them the other way round): `clip_locks.clip_lock`
+  (asyncio, per `(job_dir, clip_index)`, re-entrant per task) first; then
+  either `smartcut._clip_lock` (threading, only inside a worker thread) or the
+  live monitor's global `_publish_lock` (asyncio, serialises every monitor's
+  Zernio publish and guards the shared `picked_slots`; manual publish never
+  takes it); `job_artifacts._METADATA_LOCK` (threading) innermost, only inside
+  sync/worker-thread code — no threading lock is ever held across an `await`.
+  The monitor holds the clip lock over compose → copy at hand-off and over
+  recompose → upload → accept, including the post-accept history record and
+  artifact cleanup (run in a worker thread so the event loop stays free):
+  a manual action waiting on that clip must find the cleanup finished.
+- **Publish identities** — keep them apart: the logical clip is
+  `(job_id, original_index)`; a monitor publication has a stable
+  `publication_id` and a `request_id` sent to Zernio as `Idempotency-Key`
+  (key-only replay, 24 h — `x-request-id` also needs the same media URL, which
+  every retry's fresh presign changes). The `request_id` is reused after an
+  ambiguous outcome and rotated (then persisted before the next call) only
+  after a certain rejection. A 409 `idempotency_conflict` is retried with the
+  same key no sooner than its `Retry-After`, never counted as accepted; a 409
+  with `existingPostId` counts as accepted. A manual publish carries the
+  client's `intent_id` (one per Publish of a clip, reused by its retries,
+  new after a confirmed post — `lib/publishIntent.js`): the server derives the
+  key from `(job_id, clip_index, intent_id)` and answers a repeat of an intent
+  already on the clip's publish record without posting again. No `intent_id`
+  = no key (every request is a new post). Delivery stays at-least-once:
+  nothing is deduplicated past the provider window except through that record.
 - **Gemini cost**: one pricing source (`gemini_request.MODEL_PRICING`, USD/1M,
   official page date in its comment; `promo`/`long` tiers via `model_rates`).
   Thinking tokens bill at the output rate; cost is priced per usage category,

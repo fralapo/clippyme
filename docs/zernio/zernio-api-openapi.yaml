@@ -11423,26 +11423,35 @@ paths:
 
         ## Idempotency
 
-        Two layers of duplicate-protection apply, so safe-to-retry callers (network blips, n8n / Zapier retries, etc.) don't accidentally double-post.
+        > ClippyMe note: this section was re-synced by hand on 2026-09-28 with
+        > https://docs.zernio.com/guides/idempotency (the rest of this file is
+        > the 2026-07 snapshot). ClippyMe sends `Idempotency-Key` (and the same
+        > value as `x-request-id`) on every monitor publish and on manual
+        > publishes that carry an intent.
 
-        **1. Same-request idempotency (5-minute window).**
-        Pass an `x-request-id` header to mark a logical request. If a second request arrives with the same `x-request-id` while the first is in-flight (or within ~5 minutes of completion), we return **HTTP 200** with the original post in the `existingPost` field — no new post is created. The official Zernio SDKs auto-generate a unique `x-request-id` per call. If you're using a generic HTTP client (curl, n8n's HTTP node, Zapier, custom code), either:
-        - Set a unique `x-request-id` per logical call (recommended — UUIDv4 is fine)
-        - Or simply omit the header — we'll treat each request as new
+        Three layers of duplicate-protection apply, checked in this order; only if all three miss is a new post created.
 
-        **Common pitfall**: if your workflow tool uses a single execution-level request ID and reuses it across multiple HTTP nodes (e.g. one ID for the whole run, shared across 6 different platform calls), every call after the first will look like a retry of the first and return its post. Generate a fresh ID per node.
+        **1. `Idempotency-Key` (24-hour window).**
+        A retry with the same `Idempotency-Key` within 24 hours returns **HTTP 200** with the original post (a first `201` replays as `200`). The match is on the key alone, not the request body — a retry that re-uploaded its media (new URL) still replays. Use a fresh UUID (v4 is fine) per logical post, up to 255 characters (longer → `400`). Only successful (`2xx`) responses are stored: if the first request failed without creating a post, a retry with the same key is processed as a new request. A repeat while the first request is still processing gets **HTTP 409** with `code: "idempotency_conflict"` and a `Retry-After` header — no post may exist yet; wait and retry with the same key. When both headers are sent, `Idempotency-Key` wins and `x-request-id` is ignored.
 
-        **2. Content-hash dedup (24-hour window).**
-        Independently, we hash `(platform, accountId, content + media URLs)` and reject duplicates within 24 hours with **HTTP 409**. This catches genuine "same content posted twice to the same account" cases regardless of `x-request-id`. Returns `error`, `accountId`, `platform`, and `existingPostId` so you can find the original. To intentionally re-post identical content within 24h, change something (the caption, the media, the account) — the dedup is keyed on the full content fingerprint.
+        **2. `x-request-id` retry detection (24-hour window).**
+        The same `x-request-id` **and** the same content fingerprint (account, content, media URLs) within 24 hours return the original post (`200`, or `202` while still processing) instead of a duplicate-content error. A retry whose media URL changed does not match.
 
-        Order: same-`x-request-id` retries (200) are checked first; if no idempotency match, the content-hash dedup (409) runs.
+        **3. Content-hash dedup (24-hour window).**
+        Independently of the headers, `(platform, accountId, content + media URLs)` is hashed and a match from the last 24 hours is rejected with **HTTP 409** ("This exact content is already scheduled, publishing, or was posted to this account within the last 24 hours"), with `details.existingPostId`. To intentionally re-post identical content within 24h, change the caption, the media or the account.
       parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          schema: { type: string, maxLength: 255 }
+          description: |
+            Client-generated key (UUID recommended) identifying one logical post. A repeat within 24 hours returns the original post (HTTP 200), matched on the key alone. A repeat while the first request is still processing returns 409 `idempotency_conflict` with `Retry-After`. A first request that failed without creating a post does not reserve the key.
         - name: x-request-id
           in: header
           required: false
           schema: { type: string, format: uuid }
           description: |
-            Optional client-generated request identifier for safe retry (idempotency). When two requests carry the same value, the second is treated as a retry of the first and returns the original post (HTTP 200) instead of creating a duplicate. Window is ~5 minutes from the first request. Generate a UUID per logical call. SDKs do this automatically; HTTP clients should set it themselves or omit it. See the operation description for the full idempotency contract.
+            Optional client-generated request identifier. A repeat within 24 hours with the same value AND the same content fingerprint (account, content, media URLs) returns the original post (HTTP 200, or 202 while processing). Ignored when `Idempotency-Key` is also sent. See the operation description for the full contract.
       requestBody:
         required: true
         content:
@@ -11792,21 +11801,23 @@ paths:
                   code: { type: string, enum: [ACCOUNT_DISCONNECTED, PROFILE_OVER_LIMIT], description: Stable machine-readable cause. Absent for ownership failures. }
         '409':
           description: |
-            Duplicate content detected. Returned when the requested post matches an existing one on `(platform, accountId, content-hash)` within the last 24 hours, AND the request was NOT an `x-request-id` retry of an in-flight call. Distinct from same-`x-request-id` retries (which return HTTP 200 with the original post — see operation description for the idempotency contract).
+            Two different conflicts share this status — tell them apart by `code`:
 
-            Body fields:
-            - `error` — human-readable message
-            - `details.accountId` — the account that already has this content
-            - `details.platform` — the platform that already has this content
-            - `details.existingPostId` — Zernio `_id` of the original post
+            - `code: "idempotency_conflict"` — a request with the same `Idempotency-Key` is still being processed. No post may exist yet: wait for the `Retry-After` header, then retry with the SAME key (it replays the original post once the first request has finished). Not a duplicate.
+            - no `code`, `details.existingPostId` present — duplicate content: the post matches an existing one on `(platform, accountId, content-hash)` within the last 24 hours and neither header matched. `details.accountId` / `details.platform` / `details.existingPostId` identify the original.
 
-            To intentionally re-post identical content within 24h, vary the content fingerprint (change the caption, swap a media item, or use a different account). To avoid 409s caused by retry loops, set a unique `x-request-id` per logical request — see `parameters.x-request-id` above.
+            To intentionally re-post identical content within 24h, vary the content fingerprint (change the caption, swap a media item, or use a different account).
+          headers:
+            Retry-After:
+              description: Sent with `idempotency_conflict`; wait at least this long before retrying.
+              schema: { type: string }
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   error: { type: string, example: "This exact content is already scheduled, publishing, or was posted to this account within the last 24 hours." }
+                  code: { type: string, enum: [idempotency_conflict], description: Present only for the in-progress conflict. }
                   details:
                     type: object
                     properties:

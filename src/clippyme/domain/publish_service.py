@@ -8,6 +8,7 @@ failures). Receives the request as a plain dict so this module never imports
 ``api.schemas``.
 """
 import asyncio
+import hashlib
 import logging
 import os
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from clippyme.domain.clip_locks import clip_lock
 from clippyme.domain.clip_resolve import ResolvedClip, composed_clip_basename
 from clippyme.domain.compose import compose_layers
 from clippyme.domain.errors import ClippyMeError, NotFoundError, ValidationError
-from clippyme.domain.job_artifacts import record_clip_publish
+from clippyme.domain.job_artifacts import load_job_metadata, record_clip_publish
 
 logger = logging.getLogger("clippyme")
 
@@ -47,10 +48,38 @@ async def publish_clip_flow(*, job_id: str, clip_index: int,
     # this clip deletes the composed file up front and rewrites it at the end,
     # so an unlocked publish could upload the raw clip, a half-copied file or
     # the other request's version. compose_layers re-enters the same lock.
+    # It also serialises repeats of one intent, so a double submit finds the
+    # first one's record below instead of racing it to the provider.
     async with clip_lock(resolved.job_dir, clip_index):
+        intent_id = req.get("intent_id")
+        if intent_id:
+            recorded = await asyncio.to_thread(
+                _recorded_intent, job_id, clip_index, os.path.dirname(resolved.job_dir), intent_id)
+            if recorded is not None:
+                return {"success": True, "replayed": True,
+                        "post_id": recorded.get("post_id"),
+                        "scheduled_for": recorded.get("scheduled_for")}
         return await _compose_and_upload(
             job_id=job_id, clip_index=clip_index, resolved=resolved, req=req,
             api_key=api_key, zernio_cfg=zernio_cfg)
+
+
+def manual_request_id(job_id: str, clip_index: int, intent_id: str) -> str:
+    """Zernio Idempotency-Key for one manual publication intent: stable across
+    that intent's retries, distinct per clip even if a client reuses an id."""
+    digest = hashlib.sha256(f"{job_id}:{clip_index}:{intent_id}".encode()).hexdigest()
+    return f"manual-{digest[:48]}"
+
+
+def _recorded_intent(job_id: str, clip_index: int, output_dir: str, intent_id: str):
+    """The clip's publish record left by this intent, if it already succeeded."""
+    try:
+        shorts = load_job_metadata(job_id, output_dir)[1].get("shorts") or []
+        records = shorts[clip_index].get("published") or []
+    except (FileNotFoundError, IndexError, ValueError, AttributeError):
+        return None
+    return next((r for r in records if isinstance(r, dict) and r.get("intent_id") == intent_id),
+                None)
 
 
 async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
@@ -58,6 +87,7 @@ async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
     job_dir = resolved.job_dir
     base_clip = resolved.clip_path
     upload_path = base_clip
+    intent_id = req.get("intent_id")
     composed_path = os.path.join(job_dir, composed_clip_basename(resolved.clip_info, clip_index))
     toggles = req.get("toggles")
     if req.get("compose_first") and toggles:
@@ -103,6 +133,7 @@ async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
             timezone=req.get("timezone") or zernio_cfg.get("timezone") or "Europe/Rome",
             tiktok_settings=req.get("tiktok_settings"),
             start_date=req.get("start_date"),
+            request_id=manual_request_id(job_id, clip_index, intent_id) if intent_id else None,
         )
     except ValueError as e:
         raise ValidationError(str(e))
@@ -138,6 +169,7 @@ async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
                 "post_id": result.get("post_id"),
                 "scheduled_for": result.get("scheduled_for"),
                 "at": datetime.now(timezone.utc).isoformat(),
+                **({"intent_id": intent_id} if intent_id else {}),
             },
         )
     except Exception as e:

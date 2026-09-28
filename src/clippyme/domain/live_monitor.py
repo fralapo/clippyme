@@ -77,9 +77,23 @@ PUBLISH_RETRY_MAX_SECONDS = 3600
 FAILED_PUBLISH_KEEP = 200  # ponytail: bounded list, a real UI/API can page it later
 # How often a monitor checks on the jobs it submitted.
 JOB_POLL_SECONDS = 5
+# A full job queue (QueueFullError) is backpressure: the monitor waits for a
+# worker to free a slot, backing off up to this cap between submit attempts.
+QUEUE_FULL_RETRY_MAX_SECONDS = 120
+_QUEUE_FULL_PREFIX = "job queue full"
 # Live-state polling backs off exponentially while the provider can't answer.
 PROVIDER_BACKOFF_MAX_SECONDS = 900
 _PROVIDER_ERROR_PREFIX = "live-state check failed"
+_RESOLVE_ERROR_PREFIX = "channel resolve failed"
+# A picked slot older than this can no longer change any pick: candidates are
+# always in the future, the slot windows of a day span at most 24 h, and the
+# min-gap check only reaches back min_gap_seconds (validated to <= 24 h).
+PICKED_SLOT_RETENTION_SECONDS = 86400
+# How long an accepted clip stays in the ``published`` dedup guard after its
+# job has no queued entry left: Zernio's Idempotency-Key replay window. Past it
+# a queued duplicate can only come from a job still referenced by the queue,
+# and those keys are kept regardless of age.
+PUBLISHED_RETENTION_SECONDS = 86400
 
 
 def provider_backoff_seconds(poll_interval: float, failures: int) -> float:
@@ -90,13 +104,21 @@ def provider_backoff_seconds(poll_interval: float, failures: int) -> float:
                min(PROVIDER_BACKOFF_MAX_SECONDS, poll_interval * 2 ** min(failures, 16)))
 
 
+def queue_full_retry_delay(waits: int) -> float:
+    """Wait before submit attempt ``waits + 1`` while the job queue is full."""
+    return min(QUEUE_FULL_RETRY_MAX_SECONDS,
+               JOB_POLL_SECONDS * 2 ** max(0, min(int(waits) - 1, 16)))
+
+
 def retry_after_seconds(exc: BaseException) -> float:
-    """Server-requested wait carried by an HTTP error (Retry-After, or Twitch
-    Helix's Ratelimit-Reset epoch), else 0."""
+    """Server-requested wait carried by an HTTP error (Retry-After in delta
+    seconds — ``ZernioError.retry_after`` or ``exc.response`` — or Twitch
+    Helix's Ratelimit-Reset epoch), else 0. An HTTP-date or garbage reads 0."""
     headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    retry_after = headers.get("Retry-After") or getattr(exc, "retry_after", None)
     try:
-        if headers.get("Retry-After"):
-            return max(0.0, float(headers["Retry-After"]))
+        if retry_after:
+            return max(0.0, float(retry_after))
         if headers.get("Ratelimit-Reset"):
             return max(0.0, float(headers["Ratelimit-Reset"]) - time.time())
     except (TypeError, ValueError):
@@ -277,6 +299,15 @@ class SharedGapScheduler(SmartScheduler):
         slot = super().find_slot(day, list(occupied) + self.picked_slots, now=now)
         self.picked_slots.append(slot)
         return slot
+
+
+def prune_picked_slots(slots: list, now: datetime, min_gap_seconds: int = 0) -> None:
+    """Drop, in place, the picked slots that can no longer influence a
+    ``find_slot`` at ``now`` or later (see PICKED_SLOT_RETENTION_SECONDS).
+    A naive legacy stamp is read as local time."""
+    horizon = now - timedelta(seconds=max(PICKED_SLOT_RETENTION_SECONDS, int(min_gap_seconds or 0)))
+    slots[:] = [s for s in slots
+                if (s if s.tzinfo is not None else s.astimezone()) >= horizon]
 
 
 def _validate_channel(platform: str, raw) -> str:
@@ -638,6 +669,8 @@ class LiveMonitor:
         self._strategy = None
         self._scheduler: SharedGapScheduler | None = None
         self._published: set[str] = set()
+        # Acceptance time per ``_published`` key (persisted) — bounds the guard.
+        self._published_at: dict[str, float] = {}
         self._seen_ids: set[str] = set()
         # Runtime auto-publish toggle. While False, finished clips accumulate in
         # _pending_publish (paths + public clip metadata only — never secrets)
@@ -739,6 +772,8 @@ class LiveMonitor:
             "config": {k: self.cfg.get(k) for k in _SNAPSHOT_CONFIG_FIELDS} if self.cfg else None,
             "seen_ids": sorted(self._seen_ids),
             "published": sorted(self._published),
+            "published_at": {k: self._published_at[k] for k in sorted(self._published)
+                             if k in self._published_at},
             # Paths + public clip metadata only (no secrets) — restored on resume.
             "publishing_enabled": self.publishing_enabled,
             "pending_publish": self._pending_publish,
@@ -765,6 +800,15 @@ class LiveMonitor:
             return
         self._seen_ids = set(snap.get("seen_ids") or [])
         self._published = set(snap.get("published") or [])
+        # A key without a time (older snapshot) starts its window now.
+        stamps = snap.get("published_at") if isinstance(snap.get("published_at"), dict) else {}
+        now = time.time()
+        self._published_at = {}
+        for key in self._published:
+            try:
+                self._published_at[key] = float(stamps[key])
+            except (KeyError, TypeError, ValueError):
+                self._published_at[key] = now
         self.publishing_enabled = bool(snap.get("publishing_enabled", True))
         self._pending_publish = [e for e in snap.get("pending_publish") or []
                                  if isinstance(e, dict)]
@@ -1002,8 +1046,15 @@ class LiveMonitor:
             if not should_process_segment(duration):
                 _safe_remove(seg_path)
                 break
+            job_id = await self._submit_waiting_for_queue(self._submit_segment_job, seg_path)
+            if job_id is None:
+                # Stopped while the queue was full: no job owns the segment and
+                # nothing tracks it across a restart — release it, loudly.
+                logger.warning("LiveMonitor %s: stopped before the job queue had room — "
+                               "segment %s discarded", self.id, seg_path)
+                _safe_remove(seg_path)
+                break
             self.segments_captured += 1
-            job_id = await self._submit_segment_job(seg_path)
             self.current_job_id = job_id
             self._inflight_jobs[job_id] = seg_path  # persisted just below
             task = asyncio.create_task(self._await_and_publish(job_id, seg_path))
@@ -1204,13 +1255,17 @@ class LiveMonitor:
             if seg_path is not None:
                 duration = await asyncio.to_thread(probe_duration, seg_path)
                 if should_process_segment(duration):
-                    self.segments_captured += 1
-                    job_id = await self._submit_segment_job(seg_path)
-                    self.current_job_id = job_id
-                    self._inflight_jobs[job_id] = seg_path
-                    self._persist()
-                    await self._await_and_publish(job_id, seg_path)
-                    completed = True
+                    job_id = await self._submit_waiting_for_queue(
+                        self._submit_segment_job, seg_path)
+                    if job_id is None:  # stopped while the queue was full:
+                        _safe_remove(seg_path)  # the window stays pending (durable)
+                    else:
+                        self.segments_captured += 1
+                        self.current_job_id = job_id
+                        self._inflight_jobs[job_id] = seg_path
+                        self._persist()
+                        await self._await_and_publish(job_id, seg_path)
+                        completed = True
                 else:
                     _safe_remove(seg_path)
                     completed = True
@@ -1249,13 +1304,8 @@ class LiveMonitor:
 
     async def _run_vod(self) -> None:
         """Poll a feed; process each item that appeared AFTER activation."""
-        if self.platform == "youtube":
-            try:
-                await asyncio.to_thread(self._strategy.resolve)
-            except Exception as exc:
-                logger.exception("LiveMonitor %s: channel resolve failed", self.id)
-                self.last_error = f"channel resolve failed: {exc}"
-                return
+        if self.platform == "youtube" and not await self._resolve_channel():
+            return
 
         self.state = "watching"
         baseline_done = bool(self._seen_ids)  # resumed monitor keeps its baseline
@@ -1279,15 +1329,59 @@ class LiveMonitor:
                         break
                     if it["id"] in self._seen_ids:
                         continue
-                    self._seen_ids.add(it["id"])
                     await self._process_vod_item(it)
 
             await self._interruptible_sleep(self._jittered_poll())
         self.state = "idle"
 
+    async def _resolve_channel(self) -> bool:
+        """Resolve the YouTube channel id; True once resolved, False to stop.
+
+        - ValueError: the input is not a channel we can resolve (bad URL, no
+          canonical UC id in the answer) — retrying can't fix it, so the
+          monitor stops with the reason in ``last_error``.
+        - OSError / yt-dlp errors (network, timeouts, YouTube 5xx/429): an
+          outage — retried with the live-state backoff, visible meanwhile. A
+          deleted channel surfaces here too (yt-dlp gives no reliable
+          "does not exist" signal) and keeps retrying at the capped delay.
+        - Anything else is a bug and propagates (→ "monitor loop crashed").
+        """
+        from yt_dlp.utils import YoutubeDLError
+
+        failures = 0
+        while not self._stop.is_set():
+            try:
+                await asyncio.to_thread(self._strategy.resolve)
+            except ValueError as exc:
+                logger.error("LiveMonitor %s: channel resolve failed for good: %s", self.id, exc)
+                self.last_error = f"{_RESOLVE_ERROR_PREFIX}: {exc}"
+                return False
+            except (OSError, YoutubeDLError) as exc:
+                failures += 1
+                self.last_error = f"{_RESOLVE_ERROR_PREFIX} ({failures}x): {exc}"
+                logger.warning("LiveMonitor %s: channel resolve failed (%d in a row): %s",
+                               self.id, failures, exc)
+                await self._interruptible_sleep(
+                    provider_backoff_seconds(self.cfg["poll_interval"], failures))
+                continue
+            if (self.last_error or "").startswith(_RESOLVE_ERROR_PREFIX):
+                self.last_error = None
+            return True
+        return False
+
     async def _process_vod_item(self, item: dict) -> None:
+        # The item counts as handled only once a job owns it — marked in the
+        # same persist that tracks the job — so a stop or crash while the
+        # queue is full leaves it for the next start instead of losing it.
+        try:
+            job_id = await self._submit_waiting_for_queue(self._submit_url_job, item["url"])
+        except Exception:
+            self._seen_ids.add(item["id"])  # any other submit error: not retried (as before)
+            raise
+        if job_id is None:
+            return
+        self._seen_ids.add(item["id"])
         self.segments_captured += 1
-        job_id = await self._submit_url_job(item["url"])
         self.current_job_id = job_id
         self._inflight_jobs[job_id] = None
         self._persist()
@@ -1297,6 +1391,37 @@ class LiveMonitor:
         await self._await_and_publish(job_id, None)
 
     # -- job submission --------------------------------------------------
+
+    async def _submit_waiting_for_queue(self, submit, source) -> str | None:
+        """``await submit(source)``, waiting out a full job queue.
+
+        ``QueueFullError`` is backpressure (every worker busy, the queue at
+        capacity) and the rejected job was rolled back, so the same source is
+        simply submitted again — once it fits — after a capped, stop-aware
+        backoff shown in ``last_error``. Returns the job id, or None if the
+        monitor stopped first. Any other error still propagates.
+        """
+        from clippyme.domain.job_submission import QueueFullError
+
+        waits = 0
+        while True:
+            try:
+                job_id = await submit(source)
+            except QueueFullError:
+                if self._stop.is_set():
+                    return None
+                waits += 1
+                delay = queue_full_retry_delay(waits)
+                self.last_error = f"{_QUEUE_FULL_PREFIX} — waiting to submit ({waits}x)"
+                logger.warning("LiveMonitor %s: job queue full — retrying submit in %.0fs "
+                               "(%d waits)", self.id, delay, waits)
+                await self._interruptible_sleep(delay)
+                if self._stop.is_set():
+                    return None
+                continue
+            if (self.last_error or "").startswith(_QUEUE_FULL_PREFIX):
+                self.last_error = None
+            return job_id
 
     def _new_job_dir(self) -> tuple[str, str, dict]:
         job_id = str(uuid.uuid4())
@@ -1605,9 +1730,9 @@ class LiveMonitor:
                 caption = render_template(self.cfg["caption_template"], clip)
                 result = await self._publish_serialized(entry, upload_path, title, caption, clip_path)
             except Exception as exc:
-                self._record_publish_failure(entry, exc, clip_path)
+                await self._record_publish_failure(entry, exc, clip_path)
                 return
-            self._on_publish_accepted(entry, clip_path, result)
+            await self._on_publish_accepted(entry, clip_path, result)
 
     async def _publish_serialized(self, entry: dict, upload_path: str, title: str,
                                   caption: str, clip_path: str) -> dict:
@@ -1626,6 +1751,9 @@ class LiveMonitor:
             day_rolls = 0
             start_date = None  # None → scheduler picks today/tomorrow
             while True:
+                # Before measuring: slots_before must index this call's pick.
+                prune_picked_slots(self._picked_slots, datetime.now(timezone.utc),
+                                   self.cfg.get("min_gap_seconds") or 0)
                 slots_before = len(self._picked_slots)
                 try:
                     return await asyncio.to_thread(
@@ -1672,13 +1800,14 @@ class LiveMonitor:
                         continue
                     raise
 
-    def _record_publish_failure(self, entry: dict, exc: BaseException, clip_path: str) -> None:
+    async def _record_publish_failure(self, entry: dict, exc: BaseException,
+                                      clip_path: str) -> None:
         kind = classify_publish_error(exc)
         body = getattr(exc, "body", None) or ""
         if kind == "duplicate":
             logger.warning("LiveMonitor %s: Zernio already has %s (409, body=%r) — "
                            "treating it as accepted", self.id, clip_path, body)
-            self._on_publish_accepted(entry, clip_path, None)
+            await self._on_publish_accepted(entry, clip_path, None)
             return
         if _definitely_not_created(exc):
             entry["request_id"] = str(uuid.uuid4())
@@ -1687,6 +1816,11 @@ class LiveMonitor:
         self.last_error = f"publish failed: {exc}"
         if kind == "retry" and entry["attempts"] < PUBLISH_MAX_ATTEMPTS:
             delay = publish_retry_delay(entry["attempts"])
+            if _is_idempotency_conflict(exc):
+                # The first request with this key is still being processed:
+                # never ask again before Zernio's Retry-After (capped so the
+                # retry stays well inside the key's 24 h replay window).
+                delay = max(delay, min(retry_after_seconds(exc), PUBLISH_RETRY_MAX_SECONDS))
             entry["state"] = "retry_wait"
             entry["next_retry_at"] = time.time() + delay
             logger.warning("LiveMonitor %s: publish failed for %s (attempt %d/%d): %s "
@@ -1704,15 +1838,41 @@ class LiveMonitor:
                          entry["attempts"], exc, body)
         self._persist()
 
-    def _on_publish_accepted(self, entry: dict, clip_path: str, result: dict | None) -> None:
-        self._dequeue(entry)
-        self._published.add(clip_path)
-        self.clips_published += 1
-        self._persist()
-        post = result or {}
-        logger.info("LiveMonitor %s: Zernio accepted %s (post=%s, status=%s, scheduled_for=%s)",
-                    self.id, clip_path, post.get("post_id"), post.get("status"),
-                    post.get("scheduled_for"))
+    async def _on_publish_accepted(self, entry: dict, clip_path: str, result: dict | None) -> None:
+        """Commit an acceptance, then write the history record and free the
+        artifacts in a worker thread — still under the clip lock (re-entered
+        when the caller holds it): the dequeue releases publication_owner, so
+        a manual action on this clip may be waiting, and it must find the
+        cleanup finished, never half done."""
+        async with self._clip_lock(entry["job_id"], entry["clip"]):
+            self._dequeue(entry)
+            self._published.add(clip_path)
+            self._published_at[clip_path] = time.time()
+            self._prune_published()
+            self.clips_published += 1
+            self._persist()
+            post = result or {}
+            logger.info("LiveMonitor %s: Zernio accepted %s (post=%s, status=%s, scheduled_for=%s)",
+                        self.id, clip_path, post.get("post_id"), post.get("status"),
+                        post.get("scheduled_for"))
+            await asyncio.to_thread(self._accepted_io, entry, clip_path, post)
+
+    def _prune_published(self) -> None:
+        """Forget accepted clips no queued entry or in-flight job can still
+        carry, once PUBLISHED_RETENTION_SECONDS have passed (see there)."""
+        referenced = set(self._inflight_jobs)
+        referenced.update(e.get("job_id") for e in self._pending_publish)
+        now = time.time()
+        for key in list(self._published):
+            accepted_at = self._published_at.setdefault(key, now)
+            if (now - accepted_at > PUBLISHED_RETENTION_SECONDS
+                    and os.path.basename(os.path.dirname(key)) not in referenced):
+                self._published.discard(key)
+                self._published_at.pop(key, None)
+
+    def _accepted_io(self, entry: dict, clip_path: str, post: dict) -> None:
+        """Blocking post-accept work (worker thread, clip lock held by the
+        caller). History first: the cleanup may remove the job dir."""
         # Same record a manual publish leaves, so the history shows the clip as
         # published and a later manual publish of it is a visible choice.
         idx = entry["clip"].get("original_index")
@@ -1795,7 +1955,7 @@ class LiveMonitor:
                     # Defensive: a bug in the publish path must not lose the
                     # entry nor spin — it takes the bounded retry path.
                     logger.exception("LiveMonitor %s: publish drain step failed", self.id)
-                    self._record_publish_failure(entry, exc, self._clip_path(entry))
+                    await self._record_publish_failure(entry, exc, self._clip_path(entry))
         finally:
             self._draining = False
 

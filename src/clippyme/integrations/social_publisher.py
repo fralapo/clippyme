@@ -150,11 +150,13 @@ class ZernioError(Exception):
     """Wraps any HTTP / API failure from Zernio."""
 
     def __init__(self, message: str, status_code: Optional[int] = None, body: Optional[str] = None,
-                 code: Optional[str] = None):
+                 code: Optional[str] = None, retry_after: Optional[str] = None):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
         self.code = code  # the JSON body's ``code``, read before ``body`` is truncated
+        # Raw Retry-After header (Zernio sends it with 409 idempotency_conflict).
+        self.retry_after = retry_after
 
 
 class ZernioClient:
@@ -202,11 +204,13 @@ class ZernioClient:
             except ValueError:
                 payload = None
             code = payload.get("code") if isinstance(payload, dict) else None
+            retry_after = (getattr(r, "headers", None) or {}).get("Retry-After")
             raise ZernioError(
                 f"Zernio {method} {path} → HTTP {r.status_code}",
                 status_code=r.status_code,
                 body=self._scrub_secrets(r.text[:500]),
                 code=code if isinstance(code, str) else None,
+                retry_after=str(retry_after)[:64] if retry_after else None,
             )
         try:
             return r.json()
@@ -288,8 +292,8 @@ class ZernioClient:
         returns the original post, matched on the key alone. ``x-request-id``
         alone is not enough — it replays only when the media URL matches too,
         and every retry re-uploads (a fresh presign → a new URL). Both headers
-        are sent (docs.zernio.com/guides/idempotency, 2026-09; the vendored
-        docs/zernio spec predates Idempotency-Key on this endpoint).
+        are sent; Zernio then ignores ``x-request-id``
+        (docs.zernio.com/guides/idempotency, re-checked 2026-09-28).
         """
         body: dict[str, Any] = {
             "content": content,
