@@ -272,8 +272,14 @@ class ZernioClient:
         publish_now: bool = False,
         tiktok_settings: Optional[dict] = None,
         title: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> dict:
-        """POST /v1/posts — create the post (scheduled or immediate)."""
+        """POST /v1/posts — create the post (scheduled or immediate).
+
+        ``request_id`` becomes the ``x-request-id`` idempotency header: a repeat
+        within Zernio's ~5-minute window returns the original post
+        (``existingPost``) instead of creating a second one.
+        """
         body: dict[str, Any] = {
             "content": content,
             "mediaItems": media_items,
@@ -288,6 +294,9 @@ class ZernioClient:
             body["scheduledFor"] = scheduled_for
         if tiktok_settings:
             body["tiktokSettings"] = tiktok_settings
+        if request_id:
+            return self._request("POST", "/posts", json=body,
+                                 headers={"x-request-id": str(request_id)})
         return self._request("POST", "/posts", json=body)
 
 
@@ -414,6 +423,7 @@ def publish_clip(
     tiktok_settings: Optional[dict] = None,
     scheduler: Optional[SmartScheduler] = None,
     start_date: Optional[str] = None,
+    request_id: Optional[str] = None,
 ) -> dict:
     """Publish a single clip via Zernio.
 
@@ -428,6 +438,7 @@ def publish_clip(
         timezone: IANA tz string passed to Zernio
         tiktok_settings: optional root-level TikTok settings (consent, privacy)
         scheduler: optional injected SmartScheduler (testing)
+        request_id: optional idempotency key for POST /posts (x-request-id)
 
     Returns:
         {
@@ -577,10 +588,14 @@ def publish_clip(
         timezone=timezone,
         publish_now=publish_now,
         tiktok_settings=tiktok_settings,
+        request_id=request_id,
     )
 
-    # 4. Extract post id (response shape varies)
-    post_obj = response.get("post") if isinstance(response, dict) else None
+    # 4. Extract post id (response shape varies; an idempotent replay answers
+    # with the original post under ``existingPost``)
+    post_obj = None
+    if isinstance(response, dict):
+        post_obj = response.get("post") or response.get("existingPost")
     if isinstance(post_obj, dict):
         post_id = post_obj.get("_id") or post_obj.get("id")
         status = post_obj.get("status", "scheduled")

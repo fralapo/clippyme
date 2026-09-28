@@ -66,6 +66,82 @@ PUBLISH_429_BACKOFF_SECONDS = 90
 # day ("Daily limit reached ..."). Rolling start_date forward finds the next
 # day with a free slot; these rolls are free (no sleep) and capped separately.
 PUBLISH_MAX_DAY_ROLLS = 7
+# Durable publish queue: a failed publish stays queued (never dropped) and is
+# retried with exponential backoff up to PUBLISH_MAX_ATTEMPTS, then parked in
+# the persisted failed list (visible in status) instead of vanishing.
+PUBLISH_MAX_ATTEMPTS = 8
+PUBLISH_RETRY_BASE_SECONDS = 60
+PUBLISH_RETRY_MAX_SECONDS = 3600
+FAILED_PUBLISH_KEEP = 200  # ponytail: bounded list, a real UI/API can page it later
+# How often a monitor checks on the jobs it submitted.
+JOB_POLL_SECONDS = 5
+# Live-state polling backs off exponentially while the provider can't answer.
+PROVIDER_BACKOFF_MAX_SECONDS = 900
+_PROVIDER_ERROR_PREFIX = "live-state check failed"
+
+
+def provider_backoff_seconds(poll_interval: float, failures: int) -> float:
+    """Poll delay after ``failures`` consecutive unanswered live-state checks."""
+    if failures <= 0:
+        return poll_interval
+    return max(poll_interval,
+               min(PROVIDER_BACKOFF_MAX_SECONDS, poll_interval * 2 ** min(failures, 16)))
+
+
+def retry_after_seconds(exc: BaseException) -> float:
+    """Server-requested wait carried by an HTTP error (Retry-After, or Twitch
+    Helix's Ratelimit-Reset epoch), else 0."""
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    try:
+        if headers.get("Retry-After"):
+            return max(0.0, float(headers["Retry-After"]))
+        if headers.get("Ratelimit-Reset"):
+            return max(0.0, float(headers["Ratelimit-Reset"]) - time.time())
+    except (TypeError, ValueError):
+        pass
+    return 0.0
+
+
+def publish_retry_delay(attempts: int) -> float:
+    """Backoff before retry number ``attempts`` of a failed publish."""
+    return min(PUBLISH_RETRY_MAX_SECONDS,
+               PUBLISH_RETRY_BASE_SECONDS * 2 ** max(0, min(int(attempts) - 1, 16)))
+
+
+def classify_publish_error(exc: BaseException) -> str:
+    """``retry`` | ``permanent`` | ``duplicate`` for a failed publish.
+
+    Network errors, 408/425/429, 5xx and auth failures (401/403 — fixable by
+    reconnecting the account) are retried; other 4xx are request errors that
+    retrying can't fix; 409 is Zernio's content-hash dedup (the post already
+    exists). Local ValueErrors (missing clip, bad targets) are permanent;
+    anything else (e.g. a compose failure) is retried.
+    """
+    from clippyme.integrations.social_publisher import ZernioError
+
+    if isinstance(exc, ZernioError):
+        code = exc.status_code
+        if code is None:
+            return "retry"
+        if code == 409:
+            return "duplicate"
+        if code in (401, 403, 408, 425, 429) or code >= 500:
+            return "retry"
+        return "permanent"
+    if isinstance(exc, ValueError):
+        return "permanent"
+    return "retry"
+
+
+def _definitely_not_created(exc: BaseException) -> bool:
+    """True when a failed publish certainly created no post: a 4xx answer or a
+    local validation error before any request. Network errors, timeouts and
+    5xx are ambiguous — Zernio may have created the post."""
+    from clippyme.integrations.social_publisher import ZernioError
+
+    if isinstance(exc, ZernioError):
+        return exc.status_code is not None and 400 <= exc.status_code < 500
+    return isinstance(exc, ValueError)
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +447,12 @@ def _hhmmss(seconds: int) -> str:
     return f"{seconds // 3600:02d}:{seconds % 3600 // 60:02d}:{seconds % 60:02d}"
 
 
+def _journal_env(env: dict) -> dict:
+    """The monitor's non-secret pipeline knobs a resumed job must keep."""
+    from clippyme.domain.job_journal import JOURNAL_ENV_KEYS
+    return {key: env[key] for key in JOURNAL_ENV_KEYS if key in env}
+
+
 def _safe_remove(path: str) -> None:
     try:
         if path and os.path.isfile(path):
@@ -550,8 +632,20 @@ class LiveMonitor:
         # _pending_publish (paths + public clip metadata only — never secrets)
         # and drain through the normal publish path when flipped back True.
         self.publishing_enabled: bool = True
+        # Durable publish queue (persisted): every clip awaiting a provider
+        # acceptance lives here — queued / in_flight / retry_wait — until
+        # Zernio accepts it (→ _published) or it fails for good (→
+        # _failed_publish). Each entry carries a stable ``publication_id`` and
+        # the ``request_id`` sent as Zernio's x-request-id idempotency key.
         self._pending_publish: list[dict] = []
+        self._failed_publish: list[dict] = []
         self._draining: bool = False
+        # Jobs this monitor submitted and still owes a publish (persisted):
+        # job_id → the segment file the job reads (None for URL jobs). The job
+        # owns the file until it is terminal; a restart re-attaches to it.
+        self._inflight_jobs: dict[str, str | None] = {}
+        self._provider_failures = 0
+        self._provider_retry_after = 0.0
         # Every good clip is composed at segment-completion and written here,
         # title-named with a continuous (never-reset) collision counter so no
         # two files ever collide. Folder path is derived from id (not persisted);
@@ -614,6 +708,7 @@ class LiveMonitor:
             "resume_on_start": self.resume_on_start,
             "publishing_enabled": self.publishing_enabled,
             "pending_publish": len(self._pending_publish),
+            "failed_publish": len(self._failed_publish),
             "gemini_exhausted_at": self._gemini_exhausted_at,
             # Same allow-list snapshot() persists — no secrets by construction
             # (validate_monitor_config never puts any in cfg). Lets the
@@ -636,6 +731,9 @@ class LiveMonitor:
             # Paths + public clip metadata only (no secrets) — restored on resume.
             "publishing_enabled": self.publishing_enabled,
             "pending_publish": self._pending_publish,
+            "failed_publish": self._failed_publish,
+            "inflight_jobs": [{"job_id": job_id, "seg_path": seg_path}
+                              for job_id, seg_path in self._inflight_jobs.items()],
             "name_counter": int(self._name_counter),
             "gemini_exhausted_at": self._gemini_exhausted_at,
             "segments_captured": self.segments_captured,
@@ -657,7 +755,15 @@ class LiveMonitor:
         self._seen_ids = set(snap.get("seen_ids") or [])
         self._published = set(snap.get("published") or [])
         self.publishing_enabled = bool(snap.get("publishing_enabled", True))
-        self._pending_publish = list(snap.get("pending_publish") or [])
+        self._pending_publish = [e for e in snap.get("pending_publish") or []
+                                 if isinstance(e, dict)]
+        self._failed_publish = [e for e in snap.get("failed_publish") or []
+                                if isinstance(e, dict)]
+        self._inflight_jobs = {
+            str(item["job_id"]): item.get("seg_path")
+            for item in snap.get("inflight_jobs") or []
+            if isinstance(item, dict) and item.get("job_id")
+        }
         self._name_counter = int(snap.get("name_counter") or 0)
         self._gemini_exhausted_at = snap.get("gemini_exhausted_at") or None
         self.segments_captured = int(snap.get("segments_captured") or 0)
@@ -729,6 +835,11 @@ class LiveMonitor:
                 self._track_task(asyncio.create_task(self._drain_pending()))
             if self._missed_windows:
                 self._track_task(asyncio.create_task(self._resume_backfill()))
+            # Re-attach to jobs submitted before a restart/stop: the job journal
+            # resumes (or fails) them; this side still owes their publish and
+            # the release of their segment.
+            for job_id, seg_path in list(self._inflight_jobs.items()):
+                self._track_task(asyncio.create_task(self._await_and_publish(job_id, seg_path)))
         logger.info("LiveMonitor started: %s (mode=%s)", self.id, self.mode)
         return self.status()
 
@@ -804,16 +915,44 @@ class LiveMonitor:
 
     # -- live mode -------------------------------------------------------
 
+    async def _live_state(self):
+        """``(live, url, started_at)``, or ``None`` when the provider could not
+        answer (network, 429/5xx, Cloudflare block…). ``None`` is "unknown",
+        never "offline": callers keep their current state and back off."""
+        try:
+            state = await asyncio.to_thread(self._strategy.get_live_state)
+        except Exception as exc:
+            self._provider_failures += 1
+            self._provider_retry_after = retry_after_seconds(exc)
+            self.last_error = f"{_PROVIDER_ERROR_PREFIX} ({self._provider_failures}x): {exc}"
+            logger.warning("LiveMonitor %s: live-state check failed (%d in a row): %s",
+                           self.id, self._provider_failures, exc)
+            return None
+        if self._provider_failures:
+            logger.info("LiveMonitor %s: provider answering again after %d failed checks",
+                        self.id, self._provider_failures)
+            self._provider_failures = 0
+            self._provider_retry_after = 0.0
+            if (self.last_error or "").startswith(_PROVIDER_ERROR_PREFIX):
+                self.last_error = None
+        return state
+
+    def _next_poll_delay(self) -> float:
+        if not self._provider_failures:
+            return self._jittered_poll()
+        delay = provider_backoff_seconds(self.cfg["poll_interval"], self._provider_failures)
+        return max(delay, min(self._provider_retry_after, PROVIDER_BACKOFF_MAX_SECONDS))
+
     async def _run_live(self) -> None:
         self.state = "waiting_live"
         while not self._stop.is_set():
-            live, _, started_at = await asyncio.to_thread(self._strategy.get_live_state)
-            if live:
-                await self._marathon(started_at)
+            state = await self._live_state()
+            if state is not None and state[0]:
+                await self._marathon(state[2])
                 if not self.cfg["loop"]:
                     break
             self.state = "waiting_live"
-            await self._interruptible_sleep(self._jittered_poll())
+            await self._interruptible_sleep(self._next_poll_delay())
 
     async def _marathon(self, started_at=None) -> None:
         """Handle one live session: prelive skip, then the capture loop.
@@ -834,10 +973,16 @@ class LiveMonitor:
             return  # stream ended (or stop requested) during prelive
 
         self.state = "capturing"
+        url = None
         while not self._stop.is_set():
-            live, url, _ = await asyncio.to_thread(self._strategy.get_live_state)
-            if not live:
-                break
+            state = await self._live_state()
+            if state is not None:
+                live, url, _ = state
+                if not live:
+                    break
+            # state None: the provider didn't answer — no proof the stream
+            # ended. Keep capturing on the last known URL; the capture itself
+            # comes back empty (→ session end) if it really went offline.
             seg_path = await self._capture_segment(url)
             if seg_path is None:
                 break
@@ -849,6 +994,7 @@ class LiveMonitor:
             self.segments_captured += 1
             job_id = await self._submit_segment_job(seg_path)
             self.current_job_id = job_id
+            self._inflight_jobs[job_id] = seg_path  # persisted just below
             task = asyncio.create_task(self._await_and_publish(job_id, seg_path))
             self._publish_tasks.add(task)
             task.add_done_callback(self._publish_tasks.discard)
@@ -882,8 +1028,8 @@ class LiveMonitor:
         while remaining > 0 and not self._stop.is_set():
             await self._interruptible_sleep(min(step, remaining))
             remaining -= step
-            live, _, _ = await asyncio.to_thread(self._strategy.get_live_state)
-            if not live:
+            state = await self._live_state()
+            if state is not None and not state[0]:  # unknown ≠ offline: keep waiting
                 return False
         return not self._stop.is_set()
 
@@ -1050,6 +1196,8 @@ class LiveMonitor:
                     self.segments_captured += 1
                     job_id = await self._submit_segment_job(seg_path)
                     self.current_job_id = job_id
+                    self._inflight_jobs[job_id] = seg_path
+                    self._persist()
                     await self._await_and_publish(job_id, seg_path)
                     completed = True
                 else:
@@ -1130,6 +1278,7 @@ class LiveMonitor:
         self.segments_captured += 1
         job_id = await self._submit_url_job(item["url"])
         self.current_job_id = job_id
+        self._inflight_jobs[job_id] = None
         self._persist()
         # vod jobs run one at a time (no overlapping live capture to keep up
         # with), so await then publish inline. A failed download (e.g. a
@@ -1177,9 +1326,13 @@ class LiveMonitor:
                              letterbox_zoom=self.cfg.get("letterbox_zoom") or 0,
                              instructions=self.cfg.get("instructions") or None,
                              monitor=True)
+        # input_path: the segment IS the job's source — recording it makes the
+        # job resumable after a restart and protects the file from the upload
+        # retention sweep while the job is active.
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
-            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
+            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change,
+            input_path=os.path.abspath(seg_path), journal_env=_journal_env(env))
         logger.info("LiveMonitor %s submitted segment job %s", self.id, job_id)
         return job_id
 
@@ -1208,24 +1361,35 @@ class LiveMonitor:
                              monitor=True)
         await submit_job(
             jobs=self._jobs, job_queue=self._job_queue, job_id=job_id,
-            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change)
+            cmd=cmd, env=env, job_output_dir=job_dir, on_change=self._on_job_change,
+            journal_env=_journal_env(env))
         logger.info("LiveMonitor %s submitted url job %s (%s)", self.id, job_id, url)
         return job_id
 
     # -- publish ---------------------------------------------------------
 
     async def _await_and_publish(self, job_id: str, seg_path: str | None) -> None:
-        """Wait for a job to finish, publish its clips, then drop any segment."""
+        """Wait for a job to finish, queue its clips for publishing, then
+        release its segment.
+
+        The job owns ``seg_path`` until it is terminal. A monitor stop / app
+        shutdown while the job still runs keeps both the file (the job may be
+        resumed from it by the job journal) and the in-flight record, so the
+        next start re-attaches here and still publishes the clips.
+        """
+        self._inflight_jobs.setdefault(job_id, seg_path)
+        status = None
+        handed_off = False
         try:
-            while not self._stop.is_set():
-                await asyncio.sleep(5)
+            while True:
                 status = self._jobs.get(job_id, {}).get("status")
-                if status is None or status in _TERMINAL_STATUSES:
+                if status is None or status in _TERMINAL_STATUSES or self._stop.is_set():
                     break
-            status = self._jobs.get(job_id, {}).get("status")
+                await asyncio.sleep(JOB_POLL_SECONDS)
             if status not in ("completed", "stopped"):
-                logger.warning("LiveMonitor %s: job %s ended '%s' — no clips published",
-                               self.id, job_id, status)
+                if status is None or status in _TERMINAL_STATUSES:
+                    logger.warning("LiveMonitor %s: job %s ended '%s' — no clips published",
+                                   self.id, job_id, status)
                 return
             result = self._jobs.get(job_id, {}).get("result") or {}
             if result.get("gemini_exhausted"):
@@ -1236,18 +1400,28 @@ class LiveMonitor:
             if clips:
                 self._gemini_exhausted_at = None  # a good segment clears the notice
             # Compose every good clip into the per-monitor folder first, then
-            # publish the consolidated files (upload matches what's on disk).
+            # hand the consolidated files to the durable publish queue (upload
+            # matches what's on disk; spacing/retry/pause live in the drain).
             consolidated = await self._consolidate_clips(job_id, clips)
-            for i, entry in enumerate(consolidated):
-                if i:
-                    await asyncio.sleep(PUBLISH_SPACING_SECONDS)
-                await self._publish_one(entry)
+            # One persisted transition: the queue takes ownership of the clips
+            # in the same write that drops the in-flight record. Persisted
+            # separately, a crash between the two writes would leave the job
+            # both queued and re-attachable → consolidated + published twice.
+            self._inflight_jobs.pop(job_id, None)
+            self._enqueue_publications(consolidated)
+            handed_off = True
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("LiveMonitor %s: publish flow failed for job %s", self.id, job_id)
         finally:
-            _safe_remove(seg_path)
+            terminal = status is None or status in _TERMINAL_STATUSES
+            # A finished job whose clips never reached the queue (cancelled
+            # mid-compose) stays tracked so the next start retries the hand-off.
+            if terminal and (handed_off or status not in ("completed", "stopped")):
+                self._inflight_jobs.pop(job_id, None)
+                _safe_remove(seg_path)
+                self._persist()
 
     async def _consolidate_clips(self, job_id: str, clips: list[dict]) -> list[dict]:
         """Compose every good clip of a finished job into ``self._clip_dir``,
@@ -1309,44 +1483,127 @@ class LiveMonitor:
                 raise
             return base_path
 
-    async def _publish_one(self, entry: dict) -> None:
-        """Publish one consolidated entry ``{"job_id", "clip", "composed_path"}``
-        — uploads the composed file directly (no re-compose), dedupes on the RAW
-        clip path, and queues when paused."""
-        from clippyme.integrations.social_publisher import ZernioError, publish_clip
+    # -- durable publish queue ---------------------------------------------
+    #
+    # Entry lifecycle (all states persisted in pending_publish):
+    #   queued ──► in_flight ──► accepted (removed; clip path → _published)
+    #                  │
+    #                  ├──► retry_wait (next_retry_at) ──► in_flight …
+    #                  └──► failed (moved to _failed_publish, kept visible)
+    # "accepted" means Zernio created the (usually scheduled) post; whether the
+    # platform later publishes it is only knowable from Zernio, not from here.
 
-        job_id = entry["job_id"]
-        clip = entry["clip"]
-        video_url = clip.get("video_url") or ""
-        clip_path = os.path.join(self._output_dir, job_id, os.path.basename(video_url))
-        # Dedupe on the BASE clip path (stable across compose/consolidate).
-        if clip_path in self._published:
-            return
-        # Paused: queue the entry (public metadata + composed path only) and
-        # drain it on resume.
-        if not self.publishing_enabled:
+    def _clip_path(self, entry: dict) -> str:
+        """Dedupe key: the RAW clip path (stable across compose/consolidate)."""
+        video_url = (entry.get("clip") or {}).get("video_url") or ""
+        return os.path.join(self._output_dir, entry["job_id"], os.path.basename(video_url))
+
+    @staticmethod
+    def _as_publication(entry: dict) -> dict:
+        """Give an entry its durable identity (idempotent — also upgrades
+        entries queued by older versions)."""
+        entry.setdefault("publication_id", str(uuid.uuid4()))
+        entry.setdefault("request_id", str(uuid.uuid4()))
+        entry.setdefault("attempts", 0)
+        entry.setdefault("state", "queued")
+        return entry
+
+    def _queue_index(self, entry: dict) -> int | None:
+        pid = entry.get("publication_id")
+        for i, queued in enumerate(self._pending_publish):
+            if queued is entry or (pid and queued.get("publication_id") == pid):
+                return i
+        return None
+
+    def _ensure_queued(self, entry: dict) -> None:
+        if self._queue_index(entry) is None:
             self._pending_publish.append(entry)
+
+    def _dequeue(self, entry: dict) -> None:
+        index = self._queue_index(entry)
+        if index is not None:
+            del self._pending_publish[index]
+
+    def _enqueue_publications(self, entries: list[dict]) -> None:
+        """Durably queue finished clips, then make sure the drain runs."""
+        for entry in entries:
+            self._ensure_queued(self._as_publication(entry))
+        self._persist()
+        if entries and self.publishing_enabled and not self._draining:
+            try:
+                self._track_task(asyncio.create_task(self._drain_pending()))
+            except RuntimeError:
+                logger.warning("LiveMonitor %s: no running loop for publish drain", self.id)
+
+    def _next_due_publication(self) -> dict | None:
+        now = time.time()
+        for entry in self._pending_publish:
+            if float(entry.get("next_retry_at") or 0) <= now:
+                return entry
+        return None
+
+    def _seconds_until_next_retry(self) -> float | None:
+        if not self._pending_publish:
+            return None
+        soonest = min(float(e.get("next_retry_at") or 0) for e in self._pending_publish)
+        return max(0.0, soonest - time.time())
+
+    async def _publish_one(self, entry: dict) -> None:
+        """Try to get one clip accepted by Zernio — uploads the composed file
+        directly (no re-compose), dedupes on the RAW clip path, and leaves it
+        queued when paused. Never drops it: a failure either schedules a
+        bounded retry or parks it in the failed list."""
+        self._as_publication(entry)
+        job_id, clip = entry["job_id"], entry["clip"]
+        clip_path = self._clip_path(entry)
+        if clip_path in self._published:
+            self._dequeue(entry)
             self._persist()
             return
-        upload_path = entry.get("composed_path")
-        if not upload_path or not os.path.isfile(upload_path):
-            # Restored pending entry whose composed file vanished → recompose.
-            upload_path = await self._compose_for_publish(job_id, clip)
+        self._ensure_queued(entry)
+        if not self.publishing_enabled:
+            self._persist()
+            return
+        # Durable BEFORE the provider call: a crash mid-publish leaves the entry
+        # queued as in_flight, and its retry reuses the same request_id
+        # (Zernio's x-request-id), so a post Zernio already accepted within its
+        # ~5-min idempotency window comes back instead of being duplicated.
+        entry["state"] = "in_flight"
+        entry["last_attempt_at"] = time.time()
+        self._persist()
+        try:
+            upload_path = entry.get("composed_path")
+            if not upload_path or not os.path.isfile(upload_path):
+                # Restored entry whose composed file vanished → recompose.
+                upload_path = await self._compose_for_publish(job_id, clip)
+            title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
+            caption = render_template(self.cfg["caption_template"], clip)
+            result = await self._publish_serialized(entry, upload_path, title, caption, clip_path)
+        except Exception as exc:
+            self._record_publish_failure(entry, exc, clip_path)
+            return
+        self._on_publish_accepted(entry, clip_path, result)
 
-        title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
-        caption = render_template(self.cfg["caption_template"], clip)
-        # Serialise publishes GLOBALLY (shared lock) so the shared scheduler's
-        # picked_slots list (mutated inside publish_clip's worker thread) stays
-        # race-free across every monitor.
-        # Held across the 429 backoff on purpose: while Zernio is rate-limiting
-        # us, no other monitor should burn attempts against the same limit.
+    async def _publish_serialized(self, entry: dict, upload_path: str, title: str,
+                                  caption: str, clip_path: str) -> dict:
+        """One publish under the GLOBAL lock, with the inline 429 handling.
+
+        Serialising publishes globally keeps the shared scheduler's
+        picked_slots list (mutated inside publish_clip's worker thread)
+        race-free across every monitor. Held across the 429 backoff on
+        purpose: while Zernio is rate-limiting us, no other monitor should burn
+        attempts against the same limit.
+        """
+        from clippyme.integrations.social_publisher import ZernioError, publish_clip
+
         async with self._publish_lock:
             attempt = 0
             day_rolls = 0
             start_date = None  # None → scheduler picks today/tomorrow
             while True:
+                slots_before = len(self._picked_slots)
                 try:
-                    await asyncio.to_thread(
+                    return await asyncio.to_thread(
                         publish_clip,
                         api_key=self._zernio_key,
                         clip_path=upload_path,
@@ -1357,12 +1614,20 @@ class LiveMonitor:
                         timezone=self.cfg["timezone"],
                         scheduler=self._scheduler,
                         start_date=start_date,
+                        request_id=entry["request_id"],
                     )
-                    break
-                except (ZernioError, ValueError) as exc:
-                    body = getattr(exc, "body", None) or ""
-                    is_429 = getattr(exc, "status_code", None) == 429
-                    if is_429 and "Daily limit" in body and day_rolls < PUBLISH_MAX_DAY_ROLLS:
+                except Exception as exc:
+                    if not _definitely_not_created(exc):
+                        raise
+                    # Nothing was created: free the slot the scheduler reserved
+                    # for it (else it blocks its min-gap window forever) and
+                    # use a fresh idempotency key for the next try.
+                    del self._picked_slots[slots_before:]
+                    entry["request_id"] = str(uuid.uuid4())
+                    if not isinstance(exc, ZernioError) or exc.status_code != 429:
+                        raise
+                    body = exc.body or ""
+                    if "Daily limit" in body and day_rolls < PUBLISH_MAX_DAY_ROLLS:
                         base = date.fromisoformat(start_date) if start_date else date.today()
                         start_date = (base + timedelta(days=1)).isoformat()
                         day_rolls += 1
@@ -1370,7 +1635,7 @@ class LiveMonitor:
                             "LiveMonitor %s: Zernio daily limit for %s — rolling to %s",
                             self.id, clip_path, start_date)
                         continue
-                    if is_429 and attempt < PUBLISH_429_RETRIES - 1:
+                    if attempt < PUBLISH_429_RETRIES - 1:
                         attempt += 1
                         logger.warning(
                             "LiveMonitor %s: Zernio 429 for %s (body=%r) — retry %d/%d in %ds",
@@ -1378,22 +1643,59 @@ class LiveMonitor:
                             PUBLISH_429_BACKOFF_SECONDS)
                         await asyncio.sleep(PUBLISH_429_BACKOFF_SECONDS)
                         continue
-                    logger.error("LiveMonitor %s: publish failed for %s: %s (body=%r)",
-                                 self.id, clip_path, exc, body)
-                    self.last_error = f"publish failed: {exc}"
-                    return
+                    raise
+
+    def _record_publish_failure(self, entry: dict, exc: BaseException, clip_path: str) -> None:
+        kind = classify_publish_error(exc)
+        body = getattr(exc, "body", None) or ""
+        if kind == "duplicate":
+            logger.warning("LiveMonitor %s: Zernio already has %s (409, body=%r) — "
+                           "treating it as accepted", self.id, clip_path, body)
+            self._on_publish_accepted(entry, clip_path, None)
+            return
+        if _definitely_not_created(exc):
+            entry["request_id"] = str(uuid.uuid4())
+        entry["attempts"] = int(entry.get("attempts") or 0) + 1
+        entry["last_error"] = str(exc)[:500]
+        self.last_error = f"publish failed: {exc}"
+        if kind == "retry" and entry["attempts"] < PUBLISH_MAX_ATTEMPTS:
+            delay = publish_retry_delay(entry["attempts"])
+            entry["state"] = "retry_wait"
+            entry["next_retry_at"] = time.time() + delay
+            logger.warning("LiveMonitor %s: publish failed for %s (attempt %d/%d): %s "
+                           "(body=%r) — retrying in %ds", self.id, clip_path,
+                           entry["attempts"], PUBLISH_MAX_ATTEMPTS, exc, body, delay)
+        else:
+            self._dequeue(entry)
+            entry["state"] = "failed"
+            entry["failed_at"] = time.time()
+            entry.pop("next_retry_at", None)
+            self._failed_publish.append(entry)
+            del self._failed_publish[:-FAILED_PUBLISH_KEEP]
+            logger.error("LiveMonitor %s: publish failed permanently for %s after %d "
+                         "attempt(s): %s (body=%r)", self.id, clip_path,
+                         entry["attempts"], exc, body)
+        self._persist()
+
+    def _on_publish_accepted(self, entry: dict, clip_path: str, result: dict | None) -> None:
+        self._dequeue(entry)
         self._published.add(clip_path)
         self.clips_published += 1
         self._persist()
+        post = result or {}
+        logger.info("LiveMonitor %s: Zernio accepted %s (post=%s, status=%s, scheduled_for=%s)",
+                    self.id, clip_path, post.get("post_id"), post.get("status"),
+                    post.get("scheduled_for"))
         if not self.cfg.get("delete_after_publish", True):
             # User opted to keep raw artifacts around (QA/re-edit) — clip is
             # still recorded as published above so it's never re-published.
             return
-        # Clip is published → free the job-dir artifacts (best-effort, never
-        # raises), AND the consolidated composed file in the per-monitor
-        # folder — the folder must only ever hold not-yet-published clips on
-        # a 24/7 monitor, so nothing durable survives a confirmed publish.
-        self._delete_clip_artifacts(job_id, clip, clip_path, clip_path)
+        # Accepted → free the job-dir artifacts (best-effort, never raises),
+        # AND the consolidated composed file in the per-monitor folder — the
+        # folder must only ever hold not-yet-accepted clips on a 24/7 monitor.
+        # Zernio holds its own copy of the uploaded media for the scheduled post.
+        job_id = entry["job_id"]
+        self._delete_clip_artifacts(job_id, entry["clip"], clip_path, clip_path)
         try:
             _safe_remove(entry.get("composed_path"))
         except Exception:
@@ -1417,31 +1719,40 @@ class LiveMonitor:
                 "pending_publish": len(self._pending_publish)}
 
     async def _drain_pending(self) -> None:
-        """Publish every queued clip in order. Guarded by ``_draining`` so two
-        concurrent drains can't interleave; the actual publishes are serialised
-        globally by ``_publish_one``'s ``_publish_lock``, so spacing holds."""
+        """Single consumer of the durable publish queue.
+
+        Publishes due entries in order (spaced), waits interruptibly for the
+        earliest retry when none is due, and exits when the queue is empty,
+        publishing is paused or the monitor stops — the queue itself is
+        persisted, so a later start/resume picks up where this left off.
+        ``_draining`` keeps it single; publishes are serialised globally by
+        ``_publish_lock``.
+        """
         if self._draining:
             return
         self._draining = True
         try:
             first = True
-            while (self._pending_publish and self.publishing_enabled
-                   and not self._stop.is_set()):
+            while self.publishing_enabled and not self._stop.is_set():
+                entry = self._next_due_publication()
+                if entry is None:
+                    wait = self._seconds_until_next_retry()
+                    if wait is None:
+                        break
+                    await self._interruptible_sleep(wait)
+                    continue
                 if not first:
                     await asyncio.sleep(PUBLISH_SPACING_SECONDS)
+                    if self._stop.is_set() or not self.publishing_enabled:
+                        break
                 first = False
-                entry = self._pending_publish.pop(0)
-                self._persist()
                 try:
                     await self._publish_one(entry)
-                except Exception:
-                    # A recompose (vanished composed_path) can raise — re-queue
-                    # the entry so it retries rather than being lost, and keep
-                    # draining the rest (one bad entry never aborts the drain).
-                    logger.exception("LiveMonitor %s: drain publish failed, re-queued",
-                                     self.id)
-                    self._pending_publish.append(entry)
-                    self._persist()
+                except Exception as exc:
+                    # Defensive: a bug in the publish path must not lose the
+                    # entry nor spin — it takes the bounded retry path.
+                    logger.exception("LiveMonitor %s: publish drain step failed", self.id)
+                    self._record_publish_failure(entry, exc, self._clip_path(entry))
         finally:
             self._draining = False
 
@@ -1562,12 +1873,27 @@ class LiveMonitorRegistry:
             output_dir=self._output_dir, upload_dir=self._upload_dir,
             on_job_change=self._on_job_change, picked_slots=self._picked_slots,
             publish_lock=self._publish_lock, on_state_change=self.persist)
-        mon.restore(self._snapshots.get(mid) or {})
+        # A crashed / finished (loop=False) monitor is still listed but its
+        # snapshot was consumed when it started: its durable guards live on
+        # the old instance. Restoring {} here would wipe published/seen/queue
+        # and coverage on the next persist (→ duplicate backfill/publishes).
+        snap = self._snapshots.get(mid)
+        if existing is not None:
+            # The new instance inherits the queue: make any straggler task of
+            # the old one (e.g. a drain started via set_publishing after the
+            # crash) stand down, so one queue never has two consumers.
+            existing._stop.set()
+            if snap is None:
+                snap = existing.snapshot()
+        mon.restore(snap or {})
         self._monitors[mid] = mon
         try:
             status = mon.start(cfg)
         except Exception:
-            self._monitors.pop(mid, None)
+            if existing is not None:
+                self._monitors[mid] = existing  # keep its state listed + persisted
+            else:
+                self._monitors.pop(mid, None)
             raise
         self._snapshots.pop(mid, None)
         self.persist()
@@ -1694,7 +2020,7 @@ class LiveMonitorRegistry:
     # -- persistence (atomic) --------------------------------------------
 
     def persist(self) -> None:
-        from clippyme.domain.job_artifacts import save_job_metadata
+        from clippyme.domain.job_journal import save_journal
         snapshots = {mid: m.snapshot() for mid, m in self._monitors.items()}
         # Keep restored-but-not-started monitors in the file so their guards
         # survive a start of a *different* monitor.
@@ -1706,8 +2032,9 @@ class LiveMonitorRegistry:
             "updated_at": datetime.now().isoformat(),
         }
         try:
-            os.makedirs(os.path.dirname(self._state_path) or ".", exist_ok=True)
-            save_job_metadata(self._state_path, data)  # tmp + os.replace, 0o600
+            # tmp + fsync + os.replace + dir fsync, 0o600: the publish queue and
+            # dedup guards live here, so a power loss must not truncate it.
+            save_journal(self._state_path, data)
         except Exception:
             logger.warning("LiveMonitorRegistry: state persist failed", exc_info=True)
 
@@ -1715,7 +2042,23 @@ class LiveMonitorRegistry:
         try:
             with open(self._state_path, encoding="utf-8") as f:
                 data = json.load(f)
-        except (OSError, json.JSONDecodeError):
+        except FileNotFoundError:
+            return
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # Keep the evidence: the next persist would otherwise overwrite the
+            # only copy of the dedup guards / publish queue with empty state.
+            quarantine = f"{self._state_path}.corrupt-{int(time.time())}"
+            try:
+                os.replace(self._state_path, quarantine)
+            except OSError:
+                quarantine = "(could not move it aside)"
+            logger.error("LiveMonitorRegistry: %s is corrupt — starting empty; "
+                         "original kept at %s", self._state_path, quarantine)
+            return
+        except OSError:
+            logger.warning("LiveMonitorRegistry: cannot read %s", self._state_path, exc_info=True)
+            return
+        if not isinstance(data, dict):
             return
         monitors = data.get("monitors")
         if not isinstance(monitors, dict):

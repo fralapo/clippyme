@@ -1136,6 +1136,8 @@ def test_drain_recomposes_missing_composed_path_and_survives_failure(tmp_path, m
     async def fake_sleep(secs):
         pass
     monkeypatch.setattr(lm.asyncio, "sleep", fake_sleep)
+    # Failed entries now wait a backoff before their retry; make it immediate.
+    monkeypatch.setattr(lm, "PUBLISH_RETRY_BASE_SECONDS", 0)
 
     mon, calls = _publishing_monitor(tmp_path, monkeypatch)
 

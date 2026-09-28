@@ -5,6 +5,8 @@ module injected — no network, no curl_cffi wheel required on the host.
 """
 from datetime import timezone
 
+import pytest
+
 from clippyme.integrations import kick_client
 from clippyme.integrations.kick_client import (
     KickClient,
@@ -140,9 +142,12 @@ def test_get_channel_rotates_profile_on_403():
     assert fake.profiles_used[0] != fake.profiles_used[1]
 
 
-def test_get_channel_all_403_gives_up():
+def test_get_channel_all_403_is_unavailable_not_offline():
+    # A Cloudflare block says nothing about the streamer: it must not read as
+    # "offline" (None) — callers retry with backoff instead.
     client, fake = _client_with([_FakeResp(403), _FakeResp(403), _FakeResp(403)])
-    assert client.get_channel("foo") is None
+    with pytest.raises(kick_client.KickUnavailable):
+        client.get_channel("foo")
     # One attempt per profile.
     assert len(fake.profiles_used) == len(kick_client.DEFAULT_PROFILES)
 
@@ -152,11 +157,20 @@ def test_get_channel_network_error_rotates():
     assert client.get_channel("foo") == {"ok": 2}
 
 
-def test_get_channel_bad_json_returns_none():
+def test_get_channel_persistent_network_error_is_unavailable():
+    client, _ = _client_with([ConnectionError("dns")] * len(kick_client.DEFAULT_PROFILES))
+    with pytest.raises(kick_client.KickUnavailable):
+        client.get_channel("foo")
+
+
+def test_get_channel_bad_json_is_unavailable():
     client, _ = _client_with([_FakeResp(200, raise_json=True)])
-    assert client.get_channel("foo") is None
+    with pytest.raises(kick_client.KickUnavailable):
+        client.get_channel("foo")
 
 
-def test_get_channel_5xx_returns_none():
-    client, _ = _client_with([_FakeResp(503)])
-    assert client.get_channel("foo") is None
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_get_channel_429_and_5xx_are_unavailable(status):
+    client, _ = _client_with([_FakeResp(status)])
+    with pytest.raises(kick_client.KickUnavailable):
+        client.get_channel("foo")

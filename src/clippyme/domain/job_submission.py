@@ -42,8 +42,14 @@ async def submit_job(
     on_change=None,
     cleanup_paths=(),
     input_path: str | None = None,
+    journal_env: dict | None = None,
 ) -> None:
-    """Register and enqueue a job, rolling every artefact back on queue-full."""
+    """Register and enqueue a job, rolling every artefact back on queue-full.
+
+    ``journal_env`` carries non-secret pipeline knobs that must survive a
+    restart resume (the job journal never stores ``env``; see
+    ``job_journal.JOURNAL_ENV_KEYS``).
+    """
     max_attempts = configured_max_attempts()
     env["CLIPPYME_JOB_ID"] = job_id
     env["CLIPPYME_JOB_MAX_ATTEMPTS"] = str(max_attempts)
@@ -65,6 +71,8 @@ async def submit_job(
         "attempt": 0,
         "max_attempts": max_attempts,
     }
+    if journal_env:
+        jobs[job_id]["journal_env"] = dict(journal_env)
     try:
         job_queue.put_nowait(job_id)
     except asyncio.QueueFull:

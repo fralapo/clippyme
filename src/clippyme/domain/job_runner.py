@@ -120,6 +120,7 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
         output_dir = job_data["output_dir"]
         process = None
         log_thread = None
+        running_attempt = None  # attempt whose subprocess has not exited yet
 
         try:
             try:
@@ -189,6 +190,7 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                     env=child_env,
                     cwd=os.getcwd(),
                 )
+                running_attempt = attempt
                 jobs[job_id]["process"] = process
                 jobs[job_id]["pid"] = process.pid
                 jobs[job_id].pop("env", None)
@@ -205,6 +207,7 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                 while process.poll() is None:
                     await asyncio.sleep(2)
                     await _refresh(job_id, output_dir, process)
+                running_attempt = None
 
                 if log_thread.is_alive():
                     await asyncio.to_thread(log_thread.join, 5)
@@ -278,11 +281,20 @@ def make_run_job(*, jobs: dict, output_root: str, on_change=None):
                 break
 
         except asyncio.CancelledError:
-            await _stop_process_tree(job_id, process)
+            # Only application shutdown cancels a job task (user cancel/stop
+            # set a terminal status instead). That is not a job failure: leave
+            # the job active so the journal keeps it and startup recovery
+            # resumes it from its checkpoint (or fails it if not resumable).
+            # Bookkeeping happens before the await so a second cancel during
+            # tree termination cannot skip it.
             job = jobs.get(job_id)
             if job and job.get("status") not in job_control.TERMINAL_STATES:
-                job["status"] = "failed"
-                job["logs"].append("Job interrupted by server shutdown.")
+                if running_attempt is not None:
+                    # The interrupted attempt never finished: don't charge it
+                    # against the retry budget.
+                    job["attempt"] = running_attempt - 1
+                job["logs"].append("Job interrupted by server shutdown; left for restart recovery.")
+            await _stop_process_tree(job_id, process)
             raise
         except Exception as exc:
             job = jobs.get(job_id)

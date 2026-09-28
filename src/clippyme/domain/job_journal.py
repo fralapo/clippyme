@@ -24,6 +24,16 @@ logger = logging.getLogger("clippyme")
 
 JOURNAL_FILENAME = "jobs_journal.json"
 _JOURNAL_LOCK = threading.RLock()
+# Non-secret per-job pipeline knobs replayed into the env of a resumed job
+# (e.g. the Live Monitor's clip cap / quality floor). Allow-list only: env
+# secrets must never reach the journal.
+JOURNAL_ENV_KEYS = ("CLIPPYME_MAX_CLIPS", "CLIPPYME_MIN_VIRAL_SCORE", "CLIPPYME_CREATOR_NAME")
+
+
+def _public_env(values) -> dict:
+    if not isinstance(values, dict):
+        return {}
+    return {key: str(values[key]) for key in JOURNAL_ENV_KEYS if values.get(key) is not None}
 
 
 def snapshot(jobs: dict) -> dict:
@@ -43,6 +53,9 @@ def snapshot(jobs: dict) -> dict:
             "max_attempts": int(job.get("max_attempts") or 0),
             "updated_at": time.time(),
         }
+        public_env = _public_env(job.get("journal_env"))
+        if public_env:
+            records[job_id]["journal_env"] = public_env
     return records
 
 
@@ -177,9 +190,16 @@ def _recovered_entry(job_id: str, record: dict, message: str) -> dict:
         os.environ.get("CLIPPYME_JOB_MAX_ATTEMPTS", "3"),
     )
     env = os.environ.copy()
+    public_env = _public_env(record.get("journal_env"))
+    if public_env:
+        # The submission's own knobs win outright — a key it deliberately
+        # omitted must not leak back in from the server's environment.
+        for key in JOURNAL_ENV_KEYS:
+            env.pop(key, None)
+        env.update(public_env)
     env["CLIPPYME_JOB_ID"] = job_id
     env["CLIPPYME_JOB_MAX_ATTEMPTS"] = str(max_attempts)
-    return {
+    entry = {
         "status": "queued",
         "logs": [message],
         "cmd": record.get("cmd") or [],
@@ -190,6 +210,9 @@ def _recovered_entry(job_id: str, record: dict, message: str) -> dict:
         "max_attempts": max_attempts,
         "result": {"clips": [], **runtime_result_fields(output_dir)},
     }
+    if public_env:
+        entry["journal_env"] = public_env  # survives a second restart too
+    return entry
 
 
 def _may_restore_completed(output_dir: str) -> bool:

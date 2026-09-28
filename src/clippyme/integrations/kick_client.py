@@ -101,6 +101,14 @@ def playback_url(channel: Optional[dict]) -> Optional[str]:
     return url or None
 
 
+class KickUnavailable(RuntimeError):
+    """Kick could not be asked (Cloudflare block, network, 429/5xx, bad body).
+
+    Distinct from ``None`` (unknown channel): it says nothing about whether the
+    streamer is live, so callers must retry instead of reading it as offline.
+    """
+
+
 class KickClient:
     """Fetches Kick channel JSON with Cloudflare-bypassing impersonation."""
 
@@ -115,12 +123,12 @@ class KickClient:
         return cf_requests
 
     def get_channel(self, slug: str) -> Optional[dict]:
-        """GET the channel JSON. Returns the parsed dict, or None.
+        """GET the channel JSON. Returns the parsed dict, or None for a 404.
 
-        A 404 (unknown slug) and any non-403 4xx/5xx return None. A 403 rotates
-        the impersonation profile and retries; only after every profile has
-        returned 403 do we give up (None) — the caller treats that as
-        "try again next poll", not a hard failure.
+        A 403 or network error rotates the impersonation profile and retries.
+        When no answer can be obtained (every profile blocked/failed, 429/5xx,
+        invalid JSON) it raises :class:`KickUnavailable` — "try again later",
+        never "offline".
         """
         return self._get_json(API_URL.format(slug=slug))
 
@@ -146,12 +154,9 @@ class KickClient:
             if status == 404:
                 return None
             if status >= 400:
-                logger.warning("Kick GET %s → HTTP %s", url, status)
-                return None
+                raise KickUnavailable(f"Kick GET {url} → HTTP {status}")
             try:
                 return resp.json()
-            except Exception:
-                logger.warning("Kick GET: response was not valid JSON")
-                return None
-        logger.warning("Kick GET: all profiles returned 403 for %s", url)
-        return None
+            except Exception as exc:
+                raise KickUnavailable("Kick GET: response was not valid JSON") from exc
+        raise KickUnavailable(f"Kick GET: every impersonation profile failed for {url}")
