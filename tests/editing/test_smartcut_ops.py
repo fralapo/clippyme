@@ -1,4 +1,4 @@
-"""Host tests for domain.smartcut_ops — the pure half of Smart Cut.
+"""Host tests for editing.smartcut_ops — the pure half of Smart Cut.
 
 Focuses on _build_v3_timeline, which had ZERO coverage before the smartcut
 decomposition: it maps keep-segments (seconds) onto an auto-editor v3 JSON

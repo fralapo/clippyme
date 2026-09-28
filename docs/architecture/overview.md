@@ -26,7 +26,7 @@ flowchart LR
 | API layer | `src/clippyme/api/` | HTTP routes, request validation (Pydantic), security gates, static mounts, startup/shutdown. Thin: no business logic. |
 | Services | `src/clippyme/jobs/`, `clips/`, `editing/`, `monitoring/`, `publishing/` | Everything an endpoint does, one package per responsibility: the job lifecycle (submission, queue, runner, journal, runtime state, history, uploads); per-clip operations (resolution, locks, smart cut and restore endpoints, reframe requests); the compose layers (grade, subtitles, smart cut, hook, logo, banner); the live monitor; manual publishing. Never imports FastAPI. |
 | Shared | `src/clippyme/core/`, `src/clippyme/media/` | `core`: error types mapped to HTTP statuses, SSRF-safe DNS resolution, the Gemini clip schema. `media`: ffmpeg/ffprobe primitives shared by the pipeline and the compose layers (encode settings, probing, atomic ffmpeg execution). |
-| Pipeline | `src/clippyme/pipeline/` | The per-job subprocess: download, transcription (`transcription/`), AI clip selection (`analysis/`), cutting, reframing (`reframe/`), post-processing, output QA (`quality/`). `orchestrator.py` and `main.py` stay at the package root. |
+| Pipeline | `src/clippyme/pipeline/` | The per-job subprocess: download, transcription (`transcription/`; local Whisper in `main.py`), AI clip selection (`analysis/`), cutting, reframing (`reframe/`), post-processing, output QA (`quality/`). `orchestrator.py` and `main.py` stay at the package root. |
 | Integrations | `src/clippyme/integrations/` | Clients for external services: Zernio, Kick, Twitch, YouTube RSS, the auto-editor updater. |
 | Storage | `src/clippyme/storage/` | `data/config.json` (keys and settings entered in the dashboard). |
 

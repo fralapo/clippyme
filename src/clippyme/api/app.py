@@ -116,7 +116,7 @@ run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs
 # Multi-platform content monitor registry: concurrent asyncio tasks (one per
 # platform:channel) that detect live streams / new VODs, submit them as normal
 # jobs, and auto-publish clips with GLOBAL publish spacing. Bound to the same
-# shared job state (thin-handler rule: logic lives in domain.live_monitor).
+# shared job state (thin-handler rule: logic lives in monitoring.live_monitor).
 from clippyme.monitoring.live_monitor import LiveMonitorRegistry
 live_monitor = LiveMonitorRegistry(
     jobs=jobs, job_queue=job_queue, output_dir=OUTPUT_DIR,

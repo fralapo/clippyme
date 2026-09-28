@@ -15,6 +15,7 @@ proxying `/api`, `/videos`, `/thumbnails` and `/fonts` to the backend).
 | `src/lib/` | Cross-feature pure logic, unit-tested; `data.js` holds the option catalogs and defaults mirrored by the backend |
 | `src/styles/` | `index.css` (Tailwind entry), `tokens.css` (design tokens, fonts), `app.css` (the visual system) |
 | `src/assets/` | Images bundled by Vite |
+| `src/test/setup.js` | Vitest setup: jest-dom matchers, cleanup between tests |
 | `Dockerfile` / `Dockerfile.prod` + `nginx.conf` | Dev server image / static production build served by nginx |
 
 ```bash

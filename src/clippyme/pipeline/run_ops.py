@@ -2,7 +2,7 @@
 
 Extracted from ``pipeline.main``'s ``__main__`` block, which imports
 cv2/torch/mediapipe at module top and therefore can't run on the dev host.
-Only stdlib + ``domain.encode`` here.
+Only stdlib + ``media.encode`` here.
 """
 import os
 import re

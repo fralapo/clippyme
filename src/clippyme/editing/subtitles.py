@@ -301,7 +301,7 @@ SUBTITLE_PRESETS = {
 # Bundled TTF fonts live at repo-root `fonts/` and are also mounted by
 # the FastAPI static handler at /fonts. We resolve the repo root by
 # walking 3 levels up from this file (src/clippyme/editing/subtitles.py
-# → src/clippyme/domain → src/clippyme → src → repo-root). CWD-based
+# → src/clippyme/editing → src/clippyme → src → repo-root). CWD-based
 # resolution was fragile: any caller running from a different directory
 # (tests, reframe subprocess, ad-hoc scripts) got a bogus path and
 # libass silently fell back to Fontconfig. Override via env var for

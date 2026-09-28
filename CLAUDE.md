@@ -28,8 +28,8 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
 - `src/clippyme/api/` — FastAPI routes (`app.py`: jobs, clips, monitor;
   `config_routes.py`: settings), `schemas.py`, `security.py`.
 - Service packages (endpoint logic; never import FastAPI):
-  `src/clippyme/jobs/` job lifecycle (submission, queue, runner, control,
-  journal, runtime state, results, history, uploads); `clips/` per-clip
+  `src/clippyme/jobs/` job lifecycle (submission, queue, runner with the
+  retry loop, control, journal, runtime state, results, history, uploads); `clips/` per-clip
   operations (resolution, locks, smart cut and restore endpoints, reframe
   requests); `editing/` compose layers (grade, subtitles, smart cut, hook,
   logo, banner, AI trim); `monitoring/` live monitor; `publishing/` manual
@@ -41,7 +41,8 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
   `orchestrator.py` (preflight, checkpoints, retries, output QA) wrapping
   `main.py` (download, transcription, Gemini, cut, reframe); both module
   paths are fixed (`python -m`, persisted argv). Stages live in
-  `transcription/` (Deepgram, ElevenLabs, cache, diarization), `analysis/`
+  `transcription/` (Deepgram, ElevenLabs, cache, diarization; local Whisper
+  stays in `main.py`, device/model choice in `hardware.py`), `analysis/`
   (Gemini request/parser/service, TextTiling), `reframe/` (engine, detectors,
   tracking, decision math, scene detection) and `quality/` (clip QA, media
   QA, quality suite).
