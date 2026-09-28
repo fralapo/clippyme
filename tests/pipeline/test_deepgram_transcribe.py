@@ -1,4 +1,4 @@
-"""Unit tests for clippyme.pipeline.deepgram_transcribe.
+"""Unit tests for clippyme.pipeline.transcription.deepgram_transcribe.
 
 Pure-logic + mocked-network coverage (no real Deepgram calls):
 - retry/backoff classification + Retry-After honouring
@@ -10,7 +10,7 @@ These run on the host (the module only needs `requests`, no cv2/ML runtime).
 """
 import pytest
 
-import clippyme.pipeline.deepgram_transcribe as dg
+import clippyme.pipeline.transcription.deepgram_transcribe as dg
 
 
 # --- pure helpers ----------------------------------------------------------

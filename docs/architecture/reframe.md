@@ -59,11 +59,11 @@ the centre instead of freezing on empty space.
 
 | Module | Contents | Host-testable |
 |--------|----------|---------------|
-| `pipeline/reframe.py` | Render orchestration: scene analysis, strategies, render loops, `process_video_to_vertical` | No (OpenCV) |
-| `pipeline/reframe_detect.py` | YOLO and MediaPipe detectors | No |
-| `pipeline/reframe_track.py` | `SpeakerTracker`, `SmoothedCameraman`, smoothing filters | Yes |
-| `pipeline/reframe_ops.py` | Camera and decision math: trajectories, locks, zoom, letterbox geometry | Yes |
-| `pipeline/media_probe.py` | ffprobe helpers: variable frame rate, stream start times, fps | Yes |
+| `pipeline/reframe/reframe.py` | Render orchestration: scene analysis, strategies, render loops, `process_video_to_vertical` | No (OpenCV) |
+| `pipeline/reframe/reframe_detect.py` | YOLO and MediaPipe detectors | No |
+| `pipeline/reframe/reframe_track.py` | `SpeakerTracker`, `SmoothedCameraman`, smoothing filters | Yes |
+| `pipeline/reframe/reframe_ops.py` | Camera and decision math: trajectories, locks, zoom, letterbox geometry | Yes |
+| `media/media_probe.py` | ffprobe helpers: variable frame rate, stream start times, fps | Yes |
 
 New reframe logic goes in `reframe_ops.py` or `reframe_track.py` so it can be
 tested without the CV stack. `reframe.py` re-exports the moved tracking and

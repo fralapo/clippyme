@@ -1,17 +1,25 @@
-"""Tests for clippyme.pipeline.transcribe_cache (stdlib-only, host-runnable)."""
+"""Tests for clippyme.pipeline.transcription.transcribe_cache (stdlib-only, host-runnable)."""
 import json
 import os
 import time
 
 import pytest
 
-from clippyme.pipeline import transcribe_cache as tc
+from clippyme.pipeline.transcription import transcribe_cache as tc
 
 
 @pytest.fixture
 def tmp_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(tc, "CACHE_DIR", str(tmp_path / "cache"))
     return tmp_path / "cache"
+
+
+def test_default_cache_dir_is_repo_data_cache(monkeypatch):
+    # The default is anchored on the module's own location; moving the module
+    # to another depth must not move the cache out of <repo>/data/cache.
+    monkeypatch.delenv("CLIPPYME_CACHE_DIR", raising=False)
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    assert tc._resolve_cache_dir() == os.path.join(repo, "data", "cache")
 
 
 def test_cache_path_is_url_hash_stable(tmp_cache):

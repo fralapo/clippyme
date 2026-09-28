@@ -142,7 +142,7 @@ def suggest_drops(
         )
         return result
     except Exception as e:  # pragma: no cover — network path
-        from clippyme.pipeline.gemini_service import _redact_key
+        from clippyme.pipeline.analysis.gemini_service import _redact_key
 
         logger.warning("clip_edit_ai suggest_drops failed: %s", e)
         return {"drops": [], "explanation": f"AI edit failed: {_redact_key(str(e))}"}

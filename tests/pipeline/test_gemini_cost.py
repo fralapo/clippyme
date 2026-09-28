@@ -13,8 +13,8 @@ from types import SimpleNamespace
 import pytest
 
 from clippyme.jobs import history_service
-from clippyme.pipeline import gemini_request
-from clippyme.pipeline.gemini_request import (
+from clippyme.pipeline.analysis import gemini_request
+from clippyme.pipeline.analysis.gemini_request import (
     MODEL_PRICING,
     add_call_cost,
     build_viral_prompt,

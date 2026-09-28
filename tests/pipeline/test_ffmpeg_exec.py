@@ -12,8 +12,8 @@ import time
 
 import pytest
 
-from clippyme.pipeline import ffmpeg_exec
-from clippyme.pipeline.ffmpeg_exec import (
+from clippyme.media import ffmpeg_exec
+from clippyme.media.ffmpeg_exec import (
     FfmpegError,
     FfmpegStalled,
     FrameEncoder,

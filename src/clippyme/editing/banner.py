@@ -242,7 +242,7 @@ def add_banner_to_video(video_path, banner_params, out_path) -> bool:
     import subprocess
 
     from clippyme.media.encode import ffmpeg_timeout, x264_video_args
-    from clippyme.pipeline.media_probe import probe_dimensions
+    from clippyme.media.media_probe import probe_dimensions
 
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video {video_path} not found")

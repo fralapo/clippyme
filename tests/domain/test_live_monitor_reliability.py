@@ -119,7 +119,7 @@ def test_transient_live_state_errors_do_not_kill_the_monitor(tmp_path):
 
 
 def test_capture_continues_when_live_state_is_unknown(tmp_path, monkeypatch):
-    from clippyme.pipeline import media_probe
+    from clippyme.media import media_probe
 
     mon = _monitor(tmp_path)
     mon._strategy = ScriptedStrategy([(True, "u1", None), RuntimeError("HTTP 503"),
@@ -524,7 +524,7 @@ def test_terminal_job_releases_its_segment(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _wire_e2e(monkeypatch, tmp_path, strategy_factory):
-    from clippyme.pipeline import media_probe
+    from clippyme.media import media_probe
     from clippyme.storage import config_store
 
     monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "g"})

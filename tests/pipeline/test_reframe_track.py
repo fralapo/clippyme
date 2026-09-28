@@ -1,4 +1,4 @@
-"""Host tests for clippyme.pipeline.reframe_track — the pure tracking classes.
+"""Host tests for clippyme.pipeline.reframe.reframe_track — the pure tracking classes.
 
 This module deliberately has NO cv2/torch/mediapipe imports, so these run on
 the dev host. They pin the exact crop-box math that the aspect_ratio
@@ -6,7 +6,7 @@ constructor threading (ex reframe.ASPECT_RATIO global) touches.
 """
 import pytest
 
-from clippyme.pipeline.reframe_track import (
+from clippyme.pipeline.reframe.reframe_track import (
     DetectionSmoother,
     SmoothedCameraman,
     SpeakerTracker,

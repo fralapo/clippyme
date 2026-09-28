@@ -21,9 +21,9 @@ from pathlib import Path
 from typing import Any
 
 from clippyme.jobs.runtime_state import RuntimeState
-from clippyme.pipeline.ffmpeg_exec import FfmpegError, remove_quietly, run_ffmpeg_atomic
-from clippyme.pipeline.gemini_request import DEFAULT_RETRY_MODEL, build_model_chain
-from clippyme.pipeline.media_qa import inspect_clip, probe_media
+from clippyme.media.ffmpeg_exec import FfmpegError, remove_quietly, run_ffmpeg_atomic
+from clippyme.pipeline.analysis.gemini_request import DEFAULT_RETRY_MODEL, build_model_chain
+from clippyme.pipeline.quality.media_qa import inspect_clip, probe_media
 from clippyme.pipeline.preflight import (
     PreflightInputs,
     PreflightRejected,
@@ -31,7 +31,7 @@ from clippyme.pipeline.preflight import (
     enforce_preflight,
     format_preflight_log,
 )
-from clippyme.pipeline.reframe_ops import normalize_letterbox_zoom
+from clippyme.pipeline.reframe.reframe_ops import normalize_letterbox_zoom
 from clippyme.pipeline.run_ops import (
     build_cut_command,
     clip_output_basename,
@@ -481,7 +481,7 @@ def _load_or_analyze(
         silences: list = []
         if _enabled("CLIPPYME_SILENCE_SNAP"):
             try:
-                from clippyme.pipeline.media_probe import detect_silences
+                from clippyme.media.media_probe import detect_silences
 
                 silences = detect_silences(input_video)
             except Exception as exc:  # noqa: BLE001

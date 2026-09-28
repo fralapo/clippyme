@@ -35,10 +35,16 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
   logo, banner, AI trim); `monitoring/` live monitor; `publishing/` manual
   publish.
 - `src/clippyme/core/` — errors, SSRF-safe DNS (`netutil`), Gemini clip
-  schema. `media/` — encode settings shared by every libx264 pass.
+  schema. `media/` — ffmpeg/ffprobe primitives shared by the pipeline and
+  the compose layers: `encode`, `media_probe`, `ffmpeg_exec`.
 - `src/clippyme/pipeline/` — the per-job subprocess. Entrypoint is
   `orchestrator.py` (preflight, checkpoints, retries, output QA) wrapping
-  `main.py` (transcription, Gemini, cut, reframe).
+  `main.py` (download, transcription, Gemini, cut, reframe); both module
+  paths are fixed (`python -m`, persisted argv). Stages live in
+  `transcription/` (Deepgram, ElevenLabs, cache, diarization), `analysis/`
+  (Gemini request/parser/service, TextTiling), `reframe/` (engine, detectors,
+  tracking, decision math, scene detection) and `quality/` (clip QA, media
+  QA, quality suite).
 - `src/clippyme/integrations/` — Zernio, Kick, Twitch, YouTube RSS,
   auto-editor updater. `storage/` — `data/config.json`.
 - `dashboard/src/` — the UI: `app/App.jsx` (state wiring only), `features/`

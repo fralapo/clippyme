@@ -1,5 +1,5 @@
 """Host (non-integration) tests for the pure helpers in
-``clippyme.pipeline.media_probe`` — VFR detection, start_time parsing, and the
+``clippyme.media.media_probe`` — VFR detection, start_time parsing, and the
 audio-sync seek-arg builder ported from kamilstanuch/Autocrop-vertical.
 
 No cv2/ffprobe needed: every function under test is pure. The ``probe_*``
@@ -7,7 +7,7 @@ ffprobe wrappers are exercised only for their never-raise contract.
 """
 import pytest
 
-from clippyme.pipeline.media_probe import (
+from clippyme.media.media_probe import (
     audio_sync_seek_args,
     detect_silences,
     is_vfr,

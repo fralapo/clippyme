@@ -91,7 +91,7 @@ The hook blocks staged API keys, tokens, cookie files, `.env`,
 
 ## Media quality regression suite
 
-`clippyme.pipeline.quality_suite` replays the production output-QA policy over
+`clippyme.pipeline.quality.quality_suite` replays the production output-QA policy over
 a set of clips described by a JSON manifest:
 
 ```json
@@ -114,7 +114,7 @@ a set of clips described by a JSON manifest:
 ```
 
 ```bash
-python -m clippyme.pipeline.quality_suite quality-manifest.json --output quality-report.json
+python -m clippyme.pipeline.quality.quality_suite quality-manifest.json --output quality-report.json
 ```
 
 Exit code `0` = all cases pass, `1` = quality regression, `2` = invalid or

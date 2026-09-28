@@ -1,4 +1,4 @@
-"""Tests for clippyme.pipeline.gemini_parser.
+"""Tests for clippyme.pipeline.analysis.gemini_parser.
 
 The parser is the resilience layer between Gemini's frequently-malformed
 output and the rest of the pipeline. These tests pin the 5-level fallback
@@ -8,8 +8,8 @@ import sys
 
 import pytest
 
-from clippyme.pipeline import gemini_parser as gp
-from clippyme.pipeline.gemini_parser import (
+from clippyme.pipeline.analysis import gemini_parser as gp
+from clippyme.pipeline.analysis.gemini_parser import (
     _clean_json,
     _extract_json_section,
     _viral_reason_is_generic,

@@ -435,7 +435,7 @@ def _audio_polish_pass(input_path: str) -> tuple[str, float]:
             import math
 
             from clippyme.pipeline.cut_ops import parse_margin_seconds, predict_polish_saving
-            from clippyme.pipeline.media_probe import detect_silences
+            from clippyme.media.media_probe import detect_silences
 
             margin_s = parse_margin_seconds(AUDIO_POLISH_MARGIN)
             amp = max(1e-6, float(AUDIO_POLISH_THRESHOLD))

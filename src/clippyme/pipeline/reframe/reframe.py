@@ -25,15 +25,15 @@ import numpy as np
 from tqdm import tqdm
 
 from clippyme.media.encode import ffmpeg_timeout, x264_video_args
-from clippyme.pipeline.ffmpeg_exec import FfmpegError, FrameEncoder
-from clippyme.pipeline.media_probe import (
+from clippyme.media.ffmpeg_exec import FfmpegError, FrameEncoder
+from clippyme.media.media_probe import (
     audio_sync_seek_args,
     probe_is_variable_frame_rate,
     probe_stream_start_time,
     reconcile_fps,
 )
 from clippyme.pipeline.run_ops import build_vfr_normalization_command
-from clippyme.pipeline.reframe_ops import (
+from clippyme.pipeline.reframe.reframe_ops import (
     PanSmoother,
     build_smoothed_trajectory,
     centroid_span,
@@ -42,11 +42,11 @@ from clippyme.pipeline.reframe_ops import (
     salient_crop_center,
     weighted_interest_center,
 )
-from clippyme.pipeline.scene_detection import detect_scenes, get_video_resolution
+from clippyme.pipeline.reframe.scene_detection import detect_scenes, get_video_resolution
 
 # Moved pieces, re-exported for back-compat: main.py and the integration tests
 # import these names from `reframe` (and monkeypatch them here).
-from clippyme.pipeline.reframe_detect import (  # noqa: F401
+from clippyme.pipeline.reframe.reframe_detect import (  # noqa: F401
     _get_face_detection,
     _get_face_mesh,
     _get_yolo_model,
@@ -54,7 +54,7 @@ from clippyme.pipeline.reframe_detect import (  # noqa: F401
     detect_face_candidates,
     detect_person_yolo,
 )
-from clippyme.pipeline.reframe_track import (  # noqa: F401
+from clippyme.pipeline.reframe.reframe_track import (  # noqa: F401
     DetectionSmoother,
     SmoothedCameraman,
     SpeakerTracker,
@@ -977,7 +977,7 @@ def process_video_to_vertical(input_video, final_output_video, reframe_mode='aut
 
     # FrameEncoder logs ffmpeg's stderr to a temp file (never an unread pipe:
     # that deadlocks against the stdin writes below) and kills an encoder that
-    # stops consuming frames — see pipeline/ffmpeg_exec.py.
+    # stops consuming frames — see media/ffmpeg_exec.py.
     encoder = FrameEncoder(command)
 
     cap = cv2.VideoCapture(input_video)

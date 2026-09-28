@@ -64,7 +64,7 @@ clip/reframe render path, and is what this study ports.
 
 ## 3. What was implemented
 
-New module **`src/clippyme/pipeline/media_probe.py`** (pure helpers + thin
+New module **`src/clippyme/media/media_probe.py`** (pure helpers + thin
 ffprobe wrappers, **no cv2** → host-importable), following the established
 `reframe_ops.py` "pure logic in a testable module, thin glue in the cv2 file"
 pattern:

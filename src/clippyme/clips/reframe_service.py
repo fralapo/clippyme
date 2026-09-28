@@ -17,7 +17,7 @@ from clippyme.clips.clip_resolve import clip_filename_for
 from clippyme.core.errors import ClippyMeError, ConflictError, NotFoundError
 from clippyme.jobs.job_artifacts import load_job_metadata, update_job_metadata
 from clippyme.jobs.job_control import ACTIVE_STATES
-from clippyme.pipeline.reframe_ops import normalize_letterbox_zoom
+from clippyme.pipeline.reframe.reframe_ops import normalize_letterbox_zoom
 from clippyme.storage.config_store import load_persistent_config
 
 logger = logging.getLogger(__name__)

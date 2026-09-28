@@ -18,11 +18,11 @@ import time
 
 logger = logging.getLogger("clippyme")
 
-# Resolve to an absolute path anchored at the repo root (../../../data/cache
+# Resolve to an absolute path anchored at the repo root (../../../../data/cache
 # from this file), so transcripts are never written outside the data tree when
 # the process is launched from an unexpected CWD. An explicit env override is
 # honoured for non-standard install prefixes.
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", ".."))
 
 
 def _resolve_cache_dir() -> str:

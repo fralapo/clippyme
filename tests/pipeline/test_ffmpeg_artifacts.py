@@ -27,7 +27,7 @@ import pytest
 
 from clippyme.jobs.runtime_state import RuntimeState
 from clippyme.pipeline import orchestrator
-from clippyme.pipeline.media_qa import probe_media
+from clippyme.pipeline.quality.media_qa import probe_media
 from clippyme.pipeline.run_ops import build_cut_command
 
 pytestmark = pytest.mark.skipif(

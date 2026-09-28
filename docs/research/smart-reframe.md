@@ -5,7 +5,7 @@
 Date: 2026-06-17
 External repo analysed: <https://github.com/gauravzazz/smart-reframe> @ `29822eb`
 (MIT licensed). Scope: the auto-reframe subsystem only
-(`src/clippyme/pipeline/reframe.py` + `reframe_ops.py`).
+(`src/clippyme/pipeline/reframe/reframe.py` + `reframe_ops.py`).
 
 ---
 

@@ -1,4 +1,4 @@
-"""Host-runnable TDD for clippyme.pipeline.reframe_ops.
+"""Host-runnable TDD for clippyme.pipeline.reframe.reframe_ops.
 
 This module is intentionally cv2-free (pure numpy/math), so it imports and
 runs on the dev host with no heavy CV runtime — unlike the rest of
@@ -7,7 +7,7 @@ clippyme.pipeline.main. Keep it that way.
 import numpy as np
 import pytest
 
-from clippyme.pipeline import reframe_ops as ro
+from clippyme.pipeline.reframe import reframe_ops as ro
 
 
 # --- OneEuroFilter ----------------------------------------------------------

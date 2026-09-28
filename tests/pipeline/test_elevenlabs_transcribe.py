@@ -1,4 +1,4 @@
-"""Unit tests for clippyme.pipeline.elevenlabs_transcribe.
+"""Unit tests for clippyme.pipeline.transcription.elevenlabs_transcribe.
 
 Pure-logic + mocked-network coverage (no real ElevenLabs calls):
 - token-stream parsing (spoken vs audio_event vs spacing)
@@ -15,7 +15,7 @@ import math
 
 import pytest
 
-import clippyme.pipeline.elevenlabs_transcribe as el
+import clippyme.pipeline.transcription.elevenlabs_transcribe as el
 
 
 # --- pure helpers ----------------------------------------------------------

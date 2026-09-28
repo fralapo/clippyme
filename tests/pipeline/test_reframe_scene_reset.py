@@ -15,10 +15,10 @@ of importing it. Behavioural coverage runs in Docker; this pins the wiring.
 """
 from pathlib import Path
 
-from clippyme.pipeline.reframe_track import DetectionSmoother, SpeakerTracker
+from clippyme.pipeline.reframe.reframe_track import DetectionSmoother, SpeakerTracker
 
 REFRAME_PATH = (
-    Path(__file__).resolve().parents[2] / "src" / "clippyme" / "pipeline" / "reframe.py"
+    Path(__file__).resolve().parents[2] / "src" / "clippyme" / "pipeline" / "reframe" / "reframe.py"
 )
 
 

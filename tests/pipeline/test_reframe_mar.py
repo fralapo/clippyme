@@ -25,7 +25,7 @@ def _loaded_globals(func):
 
 
 def test_mouth_landmark_constants_defined():
-    import clippyme.pipeline.reframe_detect as r
+    import clippyme.pipeline.reframe.reframe_detect as r
     for name in ("_MOUTH_TOP", "_MOUTH_BOTTOM", "_MOUTH_LEFT", "_MOUTH_RIGHT"):
         assert isinstance(getattr(r, name), int), f"{name} missing/not int"
 
@@ -37,7 +37,7 @@ def test_compute_mar_has_no_undefined_globals():
     """
     import builtins
 
-    import clippyme.pipeline.reframe as r
+    import clippyme.pipeline.reframe.reframe as r
 
     func = r.compute_mouth_aspect_ratio
     mod_globals = func.__globals__

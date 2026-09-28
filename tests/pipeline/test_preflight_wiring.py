@@ -12,7 +12,7 @@ import pytest
 
 from clippyme.jobs.runtime_state import RuntimeState
 from clippyme.pipeline import orchestrator
-from clippyme.pipeline.gemini_request import DEFAULT_RETRY_MODEL
+from clippyme.pipeline.analysis.gemini_request import DEFAULT_RETRY_MODEL
 from clippyme.pipeline.preflight import PreflightRejected
 
 PRICES = {  # USD / 1M tokens — test table, not the real one

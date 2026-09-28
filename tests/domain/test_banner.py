@@ -135,7 +135,7 @@ def test_rasterized_logo_cache_is_written_atomically(monkeypatch, tmp_path):
 
 def test_banner_renders_use_distinct_temp_files(monkeypatch, tmp_path):
     import subprocess
-    from clippyme.pipeline import media_probe
+    from clippyme.media import media_probe
 
     video = tmp_path / "clip_1.mp4"
     video.write_bytes(b"video")

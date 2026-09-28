@@ -101,7 +101,7 @@ effects and CapCut styling — out of scope for an automated pipeline.
 
 ## Where this lives in the code
 
-`pipeline/gemini_request.py` → `GEMINI_PROMPT_TEMPLATE`, section
+`pipeline/analysis/gemini_request.py` → `GEMINI_PROMPT_TEMPLATE`, section
 `## TITLE & CAPTION COPY`: the nine rules and the rotating pattern list are a
 direct encoding of the above. Two guards ride with it:
 

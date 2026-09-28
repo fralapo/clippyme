@@ -22,7 +22,7 @@ from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
 
 from clippyme.api.schemas import ConfigUpdateRequest, ZernioConfigRequest
 from clippyme.api.security import require_trusted_config_request
-from clippyme.pipeline.gemini_service import list_available_models
+from clippyme.pipeline.analysis.gemini_service import list_available_models
 from clippyme.storage.config_store import (
     load_persistent_config,
     load_zernio_config,

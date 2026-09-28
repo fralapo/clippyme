@@ -56,7 +56,7 @@ def test_render_survives_an_encoder_that_floods_stderr(tmp_path):
     env = {**os.environ, "PATH": f"{shim_dir}{os.pathsep}{os.environ['PATH']}"}
     code = (
         "import sys\n"
-        "from clippyme.pipeline import reframe\n"
+        "from clippyme.pipeline.reframe import reframe\n"
         f"ok = reframe.process_video_to_vertical({src!r}, {out!r}, reframe_mode='disabled')\n"
         "sys.exit(0 if ok else 3)\n"
     )

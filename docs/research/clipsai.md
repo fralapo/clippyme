@@ -99,7 +99,7 @@ segments. That needs **zero new dependencies** (no `sentence-transformers`/`torc
 model download — the very dep ClippyMe avoids elsewhere, cf. the "why not
 deepgram-sdk" note), only the transcript text already in hand.
 
-New module **`src/clippyme/pipeline/texttiling_ops.py`** (pure stdlib + the
+New module **`src/clippyme/pipeline/analysis/texttiling_ops.py`** (pure stdlib + the
 existing numpy-class math, **no cv2/torch import** → host-importable), following
 the `reframe_ops.py` / `media_probe.py` "pure logic in a testable module, thin
 glue in `main.py`" pattern:

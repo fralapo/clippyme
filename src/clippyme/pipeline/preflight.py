@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from clippyme.pipeline.gemini_request import compute_gemini_cost
+from clippyme.pipeline.analysis.gemini_request import compute_gemini_cost
 
 _GIB = 1024 ** 3
 _MIB = 1024 ** 2

@@ -23,7 +23,7 @@ import pytest
 
 from clippyme.jobs.job_control import terminate_tree
 from clippyme.jobs.runtime_state import load_runtime_state
-from clippyme.pipeline.media_qa import probe_media
+from clippyme.pipeline.quality.media_qa import probe_media
 
 pytestmark = pytest.mark.skipif(
     not (shutil.which("ffmpeg") and shutil.which("ffprobe")),

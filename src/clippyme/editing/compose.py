@@ -270,7 +270,7 @@ def _letterbox_caption_band_top(video_path, clip_info, subtitle_params, banner_a
     if str((subtitle_params or {}).get("position", "bottom")).lower() != "bottom":
         return None
     from clippyme.editing.banner import letterbox_band_bottom
-    from clippyme.pipeline.media_probe import probe_dimensions
+    from clippyme.media.media_probe import probe_dimensions
 
     try:
         width, height = probe_dimensions(video_path)

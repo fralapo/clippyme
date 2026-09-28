@@ -6,7 +6,7 @@ fallback. See docs/research/clipsai.md.
 """
 from collections import Counter
 
-from clippyme.pipeline import texttiling_ops as tt
+from clippyme.pipeline.analysis import texttiling_ops as tt
 
 
 # --- primitives ------------------------------------------------------------

@@ -59,13 +59,13 @@ the orchestrator wraps those stages with:
   transcript, clip plan, source slices and finished clips instead of paying
   for them again. A torn checkpoint is ignored, not trusted. Progressive
   metadata alone is never treated as proof of completion.
-- **Output QA** (`pipeline/media_qa.py`): every temporary render is probed
+- **Output QA** (`pipeline/quality/media_qa.py`): every temporary render is probed
   before it atomically replaces the public clip — size, duration, audio and
   video streams, aspect ratio, black and frozen-frame ratios, loudness.
   Structural defects are critical and trigger a bounded re-render
   (`CLIPPYME_RENDER_QA_RETRIES`); signal findings become warnings in the clip
   metadata and the clip is kept.
-- **Bounded ffmpeg** (`pipeline/ffmpeg_exec.py`): stderr goes to a temporary
+- **Bounded ffmpeg** (`media/ffmpeg_exec.py`): stderr goes to a temporary
   file, a no-progress watchdog enforces `CLIPPYME_FFMPEG_TIMEOUT`, and output
   is written as `.partial-*` then validated and renamed, so an interrupted cut
   never appears under its final name.

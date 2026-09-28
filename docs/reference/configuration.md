@@ -42,7 +42,7 @@ variable is unset; a few differ in `docker-compose.yml`, noted as *compose*.
 | `GEMINI_MAX_RETRIES` | `3` | Attempts per model call before moving on. | Rarely. |
 | `GEMINI_RETRY_MODEL` | `gemini-2.5-flash` | Model used to reformat a malformed response. | Rarely. |
 
-Prices used for cost estimates are in `pipeline/gemini_request.py`
+Prices used for cost estimates are in `pipeline/analysis/gemini_request.py`
 (`MODEL_PRICING`), not configurable.
 
 ## Transcription

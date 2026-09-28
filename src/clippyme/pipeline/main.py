@@ -20,7 +20,7 @@ from google import genai
 from dotenv import load_dotenv
 import json
 
-from clippyme.pipeline.reframe_ops import (
+from clippyme.pipeline.reframe.reframe_ops import (
     OneEuroFilter,
     drift_to_center,
     normalize_letterbox_zoom,
@@ -34,9 +34,9 @@ warnings.filterwarnings("ignore", category=UserWarning, module='google.protobuf'
 load_dotenv()
 
 # --- Constants ---
-# Reframe core (cv2/YOLO/MediaPipe) lives in clippyme.pipeline.reframe.
-from clippyme.pipeline import reframe  # noqa: E402,F401
-from clippyme.pipeline.reframe import (  # noqa: E402,F401
+# Reframe core (cv2/YOLO/MediaPipe) lives in clippyme.pipeline.reframe.reframe.
+from clippyme.pipeline.reframe import reframe  # noqa: E402,F401
+from clippyme.pipeline.reframe.reframe import (  # noqa: E402,F401
     process_video_to_vertical,
     select_cover_frame,
     analyze_scenes_strategy,
@@ -54,7 +54,7 @@ from clippyme.pipeline.reframe import (  # noqa: E402,F401
 )
 # Transcript cache helpers live in a stdlib-only module (host-testable). Aliased
 # to the historical private names so the rest of main.py is unchanged.
-from clippyme.pipeline.transcribe_cache import (  # noqa: E402
+from clippyme.pipeline.transcription.transcribe_cache import (  # noqa: E402
     CACHE_DIR,
     CACHE_TTL_DAYS,
     get_cache_path as _get_cache_path,
@@ -73,7 +73,7 @@ from clippyme.pipeline.hardware import (  # noqa: E402
 # Pricing table + prompt template + pure request helpers live in the
 # host-testable gemini_request module; re-imported here so existing callers
 # (and the integration tests) keep finding them on main.
-from clippyme.pipeline.gemini_request import (  # noqa: E402,F401
+from clippyme.pipeline.analysis.gemini_request import (  # noqa: E402,F401
     DEFAULT_RETRY_MODEL,
     GEMINI_PROMPT_TEMPLATE,
     MODEL_PRICING,
@@ -137,7 +137,7 @@ _MOUTH_RIGHT = 308
 
 # Scene detection (scenedetect+cv2) and download (yt_dlp) live in cv2/YOLO-free,
 # host-importable modules. Imported back here so the orchestrator is unchanged.
-from clippyme.pipeline.scene_detection import detect_scenes, get_video_resolution  # noqa: E402
+from clippyme.pipeline.reframe.scene_detection import detect_scenes, get_video_resolution  # noqa: E402
 from clippyme.pipeline.download import (  # noqa: E402
     download_youtube_video,
     sanitize_filename,
@@ -147,7 +147,7 @@ from clippyme.pipeline.download import (  # noqa: E402
 
 # Audio normalize + Ken Burns zoom live in a cv2-free, host-testable module.
 from clippyme.pipeline.postprocess import normalize_audio, apply_subtle_zoom  # noqa: E402
-from clippyme.pipeline import texttiling_ops  # noqa: E402
+from clippyme.pipeline.analysis import texttiling_ops  # noqa: E402
 
 
 
@@ -236,7 +236,7 @@ def _diarize_with_pyannote(audio_path: str) -> list[tuple[float, float, int]] | 
 
 
 # Diarization helpers (pure / ffmpeg-only) live in a host-testable module.
-from clippyme.pipeline.diarization import (  # noqa: E402
+from clippyme.pipeline.transcription.diarization import (  # noqa: E402
     assign_speakers_to_words as _assign_speakers_to_words,
     extract_audio_to_wav as _extract_audio_to_wav,
     extract_audio_for_asr as _extract_audio_for_asr,
@@ -281,7 +281,7 @@ def transcribe_video(video_path):
     # ELEVENLABS_AUDIO_ISOLATION; non-fatal — falls back to the raw audio.
     if (os.getenv("ELEVENLABS_AUDIO_ISOLATION") or "false").strip().lower() in ("1", "true", "yes"):
         try:
-            from clippyme.pipeline.elevenlabs_transcribe import isolate_audio
+            from clippyme.pipeline.transcription.elevenlabs_transcribe import isolate_audio
             _iso = isolate_audio(asr_input)
             if _iso:
                 _iso_tmp = _iso
@@ -292,7 +292,7 @@ def transcribe_video(video_path):
     try:
         if provider == "deepgram":
             try:
-                from clippyme.pipeline.deepgram_transcribe import transcribe_with_deepgram, DeepgramError
+                from clippyme.pipeline.transcription.deepgram_transcribe import transcribe_with_deepgram, DeepgramError
                 return transcribe_with_deepgram(asr_input)
             except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
                 logging.getLogger("clippyme").warning(
@@ -301,7 +301,7 @@ def transcribe_video(video_path):
                 print(f"⚠️  Deepgram transcription failed ({exc}); falling back to Faster-Whisper.")
         elif provider == "elevenlabs":
             try:
-                from clippyme.pipeline.elevenlabs_transcribe import transcribe_with_elevenlabs
+                from clippyme.pipeline.transcription.elevenlabs_transcribe import transcribe_with_elevenlabs
                 return transcribe_with_elevenlabs(asr_input)
             except Exception as exc:  # noqa: BLE001 — broad catch for safe fallback
                 logging.getLogger("clippyme").warning(
@@ -465,7 +465,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
 
     # Parse response JSON via the 5-level chain in gemini_parser.
     try:
-        from clippyme.pipeline.gemini_parser import (
+        from clippyme.pipeline.analysis.gemini_parser import (
             parse_gemini_response, validate_and_dedupe, backfill_hook_text, drop_wordless_clips,
             cap_clips_by_score,
         )
@@ -864,7 +864,7 @@ if __name__ == '__main__':
             _silences: list = []
             if os.environ.get("CLIPPYME_SILENCE_SNAP", "1").lower() not in ("0", "false", "no"):
                 try:
-                    from clippyme.pipeline.media_probe import detect_silences
+                    from clippyme.media.media_probe import detect_silences
                     _silences = detect_silences(input_video)
                     if _silences:
                         print(f"   🔊 waveform: {len(_silences)} silence troughs detected")

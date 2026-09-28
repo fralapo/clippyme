@@ -348,7 +348,7 @@ def _validate_clip_selection(value) -> str:
 def _letterbox_zoom_or_zero(value) -> float:
     """Clamp a monitor letterbox zoom, treating garbage as 'off' — a bad slider
     value must not stop a running monitor from capturing."""
-    from clippyme.pipeline.reframe_ops import normalize_letterbox_zoom
+    from clippyme.pipeline.reframe.reframe_ops import normalize_letterbox_zoom
     try:
         return normalize_letterbox_zoom(value)
     except (TypeError, ValueError):
@@ -1039,7 +1039,7 @@ class LiveMonitor:
         the REMAINDER of the prelive window if the stream was already
         running before this monitor noticed it.
         """
-        from clippyme.pipeline.media_probe import probe_duration
+        from clippyme.media.media_probe import probe_duration
 
         # Everything between (stream_start + prelive_skip) and now was missed —
         # schedule its recovery before we start capturing forward.
@@ -1267,7 +1267,7 @@ class LiveMonitor:
     async def _backfill_windows(self, vod_url: str, windows) -> None:
         """Sequentially download + submit + publish each missed window (kept
         sequential so forward live capture keeps priority)."""
-        from clippyme.pipeline.media_probe import probe_duration
+        from clippyme.media.media_probe import probe_duration
 
         for t1, t2 in list(windows):
             if self._stop.is_set():

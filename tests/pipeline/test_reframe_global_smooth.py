@@ -23,7 +23,7 @@ try:
     import cv2
     import numpy as np
 
-    from clippyme.pipeline import reframe
+    from clippyme.pipeline.reframe import reframe
 except Exception:  # pragma: no cover - host without the full CV runtime
     pytest.skip("heavy CV runtime unavailable", allow_module_level=True)
 

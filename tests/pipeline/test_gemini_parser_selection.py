@@ -1,4 +1,4 @@
-from clippyme.pipeline.gemini_parser import drop_wordless_clips, cap_clips_by_score
+from clippyme.pipeline.analysis.gemini_parser import drop_wordless_clips, cap_clips_by_score
 
 
 def test_cap_keeps_top_n_by_score():

@@ -8,7 +8,7 @@ import os
 import re
 
 from clippyme.clips.clip_resolve import clip_filename_for
-from clippyme.pipeline.reframe_ops import normalize_letterbox_zoom
+from clippyme.pipeline.reframe.reframe_ops import normalize_letterbox_zoom
 from clippyme.jobs.runtime_state import runtime_result_fields
 
 logger = logging.getLogger("clippyme")
@@ -128,7 +128,7 @@ def _build_clips(data: dict, base_name: str, job_id: str, output_dir: str, only_
     clips = data.get("shorts", [])
 
     try:
-        from clippyme.pipeline.gemini_parser import backfill_hook_text
+        from clippyme.pipeline.analysis.gemini_parser import backfill_hook_text
 
         transcript = data.get("transcript") or {}
         words = []

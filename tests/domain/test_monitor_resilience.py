@@ -52,7 +52,7 @@ def _conflict(retry_after=None):
 
 
 def _segment_monitor(tmp_path, monkeypatch, queue):
-    from clippyme.pipeline import media_probe
+    from clippyme.media import media_probe
 
     monkeypatch.setattr(media_probe, "probe_duration", lambda path: 600.0)
     jobs = {}

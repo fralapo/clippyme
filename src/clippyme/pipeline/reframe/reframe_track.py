@@ -9,7 +9,7 @@ import math
 import os
 from collections import deque
 
-from clippyme.pipeline.reframe_ops import (
+from clippyme.pipeline.reframe.reframe_ops import (
     OneEuroFilter,
     advance_value_with_velocity,
     asymmetric_zoom_step,

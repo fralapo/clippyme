@@ -35,7 +35,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from clippyme.pipeline.media_qa import inspect_clip
+from clippyme.pipeline.quality.media_qa import inspect_clip
 
 _ASPECTS = {"9:16": 9 / 16, "1:1": 1.0, "16:9": 16 / 9}
 
