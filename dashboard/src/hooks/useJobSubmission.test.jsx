@@ -8,16 +8,16 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
-vi.mock('../lib/api', () => ({
+vi.mock('../api/jobs', () => ({
   submitProcessJob: vi.fn(),
   submitBatchJob: vi.fn(),
 }));
-vi.mock('../lib/apiToken', () => ({
+vi.mock('../api/apiToken', () => ({
   apiFetch: vi.fn(),
 }));
 
-import { submitBatchJob } from '../lib/api';
-import { apiFetch } from '../lib/apiToken';
+import { submitBatchJob } from '../api/jobs';
+import { apiFetch } from '../api/apiToken';
 import { useJobSubmission } from './useJobSubmission';
 
 function mountHook(overrides = {}) {

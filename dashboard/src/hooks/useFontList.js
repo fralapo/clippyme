@@ -3,8 +3,8 @@
 // Returns [value, label] pairs ready for a <select>. Falls back to the curated
 // list alone if the backend can't be reached.
 import { useEffect, useState } from 'react';
-import { SUB_FONTS } from '../redesign/data';
-import { listFonts } from '../redesign/realApi';
+import { SUB_FONTS } from '../lib/data';
+import { listFonts } from '../api/client';
 
 export function useFontList() {
   const [fonts, setFonts] = useState(SUB_FONTS);

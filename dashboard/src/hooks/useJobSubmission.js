@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { submitProcessJob, submitBatchJob } from '../lib/api';
-import { getApiUrl } from '../config';
-import { apiFetch } from '../lib/apiToken';
+import { submitProcessJob, submitBatchJob } from '../api/jobs';
+import { getApiUrl } from '../api/config';
+import { apiFetch } from '../api/apiToken';
 import { tasteInstructionSuffix } from '../lib/taste';
 
 // Append the cross-job taste hint (#8) to a job's AI instructions so Gemini

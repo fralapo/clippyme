@@ -5,7 +5,7 @@
 // collapses whitespace, trims trailing dots/spaces (Windows silently drops
 // them), dodges reserved device names, and caps the length. Falls back to
 // `clip_N` when the title is empty/unusable. Kept dependency-free here so it is
-// host-testable under `node --test` (realApi.js pulls in browser globals).
+// host-testable under `node --test` (api/client.js pulls in browser globals).
 
 // Windows-reserved device names — a file named exactly any of these (case-
 // insensitive, with or without an extension) is rejected by the OS.

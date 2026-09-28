@@ -22,7 +22,7 @@ flowchart LR
 
 | Component | Code | Responsibility |
 |-----------|------|----------------|
-| Dashboard | `dashboard/src/redesign/` | The whole UI. Talks to the backend only through `/api` and the static media mounts. |
+| Dashboard | `dashboard/src/` | The whole UI, one folder per feature under `features/`. Talks to the backend only through `/api` and the static media mounts. |
 | API layer | `src/clippyme/api/` | HTTP routes, request validation (Pydantic), security gates, static mounts, startup/shutdown. Thin: no business logic. |
 | Domain layer | `src/clippyme/domain/` | Everything an endpoint does: job submission and control, the job journal, compose, smart cut, reframe requests, publishing, history, the live monitor. Never imports FastAPI. |
 | Pipeline | `src/clippyme/pipeline/` | The per-job subprocess: download, transcription, AI clip selection, cutting, reframing, post-processing, output QA. |

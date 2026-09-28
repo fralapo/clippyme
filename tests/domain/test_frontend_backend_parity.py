@@ -1,6 +1,6 @@
 """Cross-file parity: the frontend constant tables must mirror the backend.
 
-dashboard/src/redesign/data.js declares preset/position/size ids and hook-style
+dashboard/src/lib/data.js declares preset/position/size ids and hook-style
 defaults whose values MUST match the backend dicts (its own comments say so),
 but nothing enforced it — a renamed backend preset id silently became a no-op
 layer or a 4xx in the UI, and the hook-style defaults have drifted before
@@ -22,7 +22,7 @@ from clippyme.domain.logo import _POSITIONS as BACKEND_LOGO_POSITIONS
 
 _JS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..",
-    "dashboard", "src", "redesign", "data.js",
+    "dashboard", "src", "lib", "data.js",
 )
 
 

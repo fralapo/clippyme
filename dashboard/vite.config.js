@@ -6,7 +6,7 @@ import path from 'path'
 // Content-Security-Policy injected into the PRODUCTION build only. It blocks
 // inline/eval'd scripts and foreign script origins, which is the practical
 // mitigation for XSS — the main threat to the Gemini key held in localStorage
-// (see RedesignApp.jsx). Build-only via `apply: 'build'` because the Vite dev
+// (see src/app/App.jsx). Build-only via `apply: 'build'` because the Vite dev
 // server / HMR needs 'unsafe-eval', which we never want shipped. 'unsafe-inline'
 // is allowed for styles only (Tailwind v4 / React inline styles), not scripts.
 // Remote origins the app genuinely loads: Google Fonts (tokens.css @import →

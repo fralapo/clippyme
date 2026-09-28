@@ -1,0 +1,411 @@
+// ClippyMe — HistoryView + SettingsView + ApiKeyModal, wired to the
+// real backend (history list/restore/delete; config keys, cookies, Zernio).
+import { useState, useEffect, useRef } from 'react';
+import { useModalA11y } from '../../hooks/useModalA11y';
+import { Icon, Btn, Badge, Switch, Segmented, Panel } from '../../components/primitives';
+import { Hero } from '../../components/chrome';
+import {
+  getConfig, saveConfig, getModels, cookiesStatus, uploadCookies, deleteCookies,
+  getZernio, saveZernio, discoverZernioAccounts,
+  listFonts, uploadFont, deleteFont, logoStatus, uploadLogo, deleteLogo,
+} from '../../api/client';
+import { SUB_FONTS } from '../../lib/data';
+import { getApiToken, setApiToken } from '../../api/apiToken';
+import { relTime } from '../../lib/relTime';
+
+// Curated fallback when live discovery is unavailable (no key yet / offline).
+// Mirrors the allow-list prefixes (gemini-2.5- / gemini-3) the backend accepts.
+const FALLBACK_MODELS = [
+  { name: 'gemini-3.5-flash', display_name: 'Gemini 3.5 Flash — recommended' },
+  { name: 'gemini-2.5-flash', display_name: 'Gemini 2.5 Flash — budget' },
+  { name: 'gemini-3.1-pro-preview', display_name: 'Gemini 3.1 Pro — max quality' },
+  { name: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro — max quality' },
+];
+
+export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }) {
+  if (!history.length) {
+    return (
+      <div className="container narrow fade-in">
+        <Hero eyebrow="History" line1="Nothing here yet." sub="Every job you run lands here, ready to reopen, re-export, or publish again." />
+        <div className="empty">
+          <div className="ei"><Icon n="clock" /></div>
+          <h3>No jobs yet</h3>
+          <p>Head to Create, paste a link, and your finished clips will land here.</p>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="container narrow fade-in">
+      <div className="results-head" style={{ marginBottom: 18 }}>
+        <h2>History</h2>
+        <Badge tone="out">{history.length} jobs</Badge>
+        <div className="rh-right">
+          <Btn variant="ghost" size="sm" icon="trash-2" onClick={onClear}>Clear all</Btn>
+        </div>
+      </div>
+      <Panel pad={false} className="hlist">
+        {history.map((h) => {
+          // `availableIds` is the set of jobs whose files still exist on disk
+          // (null = backend not reached yet → assume available, don't disable).
+          // An entry whose files were wiped by a rebuild is shown muted + flagged
+          // "files removed" instead of looking clickable and dead-ending.
+          const onDisk = !availableIds || availableIds.has(h.jobId);
+          const ok = h.status === 'complete' && onDisk;
+          const removed = !!availableIds && !availableIds.has(h.jobId);
+          return (
+            <div className="hrow" key={h.jobId}
+              role={ok ? 'button' : undefined} tabIndex={ok ? 0 : undefined}
+              aria-label={ok ? `Open job ${h.title || h.source || h.jobId}` : undefined}
+              onClick={() => ok && onOpen(h)}
+              onKeyDown={(e) => { if (ok && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); onOpen(h); } }}
+              style={{ cursor: ok ? 'pointer' : 'default', opacity: removed ? 0.55 : 1 }}>
+              <div className="hthumb" style={{ background: removed ? 'var(--bg-4)' : 'var(--grad-viral)' }}>{h.clipCount ?? 0}</div>
+              <div style={{ minWidth: 0 }}>
+                <div className="ht" title={h.title || h.source || h.jobId}
+                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.title || h.source || h.jobId}</div>
+                <div className="hm">
+                  <Icon n={h.sourceType === 'url' ? 'globe' : 'file-video'} style={{ width: 11, height: 11, verticalAlign: '-1px', marginRight: 5 }} />
+                  {removed ? 'Files removed (rebuild/cleanup) · delete to dismiss'
+                    : `${h.clipCount || 0} clips${h.cost != null ? ` · $${Number(h.cost).toFixed(2)}` : ''} · ${relTime(h.timestamp)}`}
+                </div>
+              </div>
+              <div className="hr">
+                {!removed && h.publishedCount > 0 && (
+                  <Badge tone="teal" icon="send">{h.publishedCount} published</Badge>
+                )}
+                {removed ? <Badge tone="out" icon="triangle-alert">unavailable</Badge>
+                  : h.status === 'complete' ? <Badge tone="teal" icon="check">complete</Badge>
+                    : h.status === 'error' ? <Badge tone="danger" icon="triangle-alert">error</Badge>
+                      : <Badge tone="amber" icon="clock">{h.status || 'pending'}</Badge>}
+                <button type="button" className="mini" title="Delete" aria-label="Delete job" onClick={(e) => { e.stopPropagation(); onDelete(h.jobId); }}><Icon n="trash-2" /></button>
+                {ok && <Icon n="chevron-right" style={{ width: 18, height: 18, color: 'var(--fg-4)' }} />}
+              </div>
+            </div>
+          );
+        })}
+      </Panel>
+    </div>
+  );
+}
+
+function KeyRow({ icon, name, desc, value, onChange, onSave, onClear, placeholder, present }) {
+  const [reveal, setReveal] = useState(false);
+  // Only persist (and toast) when the field actually changed during this focus
+  // session — tabbing past an already-set key shouldn't spam saves/toasts.
+  const focusVal = useRef(value);
+  return (
+    <div className="keyrow">
+      <div className="ki"><Icon n={icon} /></div>
+      <div style={{ minWidth: 0 }}>
+        <div className="kt">{name}</div>
+        <div className="kd">{desc}</div>
+      </div>
+      <div className="kr">
+        <input className="key-input" type={reveal ? 'text' : 'password'} value={value}
+          aria-label={name}
+          placeholder={placeholder} onChange={(e) => onChange(e.target.value)}
+          onFocus={() => { focusVal.current = value; }}
+          onBlur={() => { if (value !== focusVal.current) onSave(); }} />
+        <button type="button" className="mini" title={reveal ? 'Hide' : 'Show'} aria-label={reveal ? 'Hide key' : 'Show key'} onClick={() => setReveal(!reveal)}><Icon n={reveal ? 'eye-off' : 'eye'} /></button>
+        {/* Backend-confirmed state only — raw input text (typed but not yet
+            saved) must never flip this badge. */}
+        {present ? <Badge tone="teal" icon="check">set</Badge> : <Badge tone="out">empty</Badge>}
+        {present && onClear && (
+          <button type="button" className="mini" title="Clear saved key" aria-label={`Clear ${name} key`} onClick={onClear}><Icon n="x" /></button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesChange, pushToast }) {
+  const [gemini, setGemini] = useState(apiKey || '');
+  const [deepgram, setDeepgram] = useState('');
+  const [elevenlabs, setElevenlabs] = useState('');
+  const [hf, setHf] = useState('');
+  const [twitchId, setTwitchId] = useState('');
+  const [twitchSecret, setTwitchSecret] = useState('');
+  const [apiToken, setApiTokenState] = useState(() => getApiToken());
+  const [present, setPresent] = useState({});
+  const [zernio, setZernioState] = useState(null);
+  const [zKey, setZKey] = useState('');
+  const [accts, setAccts] = useState({ tiktok: '', instagram: '', youtube: '' });
+  const [cookies, setCookies] = useState(!!cookiesConfigured);
+  const [logoOn, setLogoOn] = useState(false);
+  const [fonts, setFonts] = useState([]);
+  const [provider, setProvider] = useState('deepgram');
+  const [model, setModel] = useState('');
+  const [models, setModels] = useState(FALLBACK_MODELS);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  // Pull the live model list from the backend (uses the saved key if the
+  // header is empty). Merges discovery with the curated fallback + the
+  // currently-selected model so the dropdown is never empty and never drops
+  // the active choice.
+  const loadModels = async (key) => {
+    setLoadingModels(true);
+    try {
+      const { models: live } = await getModels(key || gemini || apiKey || '');
+      const seen = new Set();
+      const merged = [];
+      [...(live || []), ...FALLBACK_MODELS].forEach((m) => {
+        if (m?.name && !seen.has(m.name)) { seen.add(m.name); merged.push(m); }
+      });
+      if (merged.length) setModels(merged);
+    } catch { /* keep fallback */ }
+    finally { setLoadingModels(false); }
+  };
+
+  // Source of truth for "is this key set" is always the backend's response,
+  // never the (optimistic) input text — refetched after every save/clear so
+  // the badge can't drift from what's actually persisted.
+  const refreshConfig = async () => {
+    const c = await getConfig();
+    if (!c) { pushToast?.('warn', 'Could not refresh key status'); return; }
+    setPresent({
+      gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY,
+      twitchId: !!c.TWITCH_CLIENT_ID, twitchSecret: !!c.TWITCH_CLIENT_SECRET,
+    });
+    if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
+    if (c.GEMINI_MODEL) setModel(c.GEMINI_MODEL);
+  };
+
+  useEffect(() => {
+    refreshConfig().then(loadModels);
+    getZernio().then((z) => { setZernioState(z); if (z.accounts) setAccts({ tiktok: '', instagram: '', youtube: '', ...z.accounts }); }).catch(() => {});
+    cookiesStatus().then((s) => setCookies(!!s.configured)).catch(() => {});
+    logoStatus().then((s) => setLogoOn(!!s.configured)).catch(() => {});
+    listFonts().then(({ fonts: f }) => setFonts(Array.isArray(f) ? f : [])).catch(() => {});
+    // Mount-once bootstrap; loadModels reads the latest key via closure on call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const saveKeys = async (patch) => {
+    try { await saveConfig(patch); pushToast?.('success', 'Saved'); await refreshConfig(); }
+    catch { pushToast?.('error', 'Save failed'); }
+  };
+
+  const saveZernioCfg = async () => {
+    try {
+      const payload = { accounts: accts };
+      if (zKey.trim()) payload.api_key = zKey.trim();
+      const z = await saveZernio(payload);
+      setZernioState(z); setZKey('');
+      pushToast?.('success', 'Zernio saved');
+    } catch { pushToast?.('error', 'Zernio save failed'); }
+  };
+
+  const discover = async () => {
+    try {
+      // Discovery runs against the *saved* key, so persist a freshly-typed one
+      // first — otherwise the backend 400s with "API key not configured".
+      if (zKey.trim()) { await saveZernio({ api_key: zKey.trim(), accounts: accts }); setZKey(''); }
+      const { accounts } = await discoverZernioAccounts();
+      const next = { ...accts };
+      (accounts || []).forEach((a) => {
+        const p = (a.platform || '').toLowerCase();
+        const id = a._id || a.id;
+        if (p.includes('tiktok')) next.tiktok = id;
+        else if (p.includes('insta')) next.instagram = id;
+        else if (p.includes('you')) next.youtube = id;
+      });
+      setAccts(next);
+      pushToast?.('success', `Discovered ${(accounts || []).length} accounts`);
+    } catch { pushToast?.('error', 'Discover failed. Check the API key.'); }
+  };
+
+  const onCookieFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try { await uploadCookies(f); setCookies(true); onCookiesChange?.(true); pushToast?.('success', 'Cookies uploaded'); }
+    catch { pushToast?.('error', 'Cookie upload failed'); }
+  };
+  const removeCookies = async () => {
+    try { await deleteCookies(); setCookies(false); onCookiesChange?.(false); pushToast?.('info', 'Cookies removed'); }
+    catch { pushToast?.('error', 'Remove failed'); }
+  };
+
+  const onLogoFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try { await uploadLogo(f); setLogoOn(true); pushToast?.('success', 'Logo uploaded'); }
+    catch (err) { pushToast?.('error', String(err.message || 'Logo upload failed').slice(0, 80)); }
+  };
+  const removeLogo = async () => {
+    try { await deleteLogo(); setLogoOn(false); pushToast?.('info', 'Logo removed'); }
+    catch { pushToast?.('error', 'Remove failed'); }
+  };
+
+  // Only user-uploaded faces are deletable; bundled ones are part of the app.
+  const bundled = new Set(SUB_FONTS.map(([v]) => v));
+  const onFontFile = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try { const { fonts: nf } = await uploadFont(f); setFonts(nf || fonts); pushToast?.('success', 'Font added'); }
+    catch (err) { pushToast?.('error', String(err.message || 'Font upload failed').slice(0, 80)); }
+  };
+  const removeFont = async (name) => {
+    try { const { fonts: nf } = await deleteFont(name); setFonts(nf || fonts.filter((n) => n !== name)); pushToast?.('info', 'Font removed'); }
+    catch { pushToast?.('error', 'Remove failed'); }
+  };
+
+  return (
+    <div className="container narrow fade-in">
+      <Hero eyebrow="Settings" line1="Keys & connections." sub="Everything is stored locally. Your keys never leave your machine." />
+
+      <Panel title="API keys" sub="Required for transcription & moment detection" icon="key-round" style={{ marginBottom: 18 }}>
+        <KeyRow icon="sparkles" name="Gemini" desc="Viral-moment detection" value={gemini} present={present.gemini}
+          onChange={(v) => { setGemini(v); onApiKey?.(v); }} onSave={() => saveKeys({ GEMINI_API_KEY: gemini })}
+          onClear={() => { setGemini(''); onApiKey?.(''); saveKeys({ GEMINI_API_KEY: '' }); }} placeholder="AIza…" />
+        <KeyRow icon="audio-lines" name="Deepgram" desc="Nova-3 transcription" value={deepgram} present={present.deepgram}
+          onChange={setDeepgram} onSave={() => saveKeys({ DEEPGRAM_API_KEY: deepgram })}
+          onClear={() => { setDeepgram(''); saveKeys({ DEEPGRAM_API_KEY: '' }); }} placeholder="dg_…" />
+        <KeyRow icon="audio-lines" name="ElevenLabs" desc="Scribe transcription · audio-event tags" value={elevenlabs} present={present.elevenlabs}
+          onChange={setElevenlabs} onSave={() => saveKeys({ ELEVENLABS_API_KEY: elevenlabs })}
+          onClear={() => { setElevenlabs(''); saveKeys({ ELEVENLABS_API_KEY: '' }); }} placeholder="sk_…" />
+        <KeyRow icon="scan-face" name="Hugging Face token" desc="Speaker diarization models" value={hf} present={present.hf}
+          onChange={setHf} onSave={() => saveKeys({ HF_TOKEN: hf })}
+          onClear={() => { setHf(''); saveKeys({ HF_TOKEN: '' }); }} placeholder="hf_…" />
+        <KeyRow icon="rss" name="Twitch client ID" desc="Live Monitor: Twitch channel detection" value={twitchId} present={present.twitchId}
+          onChange={setTwitchId} onSave={() => saveKeys({ TWITCH_CLIENT_ID: twitchId })}
+          onClear={() => { setTwitchId(''); saveKeys({ TWITCH_CLIENT_ID: '' }); }} placeholder="Helix app client id" />
+        <KeyRow icon="rss" name="Twitch client secret" desc="Live Monitor: Twitch channel detection" value={twitchSecret} present={present.twitchSecret}
+          onChange={setTwitchSecret} onSave={() => saveKeys({ TWITCH_CLIENT_SECRET: twitchSecret })}
+          onClear={() => { setTwitchSecret(''); saveKeys({ TWITCH_CLIENT_SECRET: '' }); }} placeholder="Helix app client secret" />
+        <KeyRow icon="key-round" name="API token" desc="Only for LAN deploys with CLIPPYME_API_TOKEN set — stored in this browser, sent as X-API-Token" value={apiToken} present={!!getApiToken()}
+          onChange={setApiTokenState} onSave={() => { setApiToken(apiToken); pushToast?.('success', apiToken.trim() ? 'API token saved' : 'API token cleared'); }} placeholder="Shared secret (leave empty + Save to clear)" />
+        <div className="opt" style={{ borderBottom: 0 }}>
+          <div className="oico"><Icon n="audio-lines" /></div>
+          <div className="otxt"><div className="ot">Transcription engine</div><div className="od">Cloud STT falls back to local Whisper if its key is missing</div></div>
+          <div className="r"><Segmented value={provider}
+            onChange={(id) => { setProvider(id); saveKeys({ TRANSCRIPTION_PROVIDER: id }); }}
+            options={[{ id: 'deepgram', label: 'Deepgram' }, { id: 'elevenlabs', label: 'ElevenLabs' }, { id: 'whisper', label: 'Whisper' }]} /></div>
+        </div>
+        {provider === 'deepgram' && !present.deepgram && (
+          <div className="od" style={{ color: 'var(--warn, #f5a623)', padding: '0 0 8px 44px' }}>⚠ No Deepgram key saved — pipeline will use local Whisper.</div>
+        )}
+        {provider === 'elevenlabs' && !present.elevenlabs && (
+          <div className="od" style={{ color: 'var(--warn, #f5a623)', padding: '0 0 8px 44px' }}>⚠ No ElevenLabs key saved — pipeline will use local Whisper.</div>
+        )}
+        <div className="opt" style={{ borderBottom: 0 }}>
+          <div className="oico"><Icon n="sparkles" /></div>
+          <div className="otxt"><div className="ot">Gemini model</div><div className="od">Viral-moment detection model · applied to new jobs</div></div>
+          <div className="r" style={{ gap: 8 }}>
+            <select className="key-input" style={{ width: 'auto', minWidth: 200, fontFamily: 'var(--font-sans)' }}
+              value={model}
+              onChange={(e) => { setModel(e.target.value); saveKeys({ GEMINI_MODEL: e.target.value }); }}>
+              {!model && <option value="">Default (gemini-3.5-flash)</option>}
+              {model && !models.some((m) => m.name === model) && <option value={model}>{model}</option>}
+              {models.map((m) => <option key={m.name} value={m.name}>{m.display_name || m.name}</option>)}
+            </select>
+            <Btn variant="ghost" size="sm" icon="refresh-cw" onClick={() => loadModels()} disabled={loadingModels}>
+              {loadingModels ? '…' : 'Refresh'}
+            </Btn>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Publishing" sub="Push finished clips to socials via Zernio" icon="send" style={{ marginBottom: 18 }}>
+        <div className="zernio-card" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div className="zico"><Icon n="rss" /></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="kt">Zernio</div>
+              <div className="kd">{zernio?.configured ? `Connected${zernio.api_key_masked ? ' · ' + zernio.api_key_masked : ''}` : 'Add your API key + account IDs to schedule posts'}</div>
+            </div>
+            {zernio?.configured && <span className="conn"><Icon n="circle-check" />Connected</span>}
+          </div>
+          <input className="key-input" style={{ width: '100%' }} type="password" value={zKey}
+            aria-label="Zernio API key"
+            placeholder={zernio?.configured ? 'Replace API key (optional)' : 'Zernio API key (sk_…)'} onChange={(e) => setZKey(e.target.value)} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
+            {['tiktok', 'instagram', 'youtube'].map((p) => (
+              <input key={p} className="key-input" style={{ width: '100%', fontFamily: 'var(--font-sans)' }}
+                aria-label={`${p} account id`}
+                value={accts[p] || ''} placeholder={`${p} account id`} onChange={(e) => setAccts((a) => ({ ...a, [p]: e.target.value }))} />
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Btn variant="secondary" size="sm" icon="rss" onClick={discover}>Discover from Zernio</Btn>
+            <Btn variant="primary" size="sm" icon="check" onClick={saveZernioCfg}>Save</Btn>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Brand assets" sub="Logo overlay + custom subtitle fonts" icon="stamp" style={{ marginBottom: 18 }}>
+        <div className="opt">
+          <div className="oico"><Icon n="image" /></div>
+          <div className="otxt"><div className="ot">Brand logo</div><div className="od">{logoOn ? 'Configured · burned on clips when the Logo layer is on' : 'Upload a transparent PNG to overlay on clips'}</div></div>
+          <div className="r" style={{ gap: 8 }}>
+            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+              <Icon n="upload" />Upload
+              <input type="file" accept="image/png,.png" hidden onChange={onLogoFile} />
+            </label>
+            {logoOn && <Btn variant="ghost" size="sm" icon="trash-2" onClick={removeLogo}>Remove</Btn>}
+          </div>
+        </div>
+        <div className="opt" style={{ borderBottom: 0, alignItems: 'flex-start' }}>
+          <div className="oico"><Icon n="baseline" /></div>
+          <div className="otxt" style={{ flex: 1 }}>
+            <div className="ot">Subtitle fonts</div>
+            <div className="od">Upload a .ttf/.otf (e.g. Stratos) to use in classic captions</div>
+            {fonts.filter((n) => !bundled.has(n)).length > 0 && (
+              <div className="s-sub" style={{ marginTop: 10 }}>
+                {fonts.filter((n) => !bundled.has(n)).map((n) => (
+                  <span key={n} className="chip" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    {n}
+                    <button type="button" className="mini" aria-label={`Remove ${n}`} title="Remove" onClick={() => removeFont(n)}><Icon n="x" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="r">
+            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+              <Icon n="upload" />Upload
+              <input type="file" accept=".ttf,.otf,.ttc,font/ttf,font/otf" hidden onChange={onFontFile} />
+            </label>
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Downloads" sub="For age- or region-restricted sources" icon="cookie">
+        <div className="opt" style={{ borderBottom: 0 }}>
+          <div className="oico"><Icon n="cookie" /></div>
+          <div className="otxt"><div className="ot">YouTube cookies</div><div className="od">{cookies ? 'Configured · restricted videos OK' : 'Not set · public videos only'}</div></div>
+          <div className="r" style={{ gap: 8 }}>
+            <label className="btn btn-secondary btn-sm" style={{ cursor: 'pointer' }}>
+              <Icon n="upload" />Upload
+              <input type="file" accept=".txt" hidden onChange={onCookieFile} />
+            </label>
+            {cookies && <Btn variant="ghost" size="sm" icon="trash-2" onClick={removeCookies}>Remove</Btn>}
+          </div>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+export function ApiKeyModal({ onClose, onGoToSettings }) {
+  const panelRef = useModalA11y(onClose);
+  return (
+    // Backdrop click is a mouse-only convenience; keyboard users close via
+    // Esc (useModalA11y). currentTarget guard replaces stopPropagation.
+    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="modal" ref={panelRef}
+        role="dialog" aria-modal="true" aria-labelledby="apikey-modal-title">
+        <div className="modal-head"><h3 id="apikey-modal-title">Add your Gemini key</h3><button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button></div>
+        <div className="modal-body">
+          <p style={{ color: 'var(--fg-2)', fontSize: 14, lineHeight: 1.55 }}>
+            ClippyMe needs a Gemini key to score the transcript and find viral moments. It&apos;s stored locally and never leaves your machine.
+          </p>
+        </div>
+        <div className="modal-foot">
+          <Btn variant="ghost" onClick={onClose}>Later</Btn>
+          <div className="mf-right"><Btn variant="primary" icon="settings" onClick={onGoToSettings}>Open settings</Btn></div>
+        </div>
+      </div>
+    </div>
+  );
+}

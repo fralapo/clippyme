@@ -1,6 +1,6 @@
 
 import { useEffect, useRef } from 'react';
-import { pollJob } from '../lib/api';
+import { pollJob } from '../api/jobs';
 import { detectPipelineStep } from '../lib/pipelineStep';
 
 const BASE_DELAY = 2000;

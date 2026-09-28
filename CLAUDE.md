@@ -34,8 +34,11 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
   `main.py` (transcription, Gemini, cut, reframe).
 - `src/clippyme/integrations/` — Zernio, Kick, Twitch, YouTube RSS,
   auto-editor updater. `storage/` — `data/config.json`.
-- `dashboard/src/redesign/` — the entire live UI (`RedesignApp.jsx` = state
-  wiring only); `hooks/` side effects; `lib/` pure logic.
+- `dashboard/src/` — the UI: `app/App.jsx` (state wiring only), `features/`
+  (one folder per screen: create, processing, results, clip-editor,
+  publishing, live-monitor, history-settings), `components/` (cross-feature
+  UI; `controls/` = shared subtitle/logo/grade/banner/hook controls), `api/`
+  (backend client), `hooks/` side effects, `lib/` pure logic, `styles/`.
 - `tests/` mirrors `src/clippyme/`; frontend tests sit next to the code.
 
 ## Commands
@@ -81,10 +84,10 @@ CV-dependent pipeline code, the Dockerfile or dependency files.
 - **Shared frontend controls**: subtitle/logo/grade controls are shared between
   Create and the edit modal via `subtitleControls.jsx` / `layerControls.jsx`
   (`value` + `onChange(partial)`); never clone them per surface. Edit-modal
-  state lives in the `captions.jsx` shell: tab bodies in `editTabs.jsx` are
+  state lives in the `editClipModal.jsx` shell: tab bodies in `editTabs.jsx` are
   conditionally rendered and lose state on unmount. UI primitives are
   hand-rolled in `primitives.jsx` (no shadcn CLI).
-- **Defaults duplicated across stacks** (hook style in `redesign/data.js` and
+- **Defaults duplicated across stacks** (hook style in `dashboard/src/lib/data.js` and
   `domain/hooks.py`, grade/logo presets) are pinned by
   `tests/domain/test_frontend_backend_parity.py`; change both sides and the test.
 - **Lint config**: extend rules in `dashboard/eslint.a11y.config.js`, which

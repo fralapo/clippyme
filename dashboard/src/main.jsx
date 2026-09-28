@@ -1,12 +1,12 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './index.css';
-import RedesignApp from './redesign/RedesignApp';
-import { AppErrorBoundary } from './redesign/AppErrorBoundary';
+import './styles/index.css';
+import App from './app/App';
+import { AppErrorBoundary } from './app/AppErrorBoundary';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <AppErrorBoundary><RedesignApp /></AppErrorBoundary>
+    <AppErrorBoundary><App /></AppErrorBoundary>
   </React.StrictMode>,
 );

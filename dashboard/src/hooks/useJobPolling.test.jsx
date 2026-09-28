@@ -2,8 +2,8 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
-vi.mock('../lib/api', () => ({ pollJob: vi.fn() }));
-import { pollJob } from '../lib/api';
+vi.mock('../api/jobs', () => ({ pollJob: vi.fn() }));
+import { pollJob } from '../api/jobs';
 import { useJobPolling } from './useJobPolling';
 
 beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); });

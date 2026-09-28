@@ -2,7 +2,7 @@
 
 The old pixel-faithful mirror (dashboard/src/lib/subtitlePresets.js) was deleted
 with the legacy SubtitleModal component tree — nothing live rendered it. The
-redesign's preset grid is a *cosmetic* CSS mirror in dashboard/src/redesign/
+UI's preset grid is a *cosmetic* CSS mirror in dashboard/src/lib/
 data.js (system fonts, no fontsize) whose ONLY data-bearing field is the `hi`
 highlight colour. This test enforces that:
 
@@ -20,7 +20,7 @@ from clippyme.domain.subtitles import SUBTITLE_PRESETS as BACKEND
 
 _JS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..",
-    "dashboard", "src", "redesign", "data.js",
+    "dashboard", "src", "lib", "data.js",
 )
 
 

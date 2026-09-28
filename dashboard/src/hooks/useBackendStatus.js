@@ -1,7 +1,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getApiUrl } from '../config';
-import { apiFetch } from '../lib/apiToken';
+import { getApiUrl } from '../api/config';
+import { apiFetch } from '../api/apiToken';
 
 export function useBackendStatus() {
   const [hfTokenSet, setHfTokenSet] = useState(true);

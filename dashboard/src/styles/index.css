@@ -1,0 +1,467 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * ClippyMe — global base layer (NOT the live theme).
+ *
+ * This file ships Tailwind's preflight reset, tw-animate, the shared
+ * keyframes/animation utilities, the scrollbar, and the global
+ * :focus-visible + reduced-motion a11y rules. The UI uses almost
+ * no Tailwind utility classes, so the @theme palette/fonts below are
+ * effectively dormant.
+ *
+ * The LIVE visual system is tokens.css + app.css (dark · flat ·
+ * editorial; blue accent #0A81D9; Geist + Anton). Those load AFTER this
+ * file and win the cascade — app.css's unlayered `body`/`h1–h6` rules
+ * override the @layer base rules here, and tokens.css redefines
+ * --font-* at :root. Treat the amber/Fraunces values below as legacy;
+ * do not assume they reach the screen. See app.css header for the
+ * authoritative system description.
+ */
+
+@theme {
+  /* ── Fonts ─────────────────────────────────────────────────── */
+  --font-sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Fraunces', ui-serif, Georgia, serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* ── Foundation ────────────────────────────────────────────── */
+  --color-background: oklch(11% 0.008 260);
+  --color-surface: oklch(15% 0.01 260);
+  --color-surface-lighter: oklch(19% 0.012 260);
+  --color-surface-mid: oklch(17% 0.011 260);
+  --color-surface-darker: oklch(9% 0.006 260);
+
+  /* ── Single accent: amber marker ───────────────────────────── */
+  --color-primary: oklch(74% 0.175 62);
+  --color-primary-light: oklch(82% 0.16 68);
+  --color-primary-dark: oklch(62% 0.18 55);
+
+  /* Legacy pink/purple/indigo names REMAPPED to the amber family.
+     This lets utilities like `bg-accent-pink` or `text-accent-purple`
+     keep compiling while adopting the new palette without touching
+     every consumer site. */
+  --color-accent: oklch(74% 0.175 62);
+  --color-accent-light: oklch(82% 0.16 68);
+  --color-accent-dark: oklch(62% 0.18 55);
+  --color-accent-pink: oklch(74% 0.175 62);
+  --color-accent-purple: oklch(68% 0.16 55);
+  --color-accent-indigo: oklch(62% 0.14 50);
+
+  --color-brand-gold: oklch(80% 0.17 75);
+  --color-brand-pink: oklch(74% 0.175 62);
+  --color-brand-purple: oklch(68% 0.16 55);
+  --color-brand-indigo: oklch(62% 0.14 50);
+  --color-brand-blue: oklch(68% 0.1 230);
+  --color-brand-teal: oklch(72% 0.12 180);
+
+  --color-success: oklch(68% 0.18 145);
+  --color-warning: oklch(80% 0.17 75);
+  --color-error: oklch(62% 0.22 25);
+
+  /* ── shadcn bridge ─────────────────────────────────────────── */
+  --color-foreground: var(--foreground);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-destructive: var(--destructive);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-border: var(--border-color, oklch(100% 0 0 / 0.08));
+
+  /* ── Shadows (restrained, editorial) ───────────────────────── */
+  --shadow-glow-primary: 0 0 0 1px oklch(74% 0.175 62 / 0.25), 0 8px 24px -12px oklch(74% 0.175 62 / 0.35);
+  --shadow-glow-accent: 0 0 0 1px oklch(74% 0.175 62 / 0.25), 0 8px 24px -12px oklch(74% 0.175 62 / 0.35);
+  --shadow-glow-pink: 0 0 0 1px oklch(74% 0.175 62 / 0.3), 0 10px 30px -10px oklch(74% 0.175 62 / 0.4);
+  --shadow-glass: inset 0 1px 0 0 oklch(100% 0 0 / 0.06);
+  --shadow-elevated: 0 1px 0 0 oklch(100% 0 0 / 0.04), 0 20px 50px -30px oklch(0% 0 0 / 0.8);
+
+  /* ── Motion ────────────────────────────────────────────────── */
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-shimmer: shimmer 2s linear infinite;
+  --animate-gradient-shift: gradientShift 12s ease infinite;
+}
+
+/* ─── shadcn color variables (always dark) ─── */
+@layer base {
+  :root {
+    color-scheme: dark;
+    --background: oklch(11% 0.008 260);
+    --foreground: oklch(94% 0.01 90);
+    --card: oklch(15% 0.01 260);
+    --card-foreground: oklch(94% 0.01 90);
+    --popover: oklch(17% 0.011 260);
+    --popover-foreground: oklch(94% 0.01 90);
+    --primary: oklch(74% 0.175 62);
+    --primary-foreground: oklch(12% 0.01 260);
+    --secondary: oklch(19% 0.012 260);
+    --secondary-foreground: oklch(94% 0.01 90);
+    --muted: oklch(19% 0.012 260);
+    --muted-foreground: oklch(58% 0.01 260);
+    --accent: oklch(74% 0.175 62);
+    --accent-foreground: oklch(12% 0.01 260);
+    --destructive: oklch(62% 0.22 25);
+    --border-color: oklch(100% 0 0 / 0.08);
+    --input: oklch(100% 0 0 / 0.04);
+    --ring: oklch(74% 0.175 62);
+    --chart-1: oklch(74% 0.175 62);
+    --chart-2: oklch(68% 0.18 145);
+    --chart-3: oklch(68% 0.1 230);
+    --chart-4: oklch(80% 0.17 75);
+    --chart-5: oklch(62% 0.22 25);
+    --radius: 0.25rem;
+    --sidebar: oklch(15% 0.01 260);
+    --sidebar-foreground: oklch(94% 0.01 90);
+    --sidebar-primary: oklch(74% 0.175 62);
+    --sidebar-primary-foreground: oklch(12% 0.01 260);
+    --sidebar-accent: oklch(19% 0.012 260);
+    --sidebar-accent-foreground: oklch(94% 0.01 90);
+    --sidebar-border: oklch(100% 0 0 / 0.08);
+    --sidebar-ring: oklch(74% 0.175 62);
+  }
+
+  /* NOTE: global body + heading typography intentionally lives in
+     app.css (the live system), not here. This legacy @layer base
+     previously set Geist→Fraunces fonts + amber heading color and collided
+     with app.css; those rules were removed so app.css is the single owner.
+     -moz-osx-font-smoothing kept globally as a harmless rendering hint. */
+  body { -moz-osx-font-smoothing: grayscale; }
+
+  /* Mono is used everywhere a number, a timecode or a technical label
+     appears. Tabular numerals are enabled globally so columns align. */
+  code, kbd, samp, pre, .font-mono {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum", "zero", "ss01";
+  }
+
+  ::selection {
+    background-color: oklch(74% 0.175 62 / 0.35);
+    color: oklch(98% 0.01 90);
+  }
+}
+
+/* ─── Component utilities ─── */
+@layer components {
+  /* Glass panels are flatter now — less blur, more hairline, so the UI
+     reads as a piece of editorial print rather than frosted glass. */
+  .glass-panel {
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid oklch(100% 0 0 / 0.08);
+    border-radius: 4px;
+    box-shadow: var(--shadow-elevated);
+    background:
+      linear-gradient(180deg, oklch(15% 0.01 260 / 0.8) 0%, oklch(13% 0.009 260 / 0.65) 100%);
+  }
+
+  .glass-card {
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid oklch(100% 0 0 / 0.07);
+    border-radius: 4px;
+    transition: border-color 200ms ease, box-shadow 200ms ease, transform 200ms ease;
+    background:
+      linear-gradient(180deg, oklch(16% 0.011 260 / 0.75) 0%, oklch(13% 0.009 260 / 0.55) 100%);
+  }
+
+  .glass-card:hover {
+    border-color: oklch(74% 0.175 62 / 0.35);
+    box-shadow: var(--shadow-elevated), 0 0 0 1px oklch(74% 0.175 62 / 0.2);
+  }
+
+  /* Was a flashy gradient border. Now a quiet hairline that lights up
+     to amber on hover — much more "serious tool". */
+  .gradient-border {
+    position: relative;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid oklch(100% 0 0 / 0.09);
+    transition: border-color 250ms ease;
+  }
+
+  .gradient-border:hover {
+    border-color: oklch(74% 0.175 62 / 0.5);
+  }
+
+  .input-field {
+    width: 100%;
+    background: oklch(100% 0 0 / 0.03);
+    border: 1px solid oklch(100% 0 0 / 0.09);
+    border-radius: 4px;
+    padding: 0.85rem 1rem;
+    outline: none;
+    font-size: 0.875rem;
+    font-family: var(--font-sans);
+    color: oklch(94% 0.01 90);
+    transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+  }
+
+  .input-field::placeholder {
+    color: oklch(50% 0.005 260);
+    font-style: italic;
+  }
+  .input-field:focus {
+    border-color: oklch(74% 0.175 62 / 0.6);
+    background: oklch(100% 0 0 / 0.05);
+    box-shadow: 0 0 0 3px oklch(74% 0.175 62 / 0.12);
+  }
+
+  .btn-modern {
+    position: relative;
+    overflow: hidden;
+    padding: 0.8rem 1.5rem;
+    border-radius: 3px;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    letter-spacing: 0.01em;
+    transition: transform 120ms ease, background-color 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+  }
+
+  .btn-modern:active { transform: translateY(1px); }
+  .btn-modern:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Primary CTA: flat amber slab, no gradient. Hover lifts it. */
+  .btn-primary {
+    color: oklch(14% 0.015 260);
+    background: oklch(74% 0.175 62);
+    border: 1px solid oklch(70% 0.18 62);
+    box-shadow:
+      0 1px 0 0 oklch(100% 0 0 / 0.25) inset,
+      0 8px 24px -12px oklch(74% 0.175 62 / 0.4);
+  }
+
+  .btn-primary:hover {
+    background: oklch(78% 0.175 65);
+    box-shadow:
+      0 1px 0 0 oklch(100% 0 0 / 0.3) inset,
+      0 14px 30px -12px oklch(74% 0.175 62 / 0.55);
+    transform: translateY(-1px);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid oklch(100% 0 0 / 0.1);
+    color: oklch(82% 0.01 260);
+  }
+
+  .btn-ghost:hover {
+    background: oklch(100% 0 0 / 0.04);
+    color: oklch(96% 0.01 90);
+    border-color: oklch(100% 0 0 / 0.18);
+  }
+
+  .btn-secondary {
+    background: oklch(100% 0 0 / 0.04);
+    border: 1px solid oklch(100% 0 0 / 0.1);
+    color: oklch(94% 0.01 90);
+  }
+
+  .btn-secondary:hover { background: oklch(100% 0 0 / 0.08); }
+
+  /* Headline text: a clean warm-white wash instead of gradient vomit. */
+  .gradient-text {
+    background: linear-gradient(180deg, oklch(98% 0.015 85) 0%, oklch(84% 0.02 82) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .brand-gradient-text {
+    color: oklch(74% 0.175 62);
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-style: italic;
+  }
+
+  /* Editorial typographic helpers — use liberally. */
+  .type-label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: oklch(58% 0.01 260);
+  }
+
+  .type-display {
+    font-family: var(--font-display);
+    font-optical-sizing: auto;
+    font-weight: 400;
+    letter-spacing: -0.03em;
+    line-height: 0.95;
+  }
+
+  .type-mono {
+    font-family: var(--font-mono);
+    font-feature-settings: "tnum", "zero";
+  }
+
+  .hairline {
+    border: 0;
+    border-top: 1px solid oklch(100% 0 0 / 0.08);
+    width: 100%;
+  }
+
+  /* Viral-score VU meter segment. Used in ResultCard via inline usage. */
+  .vu-segment {
+    width: 3px;
+    border-radius: 1px;
+    background: oklch(100% 0 0 / 0.08);
+    transition: background-color 250ms ease, transform 250ms ease;
+  }
+  .vu-segment.is-lit {
+    background: oklch(74% 0.175 62);
+    box-shadow: 0 0 6px oklch(74% 0.175 62 / 0.6);
+  }
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: oklch(100% 0 0 / 0.08);
+  border-radius: 0;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: oklch(74% 0.175 62 / 0.5); background-clip: padding-box; border: 2px solid transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ─── Background grain + scanline texture ─── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image:
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0px,
+      transparent 2px,
+      oklch(100% 0 0 / 0.04) 3px,
+      transparent 4px
+    );
+  background-repeat: repeat, repeat;
+  background-size: 256px 256px, auto;
+}
+
+/* ─── Ambient background: single warm glow, no rainbow ─── */
+.bg-ambient {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% -5%, oklch(74% 0.175 62 / 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 35% at 90% 100%, oklch(68% 0.1 230 / 0.05) 0%, transparent 55%);
+}
+
+/* ─── Interactive transitions ─── */
+a, button, [role="button"] {
+  transition: color 0.15s ease, background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+/* ─── Keyboard focus rings (a11y) ─── */
+:focus-visible {
+  outline: 2px solid oklch(74% 0.175 62 / 0.75);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ─── Reduced motion (a11y) ─── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─── Keyframes ─── */
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideUpFade {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%      { transform: translateY(-10px); }
+}
+
+@keyframes gradientShift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+/* Pulse ring: now a single amber halo instead of purple. */
+@keyframes pulseRing {
+  0%, 100% { box-shadow: 0 0 0 1px oklch(74% 0.175 62 / 0.25), 0 0 18px -6px oklch(74% 0.175 62 / 0.2); }
+  50%      { box-shadow: 0 0 0 2px oklch(74% 0.175 62 / 0.45), 0 0 28px -6px oklch(74% 0.175 62 / 0.35); }
+}
+
+/* REC LED blink for "Published" pill — 2 pulses then stop, so it's
+   celebratory without being distracting. Use via animation: recBlink 1.4s 2; */
+@keyframes recBlink {
+  0%, 60% { opacity: 1; }
+  30% { opacity: 0.25; }
+  100% { opacity: 1; }
+}
+
+@keyframes scanLine {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(500%);  opacity: 0; }
+}
+
+/* Staggered reveal — used in ResultsGrid so cards appear one-by-one. */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Animation utility classes ─── */
+.animate-fade-in    { animation: fadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-slide-up   { animation: slideUpFade 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.animate-float      { animation: float 6s ease-in-out infinite; }
+.animate-gradient-shift { background-size: 200% 200%; animation: gradientShift 12s ease infinite; }
+.animate-rise-in    { animation: riseIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.pulse-ring-active  { animation: pulseRing 2.5s ease-in-out infinite; }
+.scan-line          { animation: scanLine 2.5s ease-in-out infinite; }
+.rec-blink          { animation: recBlink 1.4s ease-in-out 2; }
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  animation: shimmer 2s linear infinite;
+  background: linear-gradient(to right, transparent, oklch(100% 0 0 / 0.05), transparent);
+}
