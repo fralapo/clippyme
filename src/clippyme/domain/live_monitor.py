@@ -27,6 +27,7 @@ module never imports ``api.app`` (no circular import).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -40,6 +41,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
+from clippyme.domain.clip_locks import clip_lock
 from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
 from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
 from clippyme.integrations.social_publisher import SmartScheduler
@@ -114,8 +116,10 @@ def classify_publish_error(exc: BaseException) -> str:
     Network errors, 408/425/429, 5xx and auth failures (401/403 — fixable by
     reconnecting the account) are retried; other 4xx are request errors that
     retrying can't fix; 409 is Zernio's content-hash dedup (the post already
-    exists). Local ValueErrors (missing clip, bad targets) are permanent;
-    anything else (e.g. a compose failure) is retried.
+    exists) — unless it is ``idempotency_conflict``: the first request with
+    this key is still being processed and may yet fail, so retry with the same
+    key. Local ValueErrors (missing clip, bad targets) are permanent; anything
+    else (e.g. a compose failure) is retried.
     """
     from clippyme.integrations.social_publisher import ZernioError
 
@@ -124,7 +128,7 @@ def classify_publish_error(exc: BaseException) -> str:
         if code is None:
             return "retry"
         if code == 409:
-            return "duplicate"
+            return "retry" if _is_idempotency_conflict(exc) else "duplicate"
         if code in (401, 403, 408, 425, 429) or code >= 500:
             return "retry"
         return "permanent"
@@ -136,12 +140,19 @@ def classify_publish_error(exc: BaseException) -> str:
 def _definitely_not_created(exc: BaseException) -> bool:
     """True when a failed publish certainly created no post: a 4xx answer or a
     local validation error before any request. Network errors, timeouts and
-    5xx are ambiguous — Zernio may have created the post."""
+    5xx are ambiguous — Zernio may have created the post. A 409 never is: the
+    post exists (dedup) or is still being created (idempotency conflict)."""
     from clippyme.integrations.social_publisher import ZernioError
 
     if isinstance(exc, ZernioError):
-        return exc.status_code is not None and 400 <= exc.status_code < 500
+        code = exc.status_code
+        return code is not None and 400 <= code < 500 and code != 409
     return isinstance(exc, ValueError)
+
+
+def _is_idempotency_conflict(exc) -> bool:
+    return (getattr(exc, "code", None) == "idempotency_conflict"
+            or "idempotency_conflict" in (getattr(exc, "body", None) or ""))
 
 
 # ---------------------------------------------------------------------------
@@ -636,7 +647,7 @@ class LiveMonitor:
         # acceptance lives here — queued / in_flight / retry_wait — until
         # Zernio accepts it (→ _published) or it fails for good (→
         # _failed_publish). Each entry carries a stable ``publication_id`` and
-        # the ``request_id`` sent as Zernio's x-request-id idempotency key.
+        # the ``request_id`` sent as Zernio's Idempotency-Key.
         self._pending_publish: list[dict] = []
         self._failed_publish: list[dict] = []
         self._draining: bool = False
@@ -1437,18 +1448,28 @@ class LiveMonitor:
             existing.add(fname)
             dest = os.path.join(self._clip_dir, fname)
             try:
-                composed = await self._compose_for_publish(job_id, clip, None)
-                # Atomic: copy to a tmp sibling then os.replace, so a crash
-                # mid-copy never orphans a partial .mp4 (which would also
-                # permanently reserve its title filename).
-                await asyncio.to_thread(shutil.copyfile, composed, dest + ".tmp")
-                os.replace(dest + ".tmp", dest)
+                # Locked until the copy is done: a manual compose of this clip
+                # deletes the job-dir composed file up front.
+                async with self._clip_lock(job_id, clip):
+                    composed = await self._compose_for_publish(job_id, clip, None)
+                    # Atomic: copy to a tmp sibling then os.replace, so a crash
+                    # mid-copy never orphans a partial .mp4 (which would also
+                    # permanently reserve its title filename).
+                    await asyncio.to_thread(shutil.copyfile, composed, dest + ".tmp")
+                    os.replace(dest + ".tmp", dest)
                 out.append({"job_id": job_id, "clip": clip, "composed_path": dest})
             except Exception:
                 logger.exception("LiveMonitor %s: consolidate/compose failed for %s/%s",
                                  self.id, job_id, idx)
         self._persist()
         return out
+
+    def _clip_lock(self, job_id: str, clip: dict):
+        """The job-dir clip lock shared with manual reframe/compose/publish."""
+        idx = clip.get("original_index")
+        if idx is None:
+            return contextlib.nullcontext()
+        return clip_lock(os.path.join(self._output_dir, job_id), idx)
 
     async def _compose_for_publish(self, job_id: str, clip: dict, base_path: str | None = None) -> str:
         """Burn the monitor recipe (hook top → banner attached → subtitles
@@ -1566,23 +1587,27 @@ class LiveMonitor:
             return
         # Durable BEFORE the provider call: a crash mid-publish leaves the entry
         # queued as in_flight, and its retry reuses the same request_id
-        # (Zernio's x-request-id), so a post Zernio already accepted within its
-        # ~5-min idempotency window comes back instead of being duplicated.
+        # (Zernio's Idempotency-Key), so a post Zernio already accepted within
+        # its 24 h idempotency window comes back instead of being duplicated.
         entry["state"] = "in_flight"
         entry["last_attempt_at"] = time.time()
         self._persist()
-        try:
-            upload_path = entry.get("composed_path")
-            if not upload_path or not os.path.isfile(upload_path):
-                # Restored entry whose composed file vanished → recompose.
-                upload_path = await self._compose_for_publish(job_id, clip)
-            title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
-            caption = render_template(self.cfg["caption_template"], clip)
-            result = await self._publish_serialized(entry, upload_path, title, caption, clip_path)
-        except Exception as exc:
-            self._record_publish_failure(entry, exc, clip_path)
-            return
-        self._on_publish_accepted(entry, clip_path, result)
+        # The clip lock spans the recompose, the upload and the post-accept
+        # artifact cleanup, like a manual publish (lock order: clip lock, then
+        # the global publish lock).
+        async with self._clip_lock(job_id, clip):
+            try:
+                upload_path = entry.get("composed_path")
+                if not upload_path or not os.path.isfile(upload_path):
+                    # Restored entry whose composed file vanished → recompose.
+                    upload_path = await self._compose_for_publish(job_id, clip)
+                title = render_template(self.cfg["title_template"], clip) or clip.get("title") or "Clip"
+                caption = render_template(self.cfg["caption_template"], clip)
+                result = await self._publish_serialized(entry, upload_path, title, caption, clip_path)
+            except Exception as exc:
+                self._record_publish_failure(entry, exc, clip_path)
+                return
+            self._on_publish_accepted(entry, clip_path, result)
 
     async def _publish_serialized(self, entry: dict, upload_path: str, title: str,
                                   caption: str, clip_path: str) -> dict:
@@ -1621,9 +1646,11 @@ class LiveMonitor:
                         raise
                     # Nothing was created: free the slot the scheduler reserved
                     # for it (else it blocks its min-gap window forever) and
-                    # use a fresh idempotency key for the next try.
+                    # use a fresh idempotency key for the next try — durable
+                    # before that try, so a crash mid-call retries with it.
                     del self._picked_slots[slots_before:]
                     entry["request_id"] = str(uuid.uuid4())
+                    self._persist()
                     if not isinstance(exc, ZernioError) or exc.status_code != 429:
                         raise
                     body = exc.body or ""
@@ -1686,6 +1713,22 @@ class LiveMonitor:
         logger.info("LiveMonitor %s: Zernio accepted %s (post=%s, status=%s, scheduled_for=%s)",
                     self.id, clip_path, post.get("post_id"), post.get("status"),
                     post.get("scheduled_for"))
+        # Same record a manual publish leaves, so the history shows the clip as
+        # published and a later manual publish of it is a visible choice.
+        idx = entry["clip"].get("original_index")
+        if idx is not None:
+            from clippyme.domain.job_artifacts import record_clip_publish
+            try:
+                record_clip_publish(entry["job_id"], idx, self._output_dir, {
+                    "platforms": self.cfg.get("platforms"),
+                    "post_id": post.get("post_id"),
+                    "scheduled_for": post.get("scheduled_for"),
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "source": f"monitor:{self.id}",
+                })
+            except Exception:
+                logger.warning("LiveMonitor %s: publish record failed for %s",
+                               self.id, clip_path, exc_info=True)
         if not self.cfg.get("delete_after_publish", True):
             # User opted to keep raw artifacts around (QA/re-edit) — clip is
             # still recorded as published above so it's never re-published.
@@ -2012,6 +2055,29 @@ class LiveMonitorRegistry:
         result = mon.set_publishing(enabled)
         self.persist()
         return result
+
+    def publication_owner(self, job_id: str, clip_index: int) -> str | None:
+        """Id of the monitor that still owns this clip's automatic publication
+        — its job not yet handed to the publish queue, or an entry queued /
+        in_flight / retry_wait (running or stopped monitor) — else None. A
+        manual publish meanwhile would post the clip twice. Failed entries
+        release the clip: publishing it by hand is then the way to retry."""
+        owners = [(mid, m._inflight_jobs, m._pending_publish)
+                  for mid, m in self._monitors.items()]
+        for mid, snap in self._snapshots.items():
+            if mid not in self._monitors:
+                inflight = [i.get("job_id") for i in snap.get("inflight_jobs") or []
+                            if isinstance(i, dict)]
+                owners.append((mid, inflight, snap.get("pending_publish") or []))
+        for mid, inflight, pending in owners:
+            if job_id in inflight:
+                return mid
+            for entry in pending:
+                clip = entry.get("clip") or {}
+                if (entry.get("job_id") == job_id
+                        and clip.get("original_index", clip.get("index")) == clip_index):
+                    return mid
+        return None
 
     def status(self, monitor_id: str | None = None) -> dict:
         if monitor_id:

@@ -267,7 +267,14 @@ through verbatim (the frontend parses per-platform 429 daily limits).
   (reframe / compose / smart cut / publish) holds `clip_locks.clip_lock`
   (re-entrant per task). Reframe, publish and history restore answer 409
   while the job is still queued/processing/paused (the orchestrator owns
-  the metadata file until then).
+  the metadata file until then). Manual publish also answers 409 while a live
+  monitor owns the clip (`LiveMonitorRegistry.publication_owner`: job not yet
+  handed off, or entry queued/in_flight/retry_wait) — a failed entry releases it.
+- **Publish idempotency**: the monitor's durable `request_id` goes to Zernio as
+  `Idempotency-Key` (key-only replay, 24 h — `x-request-id` also needs the same
+  media URL, which every retry's fresh presign changes). A 409
+  `idempotency_conflict` is retried with the same key, never counted as
+  accepted. Delivery stays at-least-once: nothing survives past that window.
 - **Frontend**: `RedesignApp.jsx` owns only top-level state wiring; side
   effects go in `hooks/`, pure logic in `lib/`, visuals in `redesign/`
   components. UI primitives are hand-rolled in `primitives.jsx` (no shadcn

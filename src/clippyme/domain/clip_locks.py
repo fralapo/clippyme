@@ -21,7 +21,8 @@ compose step takes it again. The holder's own re-entry passes straight through
 (the outer hold keeps the entry alive); any OTHER task still waits — so never
 await a child task that needs the same clip while holding it. Lock order
 wherever both are held: this lock first, then smartcut's per-path threading
-lock (taken inside a worker thread, which can never await this one).
+lock (taken inside a worker thread, which can never await this one) or the
+live monitor's global publish lock (the manual paths never take that one).
 """
 import asyncio
 import contextlib

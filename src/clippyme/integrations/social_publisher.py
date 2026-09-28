@@ -149,10 +149,12 @@ MIN_GAP_BETWEEN_POSTS_SECONDS = int(os.environ.get("ZERNIO_MIN_GAP_SECONDS", "54
 class ZernioError(Exception):
     """Wraps any HTTP / API failure from Zernio."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None, body: Optional[str] = None):
+    def __init__(self, message: str, status_code: Optional[int] = None, body: Optional[str] = None,
+                 code: Optional[str] = None):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+        self.code = code  # the JSON body's ``code``, read before ``body`` is truncated
 
 
 class ZernioClient:
@@ -195,10 +197,16 @@ class ZernioClient:
         except requests.RequestException as e:
             raise ZernioError(f"network error: {e}") from e
         if not 200 <= r.status_code < 300:
+            try:
+                payload = r.json()
+            except ValueError:
+                payload = None
+            code = payload.get("code") if isinstance(payload, dict) else None
             raise ZernioError(
                 f"Zernio {method} {path} → HTTP {r.status_code}",
                 status_code=r.status_code,
                 body=self._scrub_secrets(r.text[:500]),
+                code=code if isinstance(code, str) else None,
             )
         try:
             return r.json()
@@ -276,9 +284,12 @@ class ZernioClient:
     ) -> dict:
         """POST /v1/posts — create the post (scheduled or immediate).
 
-        ``request_id`` becomes the ``x-request-id`` idempotency header: a repeat
-        within Zernio's ~5-minute window returns the original post
-        (``existingPost``) instead of creating a second one.
+        ``request_id`` is sent as ``Idempotency-Key``: a repeat within 24 h
+        returns the original post, matched on the key alone. ``x-request-id``
+        alone is not enough — it replays only when the media URL matches too,
+        and every retry re-uploads (a fresh presign → a new URL). Both headers
+        are sent (docs.zernio.com/guides/idempotency, 2026-09; the vendored
+        docs/zernio spec predates Idempotency-Key on this endpoint).
         """
         body: dict[str, Any] = {
             "content": content,
@@ -296,7 +307,8 @@ class ZernioClient:
             body["tiktokSettings"] = tiktok_settings
         if request_id:
             return self._request("POST", "/posts", json=body,
-                                 headers={"x-request-id": str(request_id)})
+                                 headers={"Idempotency-Key": str(request_id),
+                                          "x-request-id": str(request_id)})
         return self._request("POST", "/posts", json=body)
 
 
@@ -438,7 +450,7 @@ def publish_clip(
         timezone: IANA tz string passed to Zernio
         tiktok_settings: optional root-level TikTok settings (consent, privacy)
         scheduler: optional injected SmartScheduler (testing)
-        request_id: optional idempotency key for POST /posts (x-request-id)
+        request_id: optional idempotency key for POST /posts (Idempotency-Key)
 
     Returns:
         {
@@ -592,7 +604,7 @@ def publish_clip(
     )
 
     # 4. Extract post id (response shape varies; an idempotent replay answers
-    # with the original post under ``existingPost``)
+    # 200 with the original post under ``post``)
     post_obj = None
     if isinstance(response, dict):
         post_obj = response.get("post") or response.get("existingPost")
