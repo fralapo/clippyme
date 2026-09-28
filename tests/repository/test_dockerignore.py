@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 _WIN_DOCKER = r"C:\Program Files\Docker\Docker\resources\bin\docker.exe"
 
 

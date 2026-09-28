@@ -122,7 +122,7 @@ day a multi-face mode lands, without changing any current behavior.
 
 ## 5. Verification
 
-- Host `pytest tests/pipeline/test_reframe_ops.py -q` → **56 passed**
+- Host `pytest tests/pipeline/reframe/test_reframe_ops.py -q` → **56 passed**
   (8 new `split_screen_slots` cases, incl. the exact-tiling invariant).
 - Full host `pytest -m "not integration"` re-run to confirm no regression (the
   change is purely additive — one new pure-math function + tests; no existing

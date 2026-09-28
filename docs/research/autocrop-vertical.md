@@ -87,7 +87,7 @@ Wiring (glue, in the integration-tested cv2 files):
 - **`main.py`** — `-pix_fmt yuv420p` + `-vsync cfr` on the persisted source-slice
   cut, so the slice is universally decodable and CFR before reframe ever sees it.
 
-Tests: **`tests/pipeline/test_media_probe.py`** — 31 host (non-integration)
+Tests: **`tests/media/test_media_probe.py`** — 31 host (non-integration)
 cases covering frame-rate parsing, VFR thresholds, start_time parsing, seek-arg
 no-op boundaries, and the never-raise contract.
 
@@ -143,7 +143,7 @@ no-op boundaries, and the never-raise contract.
 
 ## 6. Verification
 
-- Host pure-helper suite: `pytest tests/pipeline/test_media_probe.py` → **36 passed**.
+- Host pure-helper suite: `pytest tests/media/test_media_probe.py` → **36 passed**.
 - Full host (non-integration) suite: `pytest -m "not integration"` → **284 passed,
   2 skipped** (248 prior baseline + 36 new) — no regression.
 - Integration suite in Docker:

@@ -14,9 +14,12 @@ absent, so the host command stays green on a plain checkout. Code that must
 run on the host therefore cannot import `pipeline/main.py`, `reframe.py` or
 `reframe_detect.py`; put testable logic in the pure modules.
 
-`tests/` mirrors the package: `tests/api`, `tests/domain`, `tests/pipeline`,
-`tests/integrations`, `tests/storage`; repository-level checks (secret hook,
-Docker build context, docs links) sit at the top of `tests/`.
+`tests/` mirrors the package: `tests/api`, `tests/jobs`, `tests/clips`,
+`tests/editing`, `tests/monitoring`, `tests/publishing`, `tests/core`,
+`tests/media`, `tests/pipeline` (with `transcription/`, `analysis/`,
+`reframe/`, `quality/`), `tests/integrations`, `tests/storage`.
+Repository-level checks (secret hook, Docker build context, docs links) are in
+`tests/repository`.
 
 ## Commands
 
@@ -53,8 +56,8 @@ DOM with Axe in `src/app/accessibility.test.jsx`.
 
 | Skip | When |
 |------|------|
-| `tests/test_dockerignore.py` | No running Docker daemon |
-| `tests/test_precommit_hook.py` | No `git` + `bash` on the machine |
+| `tests/repository/test_dockerignore.py` | No running Docker daemon |
+| `tests/repository/test_precommit_hook.py` | No `git` + `bash` on the machine |
 | POSIX-only checks (file permissions, PATH shims) | On Windows |
 | Integration modules | Heavy runtime absent (host tier) |
 

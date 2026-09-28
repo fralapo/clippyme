@@ -17,7 +17,7 @@ real gaps in the clip / reframe render path:
 
 The pure parsing / decision helpers (``parse_frame_rate``, ``is_vfr``,
 ``parse_start_time``, ``audio_sync_seek_args``) perform no I/O and are
-host-unit-tested in ``tests/pipeline/test_media_probe.py`` — no cv2 import, so
+host-unit-tested in ``tests/media/test_media_probe.py`` — no cv2 import, so
 they run in the fast (non-integration) suite. The ``probe_*`` wrappers shell out
 to ffprobe and **degrade gracefully (never raise)**: a missing ffprobe or an odd
 file yields the "assume CFR / zero offset" default, so the pipeline keeps its

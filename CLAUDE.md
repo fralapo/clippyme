@@ -102,11 +102,11 @@ CV-dependent pipeline code, the Dockerfile or dependency files.
   hand-rolled in `primitives.jsx` (no shadcn CLI).
 - **Defaults duplicated across stacks** (hook style in `dashboard/src/lib/data.js` and
   `editing/hooks.py`, grade/logo presets) are pinned by
-  `tests/domain/test_frontend_backend_parity.py`; change both sides and the test.
+  `tests/editing/test_frontend_backend_parity.py`; change both sides and the test.
 - **Lint config**: extend rules in `dashboard/eslint.a11y.config.js`, which
   composes the base `eslint.config.js`.
 - **New setting**: document it in `docs/reference/configuration.md` (and
-  `.env.example` if operators will set it). `tests/test_docs.py` fails when a
+  `.env.example` if operators will set it). `tests/repository/test_docs.py` fails when a
   setting read by the code is missing from the reference.
 
 ## Invariants

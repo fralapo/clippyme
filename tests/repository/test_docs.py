@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[1]
+REPO = Path(__file__).resolve().parents[2]
 CONFIG_REF = REPO / "docs" / "reference" / "configuration.md"
 
 # Passed from the backend to the pipeline subprocess, not operator settings.

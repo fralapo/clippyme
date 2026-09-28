@@ -112,7 +112,7 @@ when `REFRAME_GLOBAL_SMOOTH=1` is also set.
 
 ## 5. Verification
 
-- Host `pytest tests/pipeline/test_reframe_ops.py -q` → **70 passed**
+- Host `pytest tests/pipeline/reframe/test_reframe_ops.py -q` → **70 passed**
   (14 new: Kalman RTS, L2 optimiser incl. keyframe-constraint + lambda-monotonicity,
   and the `method` dispatch incl. a default-equals-savgol byte-identity test).
 - Full host `pytest -m "not integration"` → **248 passed, 2 skipped** — no

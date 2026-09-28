@@ -126,7 +126,7 @@ Wiring (glue, in `main.py`):
   safety net). Topic clips flow through the **identical proven clip loop**
   (source slice → reframe → zoom/normalize/cover) — no new render path.
 
-Tests: **`tests/pipeline/test_texttiling_ops.py`** — 17 host (non-integration)
+Tests: **`tests/pipeline/analysis/test_texttiling_ops.py`** — 17 host (non-integration)
 cases covering tokenization, cosine, gap/smooth/depth/boundary math, span
 contiguity, and the four `find_topic_clips` shaping behaviours (too-few-segments
 bail, topic-split, short-merge, long-slice, clip cap).
@@ -182,7 +182,7 @@ bail, topic-split, short-merge, long-slice, clip cap).
 
 ## 6. Verification
 
-- New pure suite: `pytest tests/pipeline/test_texttiling_ops.py` → **17 passed**.
+- New pure suite: `pytest tests/pipeline/analysis/test_texttiling_ops.py` → **17 passed**.
 - Full host (non-integration) suite: `pytest -m "not integration"` → **459 passed,
   3 skipped** (442 prior baseline + 17 new) — no regression.
 - `py_compile` on `main.py` + `texttiling_ops.py` → clean.

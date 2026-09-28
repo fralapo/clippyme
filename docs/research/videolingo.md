@@ -54,7 +54,7 @@ ClippyMe's caption grouping (`subtitles.py:_group_words` / `_group_words_by_coun
 
 ## What was ported
 
-`src/clippyme/editing/subtitles.py` — pure, host-unit-tested (`tests/domain/test_subtitle_split.py`), no spaCy / ffmpeg / model load:
+`src/clippyme/editing/subtitles.py` — pure, host-unit-tested (`tests/editing/test_subtitle_split.py`), no spaCy / ffmpeg / model load:
 
 - `_SUB_CONNECTORS` — coordinating/subordinating connectors in EN/IT/ES/FR/DE (mirrors ClippyMe's existing filler-word language coverage). Break happens *before* the connector (VideoLingo-style), so a new line opens on it.
 - `_ends_sentence` / `_ends_soft` / `_is_connector` — glyph/lexeme predicates, tolerant of trailing quotes/brackets and accented Italian.

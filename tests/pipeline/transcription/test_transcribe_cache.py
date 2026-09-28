@@ -18,7 +18,7 @@ def test_default_cache_dir_is_repo_data_cache(monkeypatch):
     # The default is anchored on the module's own location; moving the module
     # to another depth must not move the cache out of <repo>/data/cache.
     monkeypatch.delenv("CLIPPYME_CACHE_DIR", raising=False)
-    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
     assert tc._resolve_cache_dir() == os.path.join(repo, "data", "cache")
 
 
