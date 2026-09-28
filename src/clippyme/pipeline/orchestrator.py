@@ -22,6 +22,7 @@ from typing import Any
 
 from clippyme.domain.runtime_state import RuntimeState
 from clippyme.pipeline.ffmpeg_exec import FfmpegError, remove_quietly, run_ffmpeg_atomic
+from clippyme.pipeline.gemini_request import DEFAULT_RETRY_MODEL, build_model_chain
 from clippyme.pipeline.media_qa import inspect_clip, probe_media
 from clippyme.pipeline.preflight import (
     PreflightInputs,
@@ -335,6 +336,7 @@ def _run_preflight(args, input_video: str, output_dir: str, state: RuntimeState,
     except OSError:
         free_disk = None
     model = args.model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    fallback_env = os.getenv("GEMINI_FALLBACK_MODELS")
     report = build_preflight(
         PreflightInputs(
             duration_seconds=duration,
@@ -346,6 +348,9 @@ def _run_preflight(args, input_video: str, output_dir: str, state: RuntimeState,
             has_gpu=bool(getattr(legacy, "CUDA_AVAILABLE", False)),
             max_clips=_max_clips_from_env(),
             analysis_enabled=not args.skip_analysis,
+            fallback_models=tuple(build_model_chain(model, fallback_env)[1:]),
+            retry_models=tuple(build_model_chain(
+                os.getenv("GEMINI_RETRY_MODEL") or DEFAULT_RETRY_MODEL, fallback_env)),
         ),
         pricing=getattr(legacy, "MODEL_PRICING", {}),
         free_disk_bytes=free_disk,

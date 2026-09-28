@@ -187,7 +187,7 @@ Runtime env overrides (rarely needed):
 | `CLIPPYME_RENDER_QA_RETRIES` | `1` | Extra render attempts after a **critical** output-QA failure. |
 | `CLIPPYME_KEEP_CHECKPOINTS` | `0` | Keep the hidden transcript/phase checkpoints after a fully successful job. |
 | `CLIPPYME_MAX_DURATION_SECONDS` / `CLIPPYME_MAX_INPUT_GB` | _(disabled)_ | Preflight quotas: reject sources longer / larger than this before any expensive work. |
-| `CLIPPYME_MAX_ESTIMATED_COST_USD` | _(disabled)_ | Reject a job whose estimated Gemini spend exceeds this. Conservative estimate, not a billing promise. |
+| `CLIPPYME_MAX_ESTIMATED_COST_USD` | _(disabled)_ | Reject a job whose estimated Gemini spend exceeds this. Upper-bound estimate from the source duration (priciest model of the fallback and reformat-retry chains, thinking tokens included), not a billing promise; while set, a job that could reach a model with no known price is rejected. |
 | `CLIPPYME_MIN_FREE_DISK_GB` | `1` | Free space that must still remain after the estimated peak disk use. |
 | `CLIPPYME_MAX_CLIPS` | _(disabled)_ | Cap how many ranked candidates are actually rendered. |
 | `CLIPPYME_CREATOR_NAME` | _(unset)_ | Channel owner passed to the Gemini prompt so titles can name whose stream the clip is from. Set per-job by the Live Monitor; never used to attribute a quote. |

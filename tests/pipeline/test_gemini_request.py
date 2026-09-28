@@ -270,7 +270,8 @@ def test_cost_uses_pricing_table():
 
 def test_cost_unknown_model_notes_missing_pricing():
     cost = compute_gemini_cost(1000, 1000, "gemini-99-ultra")
-    assert cost["total_cost"] == 0.0
+    assert cost["total_cost"] is None
+    assert cost["pricing_known"] is False
     assert "note" in cost
 
 

@@ -7,18 +7,50 @@ the pricing table, prompt/word extraction, retry classification/backoff and
 the level-4 reformat prompt. ``main.get_viral_clips`` orchestrates the actual
 SDK calls around these helpers and re-exports the moved constants.
 """
+import datetime
 import json
 import time
 
-# Per-model pricing ($ per 1M tokens) — update when Google changes rates
+# Paid-tier Standard pricing, USD per 1M tokens, text input. Thinking tokens
+# are billed at the output rate. Source: ai.google.dev/gemini-api/docs/pricing
+# (checked 2026-09-28) — update when Google changes rates. "long": rates once
+# the prompt exceeds LONG_PROMPT_TOKENS; "promo": dated rates that apply
+# through "until" (inclusive, UTC), the base rates after it. A model missing
+# here has UNKNOWN cost — never priced as $0.
+LONG_PROMPT_TOKENS = 200_000
+# Model of the level-4 reformat retry unless GEMINI_RETRY_MODEL overrides it.
+DEFAULT_RETRY_MODEL = "gemini-2.5-flash"
+_FLASH_36_PROMO = {"until": "2026-12-31", "input": 0.75, "output": 3.75}
 MODEL_PRICING = {
+    "gemini-3.8-flash": {"input": 1.50, "output": 7.50, "promo": _FLASH_36_PROMO},
+    "gemini-3.7-flash": {"input": 1.50, "output": 7.50, "promo": _FLASH_36_PROMO},
+    "gemini-3.6-flash": {"input": 1.50, "output": 7.50, "promo": _FLASH_36_PROMO},
     "gemini-3.5-flash": {"input": 1.50, "output": 9.00},
-    "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00},
+    "gemini-3.5-flash-lite": {"input": 0.30, "output": 2.50},
+    "gemini-3.1-flash-lite": {"input": 0.25, "output": 1.50},
+    "gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
+    "gemini-3.1-pro-preview": {"input": 2.00, "output": 12.00,
+                               "long": {"input": 4.00, "output": 18.00}},
     "gemini-2.5-flash": {"input": 0.30, "output": 2.50},
     "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
-    "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
-    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00,
+                       "long": {"input": 2.50, "output": 15.00}},
 }
+
+
+def model_rates(model_name, prompt_tokens=0, *, today=None, pricing=None):
+    """``{"input", "output"}`` USD per 1M tokens for this call, or None when
+    the model's price is unknown."""
+    entry = (MODEL_PRICING if pricing is None else pricing).get(model_name)
+    if not entry:
+        return None
+    today = today or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    promo = entry.get("promo")
+    if promo and today <= promo["until"]:
+        entry = promo
+    elif entry.get("long") and prompt_tokens > LONG_PROMPT_TOKENS:
+        entry = entry["long"]
+    return {"input": float(entry["input"]), "output": float(entry["output"])}
 
 GEMINI_PROMPT_TEMPLATE = """
 You are a senior short-form video editor specialized in TikTok, IG Reels and YouTube Shorts virality. Read the ENTIRE transcript + word-level timestamps and select the 3–15 MOST VIRAL 15–60s moments.
@@ -470,24 +502,77 @@ def generate_with_model_fallback(
     raise RuntimeError("No Gemini models configured")
 
 
-def compute_gemini_cost(prompt_tokens, output_tokens, model_name):
-    """Cost-analysis dict for the metadata file; note when pricing is unknown."""
-    pricing = MODEL_PRICING.get(model_name)
-    input_price = pricing["input"] if pricing else 0.0
-    output_price = pricing["output"] if pricing else 0.0
-    input_cost = (prompt_tokens / 1_000_000) * input_price
-    output_cost = (output_tokens / 1_000_000) * output_price
+def compute_gemini_cost(prompt_tokens, output_tokens, model_name, thinking_tokens=0,
+                        *, today=None, pricing=None):
+    """Cost-analysis dict for one call (the metadata file's ``cost_analysis``).
+
+    ``output_tokens`` is the visible answer (``candidates_token_count``);
+    ``thinking_tokens`` is billed on top at the output rate. Unknown pricing
+    leaves every cost None — an unpriced call is not a free one.
+    """
+    rates = model_rates(model_name, prompt_tokens, today=today, pricing=pricing)
     cost_analysis = {
         "input_tokens": prompt_tokens,
         "output_tokens": output_tokens,
-        "input_cost": input_cost,
-        "output_cost": output_cost,
-        "total_cost": input_cost + output_cost,
+        "thinking_tokens": thinking_tokens,
         "model": model_name,
+        "pricing_known": rates is not None,
+        "input_cost": None,
+        "output_cost": None,
+        "thinking_cost": None,
+        "total_cost": None,
     }
-    if not pricing:
+    if rates is None:
         cost_analysis["note"] = "Pricing not available for this model"
+        return cost_analysis
+    per_token_in, per_token_out = rates["input"] / 1_000_000, rates["output"] / 1_000_000
+    cost_analysis["input_cost"] = prompt_tokens * per_token_in
+    cost_analysis["output_cost"] = output_tokens * per_token_out
+    cost_analysis["thinking_cost"] = thinking_tokens * per_token_out
+    cost_analysis["total_cost"] = (
+        cost_analysis["input_cost"] + cost_analysis["output_cost"] + cost_analysis["thinking_cost"]
+    )
     return cost_analysis
+
+
+def usage_cost(usage, model_name):
+    """Price a response's ``usage_metadata`` (None when the SDK sent none).
+
+    Priced per category, never from ``total_token_count`` (which already
+    sums prompt + candidates + tool-use + thoughts). No context caching or
+    tools are used, so implicit-cache discounts are not modelled: prompt
+    tokens are all priced at the full input rate (an upper bound).
+    """
+    if usage is None:
+        return None
+    return compute_gemini_cost(
+        getattr(usage, "prompt_token_count", None) or 0,
+        getattr(usage, "candidates_token_count", None) or 0,
+        model_name,
+        getattr(usage, "thoughts_token_count", None) or 0,
+    )
+
+
+def format_cost(cost):
+    return "unknown (no pricing for this model)" if cost is None else f"${cost:.6f}"
+
+
+def add_call_cost(cost_analysis, extra):
+    """Fold another observed call (the reformat retry) into the job's cost.
+
+    The top-level token fields stay the analysis call's; ``total_cost``
+    becomes the sum of every observed call, None if any of them is unpriced.
+    """
+    if extra is None:
+        return cost_analysis
+    merged = dict(cost_analysis)
+    merged["extra_calls"] = [*cost_analysis.get("extra_calls", []), extra]
+    if merged["total_cost"] is None or extra["total_cost"] is None:
+        merged["total_cost"] = None
+        merged["pricing_known"] = False
+    else:
+        merged["total_cost"] += extra["total_cost"]
+    return merged
 
 
 def build_reformat_prompt(err_msg: str, broken_text: str) -> str:

@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from clippyme.pipeline.gemini_request import compute_gemini_cost
+
 _GIB = 1024 ** 3
 _MIB = 1024 ** 2
 
@@ -30,6 +32,10 @@ class PreflightInputs:
     has_gpu: bool = False
     max_clips: int | None = None
     analysis_enabled: bool = True
+    # Every other model the Gemini calls may land on (the fallback chain after
+    # ``model``, and the reformat-retry chain) — the budget covers the priciest.
+    fallback_models: tuple[str, ...] = ()
+    retry_models: tuple[str, ...] = ()
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -47,12 +53,48 @@ def expected_clip_count(duration_seconds: float, max_clips: int | None = None) -
     return estimate
 
 
+# Upper bounds for the analysis call (the transcript is not known yet at
+# preflight, only the duration). Words per second: conversational speech —
+# live streams measured ~1/s, dense podcasts reach ~2.8/s. Tokens per word:
+# each word is a TOON row ``w,start,end`` plus its copy in the plain text, and
+# Gemini tokenizes every timestamp digit separately — the offline Gemma
+# tokenizer measured 17-21 tokens/word with 2-decimal timestamps and 23-25
+# with Deepgram's float32 ones (``0.79999995``), plus ~4k for the template.
+SPEECH_WORDS_PER_SECOND = 2.8
+PROMPT_TOKENS_PER_WORD = 26
+PROMPT_TEMPLATE_TOKENS = 5_500
+# Visible answer: the prompt asks for 3-15 clips of JSON copy, ~250 tokens
+# each (observed ~3k for 13 clips). Thinking is on by default and billed as
+# output; Google publishes no size for the default level, so this is an
+# assumption — recalibrate from the recorded ``thinking_tokens``. The
+# reformat retry sends back at most the answer plus a short instruction.
+OUTPUT_BASE_TOKENS = 700
+OUTPUT_TOKENS_PER_CLIP = 250
+THINKING_TOKENS = 8_192
+REFORMAT_OVERHEAD_TOKENS = 500
+
+
 def estimate_gemini_tokens(duration_seconds: float) -> tuple[int, int]:
-    """Approximate prompt/output token counts from conversational speech rate."""
-    words = max(0.0, float(duration_seconds)) * 2.4
-    input_tokens = int(5_500 + words * 2.0)
-    output_tokens = int(700 + min(12, expected_clip_count(duration_seconds)) * 180)
-    return input_tokens, output_tokens
+    """Upper-bound prompt / visible-output tokens of the analysis call."""
+    words = max(0.0, float(duration_seconds)) * SPEECH_WORDS_PER_SECOND
+    clips = _clamp(int(round(float(duration_seconds) / 100.0)), 3, 15)
+    return (
+        int(PROMPT_TEMPLATE_TOKENS + words * PROMPT_TOKENS_PER_WORD),
+        OUTPUT_BASE_TOKENS + clips * OUTPUT_TOKENS_PER_CLIP,
+    )
+
+
+def _worst_call_cost(models, input_tokens, output_tokens, pricing):
+    """Highest cost of one call over every model it may land on, or None if
+    any of them is unpriced (the fallback can't be proven within budget)."""
+    costs = []
+    for model in models:
+        cost = compute_gemini_cost(input_tokens, output_tokens, model, THINKING_TOKENS,
+                                   pricing=pricing)["total_cost"]
+        if cost is None:
+            return None
+        costs.append(cost)
+    return max(costs, default=0.0)
 
 
 def estimate_gemini_cost(
@@ -61,26 +103,35 @@ def estimate_gemini_cost(
     pricing: dict[str, dict[str, float]] | None,
     *,
     enabled: bool = True,
+    fallback_models: tuple[str, ...] = (),
+    retry_models: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    """Worst-case Gemini spend: the analysis call on the priciest model of its
+    fallback chain plus one reformat retry on the priciest retry model.
+    ``estimated_cost_usd`` is unrounded (the budget gate compares it) and
+    None when any reachable model has no known price."""
     if not enabled:
         return {
             "model": model,
             "input_tokens": 0,
             "output_tokens": 0,
+            "thinking_tokens": 0,
             "estimated_cost_usd": 0.0,
             "pricing_known": True,
         }
     input_tokens, output_tokens = estimate_gemini_tokens(duration_seconds)
-    rates = (pricing or {}).get(model) or {}
-    input_rate = float(rates.get("input") or 0.0)
-    output_rate = float(rates.get("output") or 0.0)
-    cost = input_tokens / 1_000_000 * input_rate + output_tokens / 1_000_000 * output_rate
+    pricing = pricing or {}
+    analysis = _worst_call_cost((model, *fallback_models), input_tokens, output_tokens, pricing)
+    reformat = _worst_call_cost(
+        retry_models, output_tokens + REFORMAT_OVERHEAD_TOKENS, output_tokens, pricing)
+    cost = None if analysis is None or reformat is None else analysis + reformat
     return {
         "model": model,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
-        "estimated_cost_usd": round(cost, 6),
-        "pricing_known": bool(rates),
+        "thinking_tokens": THINKING_TOKENS,
+        "estimated_cost_usd": cost,
+        "pricing_known": cost is not None,
     }
 
 
@@ -129,6 +180,8 @@ def build_preflight(
         inputs.model,
         pricing,
         enabled=inputs.analysis_enabled,
+        fallback_models=tuple(inputs.fallback_models),
+        retry_models=tuple(inputs.retry_models),
     )
     report = {
         "duration_seconds": round(max(0.0, float(inputs.duration_seconds)), 3),
@@ -174,11 +227,20 @@ def enforce_preflight(report: dict[str, Any], env: dict[str, str] | None = None)
         raise PreflightRejected(f"input exceeds CLIPPYME_MAX_INPUT_GB ({max_input_gb:g} GiB)")
 
     max_cost = _float("CLIPPYME_MAX_ESTIMATED_COST_USD")
-    estimated_cost = float(report.get("estimated_cost_usd") or 0)
-    if max_cost > 0 and estimated_cost > max_cost:
-        raise PreflightRejected(
-            f"estimated Gemini cost ${estimated_cost:.4f} exceeds configured limit ${max_cost:.4f}"
-        )
+    if max_cost > 0:
+        # A cost limit must be provable: an unpriced model reachable by the
+        # job fails closed. Compared unrounded — the log/UI round, the gate not.
+        estimated_cost = report.get("estimated_cost_usd")
+        if estimated_cost is None:
+            raise PreflightRejected(
+                f"Gemini pricing unknown for model {report.get('model')} or one of its "
+                "fallbacks, so CLIPPYME_MAX_ESTIMATED_COST_USD cannot be enforced"
+            )
+        if float(estimated_cost) > max_cost:
+            raise PreflightRejected(
+                f"estimated Gemini cost ${float(estimated_cost):.4f} exceeds configured "
+                f"limit ${max_cost:.4f}"
+            )
 
     required = int(report.get("required_disk_bytes") or 0)
     free = report.get("free_disk_bytes")
@@ -192,6 +254,7 @@ def enforce_preflight(report: dict[str, Any], env: dict[str, str] | None = None)
 
 
 def format_preflight_log(report: dict[str, Any]) -> str:
+    cost = report.get("estimated_cost_usd", 0)
     return (
         "[preflight] "
         f"duration_s={report.get('duration_seconds', 0)} "
@@ -199,5 +262,5 @@ def format_preflight_log(report: dict[str, Any]) -> str:
         f"clips={report.get('expected_clips', 0)} "
         f"runtime_min={report.get('estimated_runtime_minutes', 0)} "
         f"disk_gb={report.get('required_disk_gb', 0)} "
-        f"cost_usd={report.get('estimated_cost_usd', 0)}"
+        f"cost_usd={'unknown' if cost is None else round(cost, 6)}"
     )

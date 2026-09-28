@@ -54,7 +54,7 @@ can reject jobs before expensive work with:
 | --- | ---: | --- |
 | `CLIPPYME_MAX_DURATION_SECONDS` | disabled | Maximum source duration |
 | `CLIPPYME_MAX_INPUT_GB` | disabled | Maximum input size in GiB |
-| `CLIPPYME_MAX_ESTIMATED_COST_USD` | disabled | Maximum estimated Gemini cost |
+| `CLIPPYME_MAX_ESTIMATED_COST_USD` | disabled | Maximum upper-bound Gemini cost (fallback/retry chains + thinking); an unpriced reachable model fails closed |
 | `CLIPPYME_MIN_FREE_DISK_GB` | `1` | Free space that must remain after estimated peak use |
 | `CLIPPYME_MAX_CLIPS` | disabled | Maximum number of ranked candidates actually rendered |
 | `CLIPPYME_MIN_VIRAL_SCORE` | disabled | `viral_score` floor applied before the cap (auto clip selection) |

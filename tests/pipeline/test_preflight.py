@@ -40,9 +40,9 @@ def test_build_preflight_exposes_capacity_cost_and_time():
     assert report["disk_headroom_gb"] > 0
 
 
-def test_unknown_model_cost_is_explicitly_zero_and_unknown():
+def test_unknown_model_cost_is_explicitly_unknown():
     report = estimate_gemini_cost(60, "gemini-future", PRICING)
-    assert report["estimated_cost_usd"] == 0
+    assert report["estimated_cost_usd"] is None
     assert report["pricing_known"] is False
 
 

@@ -21,6 +21,14 @@ _JOB_ID_RE = re.compile(
 )
 
 
+def reported_cost(cost_analysis: dict):
+    """A job's Gemini cost for history, None when it is not known — including
+    older metadata that stored an unpriced model's cost as 0 plus a note."""
+    if cost_analysis.get("pricing_known") is False or "note" in cost_analysis:
+        return None
+    return cost_analysis.get("total_cost")
+
+
 def is_valid_job_id(job_id) -> bool:
     """Strict UUID v4 check — defensive against None/int/bytes input.
 
@@ -86,7 +94,7 @@ def scan_history(output_dir: str) -> List[dict]:
                         "timestamp": int(dir_mtime * 1000),
                         "clipCount": len(clip_files),
                         "clips": clip_files,
-                        "cost": cost_analysis.get("total_cost"),
+                        "cost": reported_cost(cost_analysis),
                         "source": source,
                         "title": source,
                         "publishedCount": published_count,

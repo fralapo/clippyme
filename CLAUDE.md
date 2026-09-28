@@ -275,6 +275,12 @@ through verbatim (the frontend parses per-platform 429 daily limits).
   media URL, which every retry's fresh presign changes). A 409
   `idempotency_conflict` is retried with the same key, never counted as
   accepted. Delivery stays at-least-once: nothing survives past that window.
+- **Gemini cost**: one pricing source (`gemini_request.MODEL_PRICING`, USD/1M,
+  official page date in its comment; `promo`/`long` tiers via `model_rates`).
+  Thinking tokens bill at the output rate; cost is priced per usage category,
+  never from `total_token_count`. An unpriced model's cost is None, never $0.
+  Preflight's `CLIPPYME_MAX_ESTIMATED_COST_USD` gate is an upper bound over
+  the fallback + reformat-retry chains and fails closed on unknown pricing.
 - **Frontend**: `RedesignApp.jsx` owns only top-level state wiring; side
   effects go in `hooks/`, pure logic in `lib/`, visuals in `redesign/`
   components. UI primitives are hand-rolled in `primitives.jsx` (no shadcn

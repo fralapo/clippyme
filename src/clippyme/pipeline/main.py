@@ -74,15 +74,19 @@ from clippyme.pipeline.hardware import (  # noqa: E402
 # host-testable gemini_request module; re-imported here so existing callers
 # (and the integration tests) keep finding them on main.
 from clippyme.pipeline.gemini_request import (  # noqa: E402,F401
+    DEFAULT_RETRY_MODEL,
     GEMINI_PROMPT_TEMPLATE,
     MODEL_PRICING,
+    add_call_cost,
     backoff_seconds,
     build_model_chain,
     build_reformat_prompt,
     build_viral_prompt,
     compute_gemini_cost,
+    format_cost,
     generate_with_model_fallback,
     is_rate_limit_error,
+    usage_cost,
 )
 
 # YOLO is lazy-loaded on first use. Keeping the model at import time
@@ -449,16 +453,15 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     # --- Cost Calculation (pure math in gemini_request) ---
     cost_analysis = None
     try:
-        usage = response.usage_metadata
-        if usage:
-            cost_analysis = compute_gemini_cost(
-                usage.prompt_token_count, usage.candidates_token_count, model_name)
-            print(f"💰 Token Usage ({model_name}):")
-            print(f"   - Input Tokens: {cost_analysis['input_tokens']} (${cost_analysis['input_cost']:.6f})")
-            print(f"   - Output Tokens: {cost_analysis['output_tokens']} (${cost_analysis['output_cost']:.6f})")
-            print(f"   - Total Estimated Cost: ${cost_analysis['total_cost']:.6f}")
+        cost_analysis = usage_cost(getattr(response, "usage_metadata", None), model_name)
+        if cost_analysis:
+            print(f"💰 Token Usage ({model_name}): input={cost_analysis['input_tokens']} "
+                  f"output={cost_analysis['output_tokens']} "
+                  f"thinking={cost_analysis['thinking_tokens']} "
+                  f"cost={format_cost(cost_analysis['total_cost'])}")
     except Exception as e:
         print(f"⚠️ Could not calculate cost: {e}")
+    retry_costs = []
 
     # Parse response JSON via the 5-level chain in gemini_parser.
     # See CLAUDE.md section "Gemini viral detection — parsing chain".
@@ -486,7 +489,7 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             it to reformat. That avoids paying the input-token cost of
             the transcript twice and keeps the retry latency-bounded.
             """
-            retry_model = os.getenv("GEMINI_RETRY_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+            retry_model = os.getenv("GEMINI_RETRY_MODEL") or DEFAULT_RETRY_MODEL
             retry_prompt = build_reformat_prompt(err_msg, text)
             try:
                 retry_chain = build_model_chain(
@@ -495,6 +498,8 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
                     client, retry_prompt, retry_chain, max_attempts=1,
                 )
                 print(f"🔁 Retry via {retry_model} (cheap reformatter)")
+                retry_costs.append(
+                    usage_cost(getattr(retry_resp, "usage_metadata", None), retry_model))
                 return retry_resp.text or ""
             except Exception as e:
                 print(f"⚠️  Gemini retry failed: {e}")
@@ -505,6 +510,9 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             retry_fn=_retry_gemini,
             request_id=os.urandom(4).hex(),
         )
+        if cost_analysis:
+            for extra in retry_costs:
+                cost_analysis = add_call_cost(cost_analysis, extra)
 
         # Structured log line for observability.
         print(
