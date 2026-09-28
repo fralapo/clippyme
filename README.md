@@ -109,7 +109,7 @@ MediaPipe and YOLOv8, and React 18 with Vite and Tailwind for the dashboard.
 ## Acknowledgements
 
 ClippyMe started as a fork of
-[OpenShorts](https://github.com/SamurAIGPT/Open-Source-Shorts-Maker).
+[OpenShorts](https://github.com/mutonby/openshorts).
 It builds on [yt-dlp](https://github.com/yt-dlp/yt-dlp),
 [Faster-Whisper](https://github.com/SYSTRAN/faster-whisper),
 [PySceneDetect](https://github.com/Breakthrough/PySceneDetect),

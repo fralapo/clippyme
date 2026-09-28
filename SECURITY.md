@@ -6,16 +6,10 @@ ClippyMe has no releases. Only the current `main` branch receives fixes.
 
 ## Reporting a vulnerability
 
-Please report privately; do not describe a vulnerability in a public issue,
-pull request or discussion.
-
-This repository does not currently have GitHub private vulnerability
-reporting enabled, and there is no dedicated security e-mail address. Until
-one exists:
-
-1. Open a public issue titled **"Security contact request"** with no technical
-   details — no affected endpoint, file, payload or proof of concept.
-2. The maintainer will reply with a private channel to send the details.
+Please report privately through GitHub:
+[**Report a vulnerability**](https://github.com/fralapo/clippyme/security/advisories/new)
+(Security tab → Advisories). Only the maintainers can see the report. Do not
+describe a vulnerability in a public issue, pull request or discussion.
 
 Include the affected version (commit hash), the deployment setup (for example,
 bound to loopback, LAN with an API token, or behind a proxy), steps to

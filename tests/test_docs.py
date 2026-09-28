@@ -24,11 +24,15 @@ _ENV_READ = re.compile(
 
 def _markdown_files():
     try:
-        out = subprocess.run(["git", "ls-files", "-co", "--exclude-standard", "*.md"],
+        # safe.directory: a bind-mounted checkout owned by another user (Docker).
+        out = subprocess.run(["git", "-c", f"safe.directory={REPO.as_posix()}", "ls-files",
+                              "-co", "--exclude-standard", "*.md"],
                              cwd=REPO, capture_output=True, text=True, check=True).stdout
         return [REPO / p for p in out.splitlines() if (REPO / p).exists()]
     except (OSError, subprocess.CalledProcessError):
-        return [p for p in REPO.rglob("*.md") if "node_modules" not in p.parts]
+        # No git: the project's own documentation only, never tool caches.
+        return sorted({*REPO.glob("*.md"), *REPO.glob("docs/**/*.md"),
+                       *REPO.glob("dashboard/*.md"), *REPO.glob(".github/*.md")})
 
 
 def _slug(heading: str) -> str:

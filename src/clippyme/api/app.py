@@ -7,6 +7,10 @@ import logging
 from dotenv import load_dotenv
 from typing import Dict, Optional
 
+# Before any clippyme import: several modules read their settings at import
+# time. override=False (the default) keeps the process environment in charge.
+load_dotenv()
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -69,8 +73,6 @@ from clippyme.storage.config_store import (
 from clippyme.domain.job_worker import make_workers
 from clippyme.domain.history_service import scan_history, is_valid_job_id
 from clippyme.api.config_routes import router as config_router
-
-load_dotenv()
 
 # Constants
 UPLOAD_DIR = "uploads"

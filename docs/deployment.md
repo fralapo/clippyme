@@ -31,7 +31,7 @@ defaults are built around that:
 | Level | How |
 |-------|-----|
 | This computer only (default) | Nothing to do: both ports bind to `127.0.0.1`. |
-| Trusted LAN | Set `CLIPPYME_BIND=0.0.0.0` and `CLIPPYME_API_TOKEN` in `.env`, and enter the token in Settings → API token. Add the address you open the dashboard at (for example `http://192.168.1.20:5175`) to `ALLOWED_ORIGINS`; the browser sends it as `Origin` and the backend rejects unknown origins. `ALLOWED_ORIGINS` must reach the process environment (see the [configuration limitation](reference/configuration.md)): add `- ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}` to the backend `environment:` in `docker-compose.yml`. |
+| Trusted LAN | Set `CLIPPYME_BIND=0.0.0.0` and `CLIPPYME_API_TOKEN` in `.env`, and enter the token in Settings → API token. Add the address you open the dashboard at (for example `http://192.168.1.20:5175`) to `ALLOWED_ORIGINS` in `.env`; the browser sends it as `Origin` and the backend rejects unknown origins. Apply `.env` changes with `docker compose down` then `docker compose up -d`. |
 | Internet | Not supported. |
 
 Why the API token matters: the dashboard (Vite dev server or the production
@@ -74,6 +74,6 @@ the [configuration reference](reference/configuration.md).
 | Clips are split by topic, not ranked, and titles are generic | No Gemini key, or Gemini quota exhausted across the fallback chain. Check the job log. |
 | A job is rejected immediately with a preflight message | A configured limit was hit (duration, size, disk, estimated cost). The message names the variable. |
 | API calls return 401 | `CLIPPYME_API_TOKEN` is set; enter the same value in Settings → API token. |
-| API calls return 403 when the dashboard is opened from another device | Its address is not in `ALLOWED_ORIGINS`, or the variable is only in `.env` and never reached the backend; see [Network exposure](#network-exposure). |
+| API calls return 403 when the dashboard is opened from another device | Its address is not in `ALLOWED_ORIGINS`, or the containers were not recreated (`docker compose down`, then `up -d`) after editing `.env`; see [Network exposure](#network-exposure). |
 | Smart Cut result looks like a plain cut | The auto-editor binary is missing or failed; ClippyMe fell back to ffmpeg. Rebuild the image. |
 | Permission denied on `data/` | Restart the backend container; the entrypoint repairs ownership on start. |

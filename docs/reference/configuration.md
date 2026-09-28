@@ -10,16 +10,9 @@ ClippyMe is configured in two places:
   the repository root; [`.env.example`](../../.env.example) is the template
   for the commonly changed ones. Docker Compose reads `.env` for the values it
   passes to the containers, and the backend loads the repository's `.env`
-  itself at startup (python-dotenv). A variable already set in the process
-  environment wins over `.env`.
-
-> **Limitation.** A few settings are read while the backend's modules are
-> imported, before `.env` is loaded, so a value in `.env` alone does not
-> reach them: `ALLOWED_ORIGINS`, `RATE_LIMIT_MAX_BUCKETS`, `MAX_LOG_LINES`,
-> the Smart Cut `AE_*` values, `CLIPPYME_LOGO_PATH`, `CLIPPYME_FONTS_DIR` and
-> `CLIPPYME_USER_FONTS_DIR`. Set them in the process environment; with Docker,
-> add a line such as `- ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}` to the backend
-> `environment:` list in `docker-compose.yml`.
+  itself at startup (python-dotenv), before any other module reads its
+  settings. A variable already set in the process environment wins over
+  `.env`.
 
 This page is the complete list. Defaults are the values the code uses when a
 variable is unset; a few differ in `docker-compose.yml`, noted as *compose*.
