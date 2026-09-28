@@ -18,7 +18,7 @@ dump for the no-API-key / API-down path.
 Pure stdlib + numpy → host-importable and host-unit-tested (no cv2/torch import),
 following the established ``reframe_ops.py`` / ``media_probe.py`` pattern (testable
 math in its own module, thin glue in ``main.py``). See
-``docs/clipsai-analysis.md`` for the comparison and rationale.
+``docs/research/clipsai.md`` for the comparison and rationale.
 """
 from __future__ import annotations
 

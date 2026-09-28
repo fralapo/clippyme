@@ -2,7 +2,7 @@
 
 No live call. Two halves:
 
-* the spec (``docs/zernio/zernio-api-openapi.yaml``, re-synced with
+* the spec (``docs/vendor/zernio-openapi.yaml``, re-synced with
   docs.zernio.com) still documents every field/header/code the code relies
   on, read from the exact operation/response block — a re-vendored spec that
   renames one fails here;
@@ -18,7 +18,7 @@ import requests
 from clippyme.domain import live_monitor as lm
 from clippyme.integrations import social_publisher as sp
 
-SPEC = Path(__file__).resolve().parents[2] / "docs" / "zernio" / "zernio-api-openapi.yaml"
+SPEC = Path(__file__).resolve().parents[2] / "docs" / "vendor" / "zernio-openapi.yaml"
 
 
 def _block(lines, key):

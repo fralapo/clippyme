@@ -171,7 +171,7 @@ def _cache_put(cache: dict, key, value, limit: int = _CACHE_LIMIT) -> None:
 
 # ---------------------------------------------------------------------------
 # Manual trim — interactive transcript-driven cut (ported idea from
-# x007xyz/flycut-caption, see docs/flycut-caption-analysis.md). flycut lets a
+# x007xyz/flycut-caption, see docs/research/flycut-caption.md). flycut lets a
 # user delete subtitle segments and cuts the matching video intervals; our
 # Smart Cut was auto-only. `drop_ranges` lets a caller hand-pick spans to
 # remove ON TOP OF (or instead of) the automatic filler/silence detection.

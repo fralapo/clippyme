@@ -77,7 +77,7 @@ services:
       # REFRAME_SMOOTHER=euro switches the active-speaker camera to the 1€
       # adaptive filter; leave blank for the proven two-speed EMA. The LOST_*
       # knobs control lost-subject drift-to-center (always on). EURO_* tune the
-      # 1€ filter when enabled. See CLAUDE.md "Reframing Modes".
+      # 1€ filter when enabled. See docs/architecture/reframe.md.
       - REFRAME_SMOOTHER=${REFRAME_SMOOTHER:-}
       - REFRAME_LOST_HOLD=${REFRAME_LOST_HOLD:-90}
       - REFRAME_LOST_DRIFT=${REFRAME_LOST_DRIFT:-0.05}

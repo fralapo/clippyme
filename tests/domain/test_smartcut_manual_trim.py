@@ -1,7 +1,7 @@
 """Manual transcript-trim engine (flycut-caption-ported idea).
 
 Pure/host-runnable — exercises the interval arithmetic + analyze_silences
-manual path without ffmpeg. See docs/flycut-caption-analysis.md.
+manual path without ffmpeg. See docs/research/flycut-caption.md.
 """
 from clippyme.domain import smartcut as sc
 

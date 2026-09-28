@@ -614,7 +614,7 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
 # so a line never cuts mid-phrase. We don't need spaCy: Deepgram `smart_format`
 # (and Whisper) already attach punctuation to the word tokens, so we can find
 # the same boundaries with a pure lexical pass — zero new deps, host-testable.
-# See docs/videolingo-analysis.md.
+# See docs/research/videolingo.md.
 
 # Sentence-final marks → ALWAYS end the current caption (never merge two
 # sentences onto one karaoke line). Includes CJK forms for safety.

@@ -510,7 +510,7 @@ def stationary_lock(xs, ys, frame_w: float, frame_h: float,
     """AutoFlip-style per-scene "stationary" decision for one scene segment.
 
     Ported from Google AutoFlip's ``motion_stabilization_threshold_percent`` +
-    ``snap_center_max_distance_percent`` (see docs/reframe-improvements-research.md).
+    ``snap_center_max_distance_percent`` (see docs/research/reframe-autoflip.md).
     If the camera target barely moves across the whole scene — its span on *both*
     axes stays within ``threshold`` of the frame dimension — the scene is treated
     as a locked-tripod shot: every frame is pinned to the segment's median target

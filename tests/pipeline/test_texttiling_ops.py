@@ -2,7 +2,7 @@
 
 Pins the math ported from ClipsAI (gap → smooth → depth → boundary) and the
 ``find_topic_clips`` duration shaping used as ClippyMe's no-AI whole-video
-fallback. See docs/clipsai-analysis.md.
+fallback. See docs/research/clipsai.md.
 """
 from collections import Counter
 

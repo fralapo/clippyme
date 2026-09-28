@@ -7,8 +7,8 @@
    are the source of truth; they load AFTER index.css and win the
    cascade (app.css's unlayered rules beat index.css's @layer base).
    ------------------------------------------------------------
-   Fonts loaded from Google Fonts CDN (substitutions flagged in
-   README → swap for bundled files if you have them):
+   Fonts loaded from Google Fonts CDN (swap for bundled files if
+   you have them):
      • Geist        → UI sans  (shadcn default stack replacement)
      • Geist Mono   → logs / code / numbers / API keys
      • Anton        → loud "viral" display (hooks, big numbers)

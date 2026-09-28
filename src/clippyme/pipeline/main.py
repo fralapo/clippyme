@@ -464,7 +464,6 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
     retry_costs = []
 
     # Parse response JSON via the 5-level chain in gemini_parser.
-    # See CLAUDE.md section "Gemini viral detection — parsing chain".
     try:
         from clippyme.pipeline.gemini_parser import (
             parse_gemini_response, validate_and_dedupe, backfill_hook_text, drop_wordless_clips,
@@ -591,7 +590,7 @@ def build_texttiling_fallback(transcript_result, video_title):
     the clips flow through the identical downstream clip loop, or ``None`` when
     the transcript can't be usefully segmented (caller then renders whole-video).
     Clips carry ``viral_score=0`` and an explicit ``viral_reason`` so the UI shows
-    they are heuristic, not AI-judged. See docs/clipsai-analysis.md.
+    they are heuristic, not AI-judged. See docs/research/clipsai.md.
     """
     try:
         segments = (transcript_result or {}).get('segments') or []
@@ -816,7 +815,7 @@ if __name__ == '__main__':
         # same proven clip loop below (source slice → reframe → zoom/normalize/
         # cover). If TextTiling can't find usable segments we fall through to the
         # original whole-video render. (Ported from ClipsAI — see
-        # docs/clipsai-analysis.md.)
+        # docs/research/clipsai.md.)
         if not clips_data or 'shorts' not in clips_data:
             if should_use_fallback(args.monitor):
                 clips_data = build_texttiling_fallback(transcript, video_title)

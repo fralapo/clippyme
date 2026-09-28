@@ -1,367 +1,173 @@
 # CLAUDE.md
 
-Guidance for Claude Code when working in this repository. Current-state only —
-design history and rationale live in `docs/` (see the pointers at the bottom).
+Operating rules for coding agents in this repository. It lists what you must
+not break and where to look; it does not explain the product. `AGENTS.md`
+points here.
 
-## Project
+## Context
 
-ClippyMe is a self-hosted AI video platform that turns long-form videos
-(YouTube or local uploads) into viral 9:16 vertical shorts. Fork of OpenShorts.
-Backend: FastAPI + a subprocess video pipeline. Frontend: React 18 + Vite 6 +
-Tailwind v4.
+ClippyMe is a self-hosted app that turns long videos into 9:16 shorts:
+FastAPI backend, one pipeline subprocess per job, React 18 + Vite 6 +
+Tailwind v4 dashboard, files on disk instead of a database. Start with
+[docs/architecture/overview.md](docs/architecture/overview.md).
 
-## Repo layout
+## Where to look, in order
 
-Python backend is src-layout under `src/clippyme/` (`pip install -e .`):
+1. `docs/architecture/` — current design of the subsystem you are changing.
+2. The production code and its tests.
+3. [docs/reference/configuration.md](docs/reference/configuration.md) and
+   `.github/workflows/ci.yml`.
+4. Only then `docs/research/`, for rationale. **Research and history are not
+   implementation authority**: they describe other projects and past states.
+   If they disagree with code, tests or architecture docs, those win.
 
-- `api/` — `app.py` (thin FastAPI layer: job-lifecycle routes, middleware,
-  static mounts, lifespan), `config_routes.py` (the config-family `APIRouter`:
-  keys/cookies/fonts/logo/zernio/models — routes that touch no job runtime
-  state, `include_router`ed by app.py), `schemas.py` (Pydantic request models),
-  `security.py` (trusted-origin/rate limit/API-token gates).
-- `domain/` — endpoint logic. `clip_resolve.py` (shared `resolve_clip()`: job
-  dir → latest metadata → clip entry → path, used by every per-clip endpoint),
-  `job_submission.py` (`submit_job()` + queue-full rollback),
-  `job_runner.py` (`make_run_job()` — the per-job subprocess loop),
-  `job_actions.py` (cancel/stop bodies), `job_journal.py` (crash-safe queue
-  journal + startup recovery), `job_worker.py` (queue dispatch + retention
-  cleanup), `job_results.py` (`build_main_cmd`, partial/final result loaders),
-  `job_artifacts.py` (atomic metadata IO), `runtime_state.py` (durable per-job
-  phase/progress/attempt state in `<job>/.clippyme_runtime.json` + the
-  `.clippyme_checkpoint/` artefact dir — atomic + fsync'd, owner-only),
-  `uploads.py` (local-file intake: size cap, safe destination paths),
-  `job_control.py` (status machine +
-  psutil process-tree suspend/resume), `publish_service.py` (Zernio publish
-  flow), `compose.py` (layer pipeline), `clip_endpoints.py` (smart-cut runner,
-  history restore), `smartcut.py` (impure orchestrator: ffmpeg/auto-editor
-  render, ffprobe, per-clip locks, `smart_cut`) + `smartcut_ops.py` (pure,
-  host-tested: filler index, drop-range math, `analyze_silences`, v3 timeline
-  builder — re-exported by smartcut.py for back-compat), `subtitles.py`,
-  `hooks.py`, `logo.py`, `banner.py` (attribution banner: platform logo +
-  handle, `suggest_banner` URL parsing, lazy-cairosvg raster, `attach`
-  letterbox positioning), `live_monitor.py` (`LiveMonitorRegistry` +
-  per-platform strategies: multi-channel Kick/Twitch/YouTube monitor, live +
-  vod modes, global `picked_slots` publish spacing, state in
-  `data/live_monitor.json`; durable auto-resume via `resume_on_start`;
-  a full job queue is waited out (capped backoff, shown in `last_error`) and
-  a network/yt-dlp failure resolving a YouTube channel is retried, while a bad
-  channel (ValueError) or a bug still stops the monitor; `picked_slots` and
-  the `published` dedup guard are pruned by derived retention (constants and
-  reasoning next to `PICKED_SLOT_RETENTION_SECONDS` /
-  `PUBLISHED_RETENTION_SECONDS`);
-  runtime config updates `POST /api/live-monitor/{id}/config` (allow-listed
-  fields, apply to future clips); per-segment clip selection
-  (`clip_selection: fixed|auto` — `fixed` publishes the top `max_clips` by
-  viral_score, `auto` adds a `min_viral_score` floor via
-  `CLIPPYME_MIN_VIRAL_SCORE` so a weak segment yields fewer clips or none,
-  with `max_clips` staying the ceiling — `max_clips: 0` means NO cap and rides
-  through as `CLIPPYME_MAX_CLIPS=0`, which the orchestrator reads as uncapped);
-  per-monitor `smart_cut` (opt-in — adds
-  the `smartcut` toggle to the auto-publish compose recipe) and
-  `letterbox_zoom` (monitors always render reframe-`disabled`);
-  start-time `catchup: backfill|live_only` (live mode only — VOD processes
-  whole feed items, so the UI hides it); `prelive_skip_seconds` applies to VOD
-  jobs too on Kick/Twitch (their VODs open on the same waiting screen) via
-  `build_main_cmd(start_offset=)` → `--start-offset` → the orchestrator's
-  stream-copy head trim, never on YouTube uploads;
-  publishing pause/resume `POST /api/live-monitor/{id}/publishing` with a
-  persisted pending queue that auto-drains on resume/restart; after a
-  confirmed Zernio publish the clip's artifacts are deleted and its metadata
-  entry marked `deleted_after_publish` — positions in `shorts` stay stable,
-  consumers pass `original_index`),
-  `grade.py`, `clip_qa.py`, `clip_edit_ai.py`, `history_service.py`,
-  `encode.py` (single source of x264 settings for every render pass),
-  `errors.py` (domain exceptions mapped to HTTP by one app-level handler).
-- `pipeline/` — `orchestrator.py` (**the entrypoint queued jobs actually run**:
-  preflight → checkpointed `main.py` stages → per-render output QA; owns
-  retries, resume and `.clippyme_runtime.json`), `preflight.py` (pure-ish
-  pre-spend probe: duration/size/disk/Gemini-cost estimate + quota rejection,
-  exit code 2 = never retried), `media_qa.py` (ffprobe clip verification:
-  streams, aspect, black/freeze ratio, loudness), `quality_suite.py`
-  (manifest-driven regression runner replaying the production QA policy —
-  path-confined to the manifest dir), `main.py` (CLI orchestrator — still owns
-  transcription/Gemini/cut/reframe), `reframe.py` (orchestrator:
-  scene analysis, frame strategies, render loops, `process_video_to_vertical`),
-  `reframe_track.py` (pure tracking classes — host-tested, no cv2),
-  `reframe_detect.py` (YOLO/MediaPipe detectors), `reframe_ops.py` (pure
-  camera math), `cut_ops.py` (clip-edge snapping primitives + the
-  `snap_clips_to_transcript`/`compute_neighbor_bounds` batch orchestration),
-  `run_ops.py` (pure entrypoint helpers: `resolve_output_dir`,
-  `build_cut_command`), `gemini_request.py` (prompt template + pricing +
-  prompt/cost/retry-classification — the pure half of `get_viral_clips`; the
-  prompt's `TITLE & CAPTION COPY` section is engagement-first by design
-  (see `docs/title-hook-copy-research.md`) — never reintroduce a mechanical
-  CTA there, and `CLIPPYME_CREATOR_NAME` names the clip's subject without
-  ever overriding the speaker-attribution rule; the
-  per-word payload is TOON-encoded (`encode_words_toon`, ~50% smaller than
-  JSON) while the response contract stays JSON),
-  `media_probe.py` (ffprobe + silencedetect wrappers), `ffmpeg_exec.py`
-  (bounded pipeline ffmpeg: stderr to a temp file — never an unread pipe —,
-  tick-counted no-progress watchdog on `CLIPPYME_FFMPEG_TIMEOUT`, and
-  `.partial-` → validate → `os.replace` so an interrupted cut/trim never
-  lands under its final name; the orchestrator trims the source once at
-  acquisition and resumes from the fingerprinted result), `texttiling_ops.py`
-  (no-AI topic-segmentation fallback), `deepgram_transcribe.py`,
-  `elevenlabs_transcribe.py`, `gemini_service.py`, `gemini_parser.py`,
-  `scene_detection.py`, `download.py`, `postprocess.py`, `diarization.py`,
-  `hardware.py`, `transcribe_cache.py`. `main.py` imports cv2/torch at the
-  top → NOT host-importable: pure logic goes in the modules above, never
-  inline in `main.py` (it re-imports moved names for back-compat).
-- `netutil.py` — bounded DNS resolution (daemon thread + timeout) shared by
-  the SSRF guards in `download.py` / `social_publisher.py`; never mutate
-  `socket.setdefaulttimeout` (it doesn't even apply to `getaddrinfo`).
-- `integrations/` — `social_publisher.py` (Zernio client + SmartScheduler),
-  `auto_editor_updater.py` (auto-editor binary self-update),
-  `kick_client.py` (Kick channel/VOD JSON via curl_cffi, Cloudflare profile
-  rotation), `twitch_client.py` (Helix app-token client: streams/users/videos),
-  `youtube_feed.py` (UULF long-form RSS polling — Shorts structurally
-  excluded).
-- `storage/` — `config_store.py` (persisted config in `data/config.json`).
+The source-of-truth table is in [docs/README.md](docs/README.md).
 
-Frontend lives entirely in `dashboard/src/redesign/` (`main.jsx` renders
-`RedesignApp`). Shared hooks in `dashboard/src/hooks/` (incl.
-`useManualTrim.js` — the modal's trim state machine), pure logic in
-`dashboard/src/lib/` (incl. `applyEdit.js` — the reprocess orchestration,
-`seedClipParams.js`, `trimSelection.js`, `bulkApply.js`, `taste.js`).
-Subtitle/logo/grade controls are SHARED between the Create recipe and the
-EditClipModal via `subtitleControls.jsx` / `layerControls.jsx` (hookStyle.jsx
-pattern: fully-controlled `value` + `onChange(partial)`, per-surface `variant`
-chrome, defaults resolved by thin adapters) — never re-clone these controls
-per surface. `captions.jsx` is the modal shell; tab bodies live in
-`editTabs.jsx` with state lifted in the shell (tabs are conditionally
-rendered).
+## Repo map
+
+- `src/clippyme/api/` — FastAPI routes (`app.py`: jobs, clips, monitor;
+  `config_routes.py`: settings), `schemas.py`, `security.py`.
+- `src/clippyme/domain/` — endpoint logic, job lifecycle, compose, smart cut,
+  publishing, live monitor. Never imports FastAPI.
+- `src/clippyme/pipeline/` — the per-job subprocess. Entrypoint is
+  `orchestrator.py` (preflight, checkpoints, retries, output QA) wrapping
+  `main.py` (transcription, Gemini, cut, reframe).
+- `src/clippyme/integrations/` — Zernio, Kick, Twitch, YouTube RSS,
+  auto-editor updater. `storage/` — `data/config.json`.
+- `dashboard/src/redesign/` — the entire live UI (`RedesignApp.jsx` = state
+  wiring only); `hooks/` side effects; `lib/` pure logic.
+- `tests/` mirrors `src/clippyme/`; frontend tests sit next to the code.
 
 ## Commands
 
 ```bash
-docker compose up --build            # primary run (backend :8000, frontend :5175)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build  # prod frontend (nginx)
-
-# Backend host tests (fast, no CV stack) + lint
-pip install -e ".[host-tests]" && pip install pytest ruff
-pytest -m "not integration" -q
-ruff check src/clippyme tests --select E9,F63,F7,F82
-
-# Heavy CV/ML integration tests (Docker only)
-docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration"
-
-# Frontend (Vitest + jsdom + testing-library)
-cd dashboard && npm ci && npm test && npm run lint && npm run build
+pytest -m "not integration" -q                                   # host suite
+ruff check src/clippyme tests --select E9,F63,F7,F82              # CI lint rules
+cd dashboard && npm run lint && npm test && npm run build         # frontend
+docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"
 ```
 
-CI (`.github/workflows/ci.yml`): backend host suite (with report-only
-coverage) + ruff bug-class rules + blocking `pip-audit`; frontend lint +
-**test** (with coverage) + build; the Docker integration job runs on main
-pushes or `workflow_dispatch`, pre-building the backend image with GHA layer
-caching (tagged `clippyme-backend` so compose reuses it).
+Setup, skips and the full CI list: [docs/development/testing.md](docs/development/testing.md).
+Dependency changes: [docs/development/dependencies.md](docs/development/dependencies.md)
+(`requirements.lock` is generated with uv, never hand-edited).
 
-## Architecture
-
-**Job lifecycle**: `POST /api/process|/api/batch` → `build_main_cmd` →
-`submit_job` (in-memory `jobs` dict + `asyncio.Queue`) → `process_queue`
-dispatch (semaphore, `MAX_CONCURRENT_JOBS`) → `run_job` spawns
-`python -m clippyme.pipeline.orchestrator` as a subprocess and polls partial
-results every 2s. Statuses: `queued → processing ⇄ paused → {completed, failed,
-cancelled, stopped}` (`job_control.py` owns the guards). `stopped` keeps
-finished clips; `cancelled` rmtree's everything.
-
-**Runtime resilience**: the orchestrator (not `main.py`) is what queued jobs
-execute. It preflights the source, keeps durable state + reusable artefacts in
-the job dir, retries transient failures with bounded backoff
-(`CLIPPYME_JOB_MAX_ATTEMPTS`, exit code `2` = deterministic rejection, never
-retried), resumes after a backend restart when state + source are still safe,
-and QA-probes every temporary render before it atomically replaces the public
-clip (structural defect → bounded re-render; signal finding → metadata
-warning). Telemetry rides `result.operations` on the status response. Full
-reference: `docs/runtime-quality.md`.
-
-**Job journal**: every status transition writes `data/jobs_journal.json`
-(atomic, ACTIVE jobs only — never env secrets/Popen/logs). On startup,
-`lifespan` recovery re-enqueues `queued` jobs, restores interrupted jobs whose
-final result reached disk, and marks the rest `failed` (killing orphaned
-pipeline trees via psutil with an argv-match guard). **`failed` is reused
-deliberately**: the frontend poller terminates only on
-`completed|stopped|cancelled|failed` — an unknown status polls forever.
-
-**Pipeline (per job)**: yt-dlp download → transcription → PySceneDetect →
-Gemini viral detection (5-level JSON-repair fallback chain in
-`gemini_parser.py`; TextTiling topic-split as the no-AI fallback; whole-video
-render as the last resort) → per-clip edge snapping (word → sentence →
-waveform-silence, `cut_ops.py`) → 9:16 reframe → Ken Burns zoom (folded into
-the master encode) → EBU R128 loudnorm → cover frame. The 16:9 source slice
-per clip is preserved on disk (`source_*.mp4`) to enable post-hoc reframe
-switching. Clip files are named from the sanitized Gemini viral title
-(`run_ops.clip_output_basename`: Windows-forbidden chars/reserved names
-handled, always suffixed `_clip_{i+1}`); the basename is persisted per clip
-as `clip_filename` in metadata (re-dumped atomically per cut iteration) and
-every consumer resolves through `clip_resolve.clip_filename_for`
-(clip_filename → video_url → positional legacy fallback).
-
-**Transcription**: `TRANSCRIPTION_PROVIDER` = `deepgram` (default, Nova-3
-REST) | `elevenlabs` (Scribe; audio-event tags feed the Gemini prompt) |
-`whisper` (local). Both cloud providers silently fall back to Faster-Whisper
-on any failure. All paths transcribe an extracted mono-16kHz FLAC, not the
-video. Transcripts are cached 7 days under `data/cache/` keyed by URL hash.
-
-**Compose** (`POST /api/compose/{job}/{clip}`): layers render in the order
-**Grade → Subtitles → Smart Cut → Hook → Logo → Banner**. Do NOT reorder —
-subtitles are burned before Smart Cut so their absolute timing can't drift;
-grade runs first so overlays keep authored colour; logo sits on top; the
-attribution banner (`banner.py`: platform logo + handle, `attach` mode pins it
-under the letterbox band when `reframe_mode == disabled`) renders topmost as a
-separate pass. Grade+subtitles and hook+logo are pass-fused (one encode each)
-when possible. Toggles are UI-only state; composition happens at
-download/publish time. Serialised per clip via `clip_locks.clip_lock`.
-Hook overlay shows only the first 4s of the clip, EXCEPT
-`reframe_mode == disabled` where it stays for the whole clip. An ANIMATED hook
-needs `-loop 1` on the PNG input + `-shortest` (a single image frame + `fade`
-= alpha 0 forever, i.e. no hook at all). With `reframe_mode == disabled` and
-NO banner, bottom captions re-anchor to the top of the black band
-(`compose._letterbox_caption_band_top` → `generate_ass_karaoke(band_top=)`) so
-they sit just under the video instead of floating low in the black.
-
-**Reframe**: three user modes — `auto` (face tracking + per-scene strategy),
-`subject` (FrameShift weighted-interest crop; legacy alias `object`),
-`disabled` (letterbox — the WHOLE frame between black bars, nothing cropped;
-`--letterbox-zoom` / `letterbox_zoom` optionally trims 5–15% off the width for
-a fixed zoom, geometry in the pure `reframe_ops.letterbox_plan`).
-`disabled` also forces the Ken Burns push OFF (`zoom_end=None` in
-`process_video_to_vertical`) — a locked frame must not drift.
-Comfort mode is default-on: within a scene the camera
-never moves (`collapse_scene_targets`), zoom locks per scene. The output
-aspect is an explicit `process_video_to_vertical(..., aspect_ratio=)`
-parameter passed by `main.py` per job — there is no module-global. Post-hoc
-mode switching (`POST /api/reframe/{job}/{clip}`) spawns
-`main.py --reframe-only` on the preserved source slice. Camera/decision math
-lives in `reframe_ops.py`/`reframe_track.py` (pure, host-tested) — add new
-reframe logic there, not in the cv2-bound modules.
-⚠️ `REFRAME_GLOBAL_METHOD=kalman|l2` only runs with `REFRAME_STATIC_AUTO=0`;
-the default static-auto policy never reaches the trajectory smoother.
-
-**Smart Cut**: transcript-driven silence/filler removal rendered via a
-hand-built auto-editor v3 JSON timeline (ffmpeg concat fallback if the binary
-is missing), plus an audio-threshold polish pass. Manual trims arrive as
-`drop_ranges` ([[start,end], …] clip-relative) and ride compose + publish.
-The auto-editor binary is NOT a pip dep — Dockerfile downloads it; an opt-in
-24h self-update loop refreshes it (`AUTO_EDITOR_AUTO_UPDATE=1`).
-
-**Publish**: Zernio (TikTok/Instagram/YouTube). `publish_service.publish_clip_flow`
-optionally re-composes first so uploads match the preview; `SmartScheduler`
-picks Italian-prime-time slots with anti-collision. Zernio error bodies pass
-through verbatim (the frontend parses per-platform 429 daily limits).
+Minimum before committing: host suite + Ruff for backend changes; lint, test
+and build for dashboard changes; the integration suite when you touch
+CV-dependent pipeline code, the Dockerfile or dependency files.
 
 ## Code rules
 
-- **Thin handlers**: validate → call a `clippyme.domain.*` helper → return
-  JSON. A handler growing past ~25 lines of logic gets extracted. Domain
-  modules never import FastAPI — they raise `errors.ClippyMeError` subclasses
-  (`ValidationError` 400, `NotFoundError` 404, `ConflictError` 409) mapped by
-  one app-level handler.
-- **Per-clip endpoints resolve through `clip_resolve.resolve_clip()`** — do
-  not re-implement the metadata/filename fallback chain.
-- **Pure logic is extracted to host-testable modules** (no cv2/torch imports)
-  so it runs in `pytest -m "not integration"`. cv2/ML code is verified only by
-  the Docker integration suite.
-- **Back-compat re-exports**: `reframe.py` re-exports the moved
-  track/detect names; `main.py` re-exports the reframe API. Keep them when
-  moving code.
-- **Atomic writes** for anything on disk that a crash could corrupt
-  (`job_artifacts.save_job_metadata` pattern: tmp + `os.replace`, 0o600).
-- **Job metadata is one shared document**: API-side writers go through
-  `job_artifacts.update_job_metadata` (re-load + mutate + save under one
-  lock) — never save a copy loaded before a long render. Per-clip work
-  (reframe / compose / smart cut / publish) holds `clip_locks.clip_lock`
-  (re-entrant per task). Reframe, publish and history restore answer 409
-  while the job is still queued/processing/paused (the orchestrator owns
-  the metadata file until then). Manual publish also answers 409 while a live
-  monitor owns the clip (`LiveMonitorRegistry.publication_owner`: job not yet
-  handed off, or entry queued/in_flight/retry_wait) — a failed entry releases it.
-- **Lock order** (never take them the other way round): `clip_locks.clip_lock`
-  (asyncio, per `(job_dir, clip_index)`, re-entrant per task) first; then
-  either `smartcut._clip_lock` (threading, only inside a worker thread) or the
-  live monitor's global `_publish_lock` (asyncio, serialises every monitor's
-  Zernio publish and guards the shared `picked_slots`; manual publish never
-  takes it); `job_artifacts._METADATA_LOCK` (threading) innermost, only inside
-  sync/worker-thread code — no threading lock is ever held across an `await`.
-  The monitor holds the clip lock over compose → copy at hand-off and over
-  recompose → upload → accept, including the post-accept history record and
-  artifact cleanup (run in a worker thread so the event loop stays free):
-  a manual action waiting on that clip must find the cleanup finished.
-- **Publish identities** — keep them apart: the logical clip is
-  `(job_id, original_index)`; a monitor publication has a stable
-  `publication_id` and a `request_id` sent to Zernio as `Idempotency-Key`
-  (key-only replay, 24 h — `x-request-id` also needs the same media URL, which
-  every retry's fresh presign changes). The `request_id` is reused after an
-  ambiguous outcome and rotated (then persisted before the next call) only
-  after a certain rejection. A 409 `idempotency_conflict` is retried with the
-  same key no sooner than its `Retry-After`, never counted as accepted; a 409
-  with `existingPostId` counts as accepted. A manual publish carries the
-  client's `intent_id` (one per Publish of a clip, reused by its retries,
-  new after a confirmed post — `lib/publishIntent.js`): the server derives the
-  key from `(job_id, clip_index, intent_id)` and answers a repeat of an intent
-  already on the clip's publish record without posting again. No `intent_id`
-  = no key (every request is a new post). Delivery stays at-least-once:
-  nothing is deduplicated past the provider window except through that record.
-- **Gemini cost**: one pricing source (`gemini_request.MODEL_PRICING`, USD/1M,
-  official page date in its comment; `promo`/`long` tiers via `model_rates`).
-  Thinking tokens bill at the output rate; cost is priced per usage category,
-  never from `total_token_count`. An unpriced model's cost is None, never $0.
-  Preflight's `CLIPPYME_MAX_ESTIMATED_COST_USD` gate is an upper bound over
-  the fallback + reformat-retry chains and fails closed on unknown pricing.
-- **Frontend**: `RedesignApp.jsx` owns only top-level state wiring; side
-  effects go in `hooks/`, pure logic in `lib/`, visuals in `redesign/`
-  components. UI primitives are hand-rolled in `primitives.jsx` (no shadcn
-  CLI). Component tests colocate as `*.test.jsx` (Vitest + jsdom).
-- **Security**: `job_id` regex-validated everywhere; config/state endpoints
-  require a trusted origin or private-network client; `SafeStaticFiles`
-  blocks `*_metadata.json` and `source_*` from the `/videos` mount; secrets
-  never enter the job journal; `tmp/` is gitignored and must never be
-  committed. Pre-commit secret scan: `git config core.hooksPath .githooks`.
-  With `TRUST_PROXY=1`, `client_ip` reads the **last** `X-Forwarded-For`
-  hop (the shipped nginx APPENDS via `$proxy_add_x_forwarded_for` — the
-  first hop is client-forgeable); keep append+last-hop in sync.
+- **Thin handlers**: validate → call a `clippyme.domain` helper → return JSON.
+  More than ~25 lines of logic in a handler gets extracted. Domain code raises
+  `errors.ValidationError` (400), `NotFoundError` (404), `ConflictError`
+  (409), mapped by one app-level handler.
+- **Per-clip endpoints resolve through `clip_resolve.resolve_clip()`**; do not
+  re-implement the metadata/filename fallback chain. Clip files resolve via
+  `clip_resolve.clip_filename_for`.
+- **Host-testable logic**: `pipeline/main.py`, `reframe.py`,
+  `reframe_detect.py` import cv2/torch at module level and cannot be imported
+  on the host. Put new logic in the pure modules (`reframe_ops.py`,
+  `reframe_track.py`, `cut_ops.py`, `run_ops.py`, `gemini_request.py`,
+  `smartcut_ops.py`, `media_probe.py`, …).
+- **Back-compat re-exports**: `reframe.py` re-exports the moved track/detect
+  names, `main.py` the reframe API, `smartcut.py` the `smartcut_ops` names.
+  Keep them when moving code.
+- **Atomic writes** for anything a crash could corrupt: temp file +
+  `os.replace`, mode `0o600` (`job_artifacts.save_job_metadata` pattern); add
+  fsync where the state must survive power loss (`runtime_state`,
+  `job_journal`).
+- **One encode setting**: every libx264 pass uses `domain/encode.x264_video_args()`;
+  no raw `-crf` literals.
+- **Shared frontend controls**: subtitle/logo/grade controls are shared between
+  Create and the edit modal via `subtitleControls.jsx` / `layerControls.jsx`
+  (`value` + `onChange(partial)`); never clone them per surface. Edit-modal
+  state lives in the `captions.jsx` shell: tab bodies in `editTabs.jsx` are
+  conditionally rendered and lose state on unmount. UI primitives are
+  hand-rolled in `primitives.jsx` (no shadcn CLI).
+- **Defaults duplicated across stacks** (hook style in `redesign/data.js` and
+  `domain/hooks.py`, grade/logo presets) are pinned by
+  `tests/domain/test_frontend_backend_parity.py`; change both sides and the test.
+- **Lint config**: extend rules in `dashboard/eslint.a11y.config.js`, which
+  composes the base `eslint.config.js`.
+- **New setting**: document it in `docs/reference/configuration.md` (and
+  `.env.example` if operators will set it). `tests/test_docs.py` fails when a
+  setting read by the code is missing from the reference.
 
-## API endpoints
+## Invariants
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/api/process` · `/api/batch` | Submit single video / up to 20 URLs |
-| GET | `/api/status/{job_id}` | Poll job progress |
-| POST | `/api/pause|resume|stop|cancel/{job_id}` | Job control (stop keeps clips, cancel discards) |
-| POST | `/api/compose/{job_id}/{clip_index}` | Compose toggled layers |
-| POST | `/api/smartcut/{job_id}/{clip_index}` | Smart Cut (optional `drop_ranges` body) |
-| GET | `/api/transcript/{job_id}/{clip_index}` | Clip-relative transcript for manual trim |
-| POST | `/api/edit-ai/{job_id}/{clip_index}` | NL instruction → Gemini → `drop_ranges` |
-| POST | `/api/reframe/{job_id}/{clip_index}` | Switch reframe mode post-hoc |
-| POST | `/api/publish/{job_id}/{clip_index}` | Upload + schedule via Zernio |
-| GET/POST/DELETE | `/api/config*` | Keys, cookies, logo, fonts, Zernio (trusted clients) |
-| GET | `/api/history` · POST `/api/history/{id}/restore` · DELETE `/api/history/{id}` | Past jobs |
+Breaking one of these is a bug even if tests pass.
 
-## Configuration
+- **Lock order**, never reversed: `clip_locks.clip_lock` (asyncio, per
+  `(job_dir, clip_index)`, re-entrant per task) first; then either
+  `smartcut._clip_lock` (threading, only inside a worker thread) or the live
+  monitor's global `_publish_lock` (asyncio; serialises monitor publishes and
+  guards `picked_slots`; manual publish never takes it);
+  `job_artifacts._METADATA_LOCK` innermost, only in sync/worker-thread code.
+  No threading lock is held across an `await`.
+- **Job metadata is one shared document**: API-side writers use
+  `job_artifacts.update_job_metadata` (reload + mutate + save under the lock),
+  never a copy loaded before a long render. Reframe, publish and history
+  restore answer 409 while the job is queued/processing/paused.
+- **Monitor hand-off**: the monitor holds the clip lock over compose → copy at
+  hand-off and over recompose → upload → accept, including the post-accept
+  history record and artifact cleanup (run in a worker thread).
+- **Publish identities** stay separate: logical clip `(job_id,
+  original_index)`; monitor `publication_id`; `request_id` = Zernio
+  `Idempotency-Key`, reused after an ambiguous outcome, rotated (and persisted
+  before the next call) only after a certain rejection. `409
+  idempotency_conflict` is retried with the same key after `Retry-After` and
+  never counted as accepted; `409` with `existingPostId` is accepted. Manual
+  publish derives its key from `(job_id, clip_index, intent_id)`; no
+  `intent_id` = no key. Delivery is at least once. Details:
+  [docs/architecture/publishing.md](docs/architecture/publishing.md).
+- **Manual publish vs monitor**: 409 while `LiveMonitorRegistry.publication_owner`
+  says the monitor owns the clip.
+- **Published clips**: after a confirmed monitor publish, artifacts are deleted
+  and the entry marked `deleted_after_publish`; `shorts` positions never
+  shift, consumers pass `original_index`.
+- **Job journal** (`data/jobs_journal.json`) holds active jobs only and never
+  secrets, `Popen` handles or logs. Recovery reuses status `failed` on purpose:
+  the frontend stops polling only on `completed|stopped|cancelled|failed`.
+- **Exit code 2** from the orchestrator = deterministic rejection, never
+  retried. Progressive metadata is never a completion marker.
+- **Compose order**: Grade → Subtitles → Smart Cut → Hook → Logo → Banner.
+  Fusion may merge passes, never reorder them. An animated hook needs
+  `-loop 1` + `-shortest`.
+- **Reframe `disabled`** = whole frame letterboxed, Ken Burns forced off.
+  `REFRAME_GLOBAL_METHOD=kalman|l2` only runs with `REFRAME_STATIC_AUTO=0`.
+- **Gemini cost**: one price table (`gemini_request.MODEL_PRICING`); thinking
+  tokens bill at the output rate; cost is priced per usage category, never from
+  `total_token_count`; an unpriced model's cost is `None`, never 0; the
+  preflight cost gate fails closed on unknown pricing.
+- **Gemini prompt**: titles are engagement-first by design; never reintroduce a
+  mechanical CTA. `CLIPPYME_CREATOR_NAME` names the clip's subject but never
+  overrides speaker attribution. Rationale:
+  [docs/research/title-hook-copy.md](docs/research/title-hook-copy.md).
+- **Clip edges**: word → sentence → silence snapping in `cut_ops.py`; the
+  10–75 s clip-schema cushion is intentional.
+- **ffmpeg in the pipeline** goes through `ffmpeg_exec.py` (stderr to a temp
+  file, no-progress watchdog, `.partial-` then validate then rename).
+- **DNS** for SSRF checks goes through `netutil.py`; never touch
+  `socket.setdefaulttimeout`.
 
-API keys, Gemini model, transcription provider and cookies are managed from
-the dashboard Settings tab (persisted in `data/config.json`, git-ignored).
-The full operational env-var reference (REFRAME_*, AE_*, CLIPPYME_*,
-DEEPGRAM_*, ELEVENLABS_*, ZERNIO_*, server knobs) lives in `.env.example`
-(commented, with defaults) and the README table — keep those two in sync when
-adding a knob. `GEMINI_MODEL` defaults to `gemini-3.5-flash`; per-job override
-via `--model` / `ProcessRequest.model` (regex-validated against argv
-injection).
+## Security rules
 
-## Docs pointers
+- `job_id` is regex-validated everywhere; the per-job `model` name is
+  regex-validated against argv injection; config/state endpoints require a
+  trusted origin or private-network client (`security.py`). Subprocess argv is
+  always a list, never a shell string.
+- `SafeStaticFiles` blocks `*_metadata.json`, `source_*` and runtime files on
+  `/videos`.
+- With `TRUST_PROXY=1`, `client_ip` reads the **last** `X-Forwarded-For` hop,
+  matching nginx's appending `$proxy_add_x_forwarded_for`; keep both in sync.
+- Never commit secrets, `data/`, `.env` or `tmp/`. The pre-commit hook
+  (`git config core.hooksPath .githooks`) enforces it; never bypass it.
+- Tests build fake secrets at runtime; no token-shaped literals in the repo.
 
-- `docs/*-analysis.md` — 14 comparative analyses of the OSS projects ideas
-  were ported from (reframe smoothers, ClipsAI TextTiling, flycut manual trim,
-  VideoLingo subtitle splitting, …) with adopt/reject rationale.
-- `docs/fable5-improvement-log.md` — audit-driven fix log with verification
-  evidence per change.
-- `docs/reframe-improvements-research.md` — the comfort-mode research and
-  measured A/B numbers.
-- `docs/runtime-quality.md` — the durable job lifecycle, retry/preflight/QA
-  env knobs and the regression quality-suite manifest format.
-- `docs/title-hook-copy-research.md` — why the Gemini prompt writes
-  engagement-first titles the way it does (platform clickbait/engagement-bait
-  policy boundary, comment-driver research, Italian register), and why the
-  mechanical-CTA instruction was removed.
-- `docs/architecture-history.md` — summary of major refactors (what moved
-  where and why); the pre-rewrite CLAUDE.md is in git history.
+## Do not
+
+- Commit with `--no-verify`, force-push, or rewrite published history.
+- Hand-edit `requirements.lock` or anything in `docs/vendor/`.
+- Treat `docs/research/` as a specification.
+- Add a new document when an existing canonical page can be made clearer;
+  link instead of copying facts between pages.

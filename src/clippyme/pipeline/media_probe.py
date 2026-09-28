@@ -1,7 +1,7 @@
 """ffprobe-backed media inspection + pure A/V-sync helpers.
 
 Robustness utilities ported from ``kamilstanuch/Autocrop-vertical`` (sixth
-external study — see ``docs/autocrop-vertical-analysis.md``). They close two
+external study — see ``docs/research/autocrop-vertical.md``). They close two
 real gaps in the clip / reframe render path:
 
 * **Variable-frame-rate (VFR) detection** — phone uploads and some YouTube
