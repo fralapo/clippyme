@@ -5,8 +5,10 @@ import json
 import logging
 import os
 
+from clippyme.domain.clip_locks import clip_lock
 from clippyme.domain.clip_resolve import ResolvedClip, clip_filename_for
-from clippyme.domain.errors import ClippyMeError, NotFoundError, ValidationError
+from clippyme.domain.errors import ClippyMeError, ConflictError, NotFoundError, ValidationError
+from clippyme.domain.job_control import ACTIVE_STATES
 from clippyme.domain.smartcut import smart_cut
 
 logger = logging.getLogger(__name__)
@@ -34,15 +36,19 @@ async def run_smart_cut(
     clip_path = resolved.clip_path
 
     try:
-        result_path, stats = await asyncio.to_thread(
-            smart_cut,
-            clip_path,
-            transcript,
-            clip_data["start"],
-            clip_data["end"],
-            transcript.get("language", "en"),
-            drop_ranges,
-        )
+        # The clip lock (not only smart_cut's own path lock): a reframe that
+        # replaced the clip mid-render left a smart-cut file of the OLD pixels
+        # with a NEWER mtime, which smart_cut's cache then kept serving.
+        async with clip_lock(resolved.job_dir, clip_index):
+            result_path, stats = await asyncio.to_thread(
+                smart_cut,
+                clip_path,
+                transcript,
+                clip_data["start"],
+                clip_data["end"],
+                transcript.get("language", "en"),
+                drop_ranges,
+            )
         if result_path is None:
             return {
                 "success": False,
@@ -60,6 +66,22 @@ async def run_smart_cut(
     except Exception as e:
         logger.error("Smart cut error: %s", e)
         raise ClippyMeError(str(e), status_code=500)
+
+
+def restore_finished_job(jobs: dict, job_id: str, output_dir: str) -> dict:
+    """Rebuild a finished job from disk into ``jobs`` and return the entry.
+
+    Refuses (409) while the worker still owns the job: the rebuilt
+    ``completed`` entry would make the dispatcher skip a queued job, hide the
+    running process from stop/cancel/pause and drop the job from the crash
+    journal. Sync on purpose — called on the event loop, the check and the
+    swap cannot interleave with the runner's own status updates.
+    """
+    if (jobs.get(job_id) or {}).get("status") in ACTIVE_STATES:
+        raise ConflictError("Job is still active; restore it once it has finished")
+    entry = restore_job_from_disk(job_id, output_dir, os.path.join(output_dir, job_id))
+    jobs[job_id] = entry
+    return entry
 
 
 def restore_job_from_disk(job_id: str, output_dir: str, job_dir: str) -> dict:

@@ -14,8 +14,9 @@ import time
 
 from clippyme.domain.clip_locks import clip_lock
 from clippyme.domain.clip_resolve import clip_filename_for
-from clippyme.domain.errors import ClippyMeError, NotFoundError
-from clippyme.domain.job_artifacts import load_job_metadata, save_job_metadata
+from clippyme.domain.errors import ClippyMeError, ConflictError, NotFoundError
+from clippyme.domain.job_artifacts import load_job_metadata, update_job_metadata
+from clippyme.domain.job_control import ACTIVE_STATES
 from clippyme.pipeline.reframe_ops import normalize_letterbox_zoom
 from clippyme.storage.config_store import load_persistent_config
 
@@ -35,6 +36,11 @@ async def run_reframe(*, job_id: str, clip_index: int, mode: str,
     output_dir = os.path.join(output_root, job_id)
     if not os.path.isdir(output_dir):
         raise NotFoundError("Job output dir not found")
+    # An active job's orchestrator rewrites the whole metadata file from its
+    # own copy at every clip milestone and may still be rendering this clip,
+    # so a reframe now would be reverted or overwritten behind the user's back.
+    if (jobs.get(job_id) or {}).get("status") in ACTIVE_STATES:
+        raise ConflictError("Job is still processing; reframe once it has finished")
 
     try:
         metadata_path, data = load_job_metadata(job_id, output_root)
@@ -138,10 +144,13 @@ async def run_reframe(*, job_id: str, clip_index: int, mode: str,
         clean_video_url = f"/videos/{job_id}/{original_clip_filename}"
         new_video_url = f"{clean_video_url}?v={cache_bust}"
 
-        # Update in-memory metadata structures with the CLEAN url, then persist.
-        clips[clip_index]["video_url"] = clean_video_url
-        clips[clip_index]["reframe_mode"] = mode
-        data["shorts"] = clips
+        # Persist the CLEAN url on a FRESH copy of the metadata: `data` was
+        # loaded before the render, and saving it back would restore the
+        # pre-render state of every sibling clip updated meanwhile.
+        def mutate(fresh):
+            entry = fresh.get("shorts", [])[clip_index]
+            entry["video_url"] = clean_video_url
+            entry["reframe_mode"] = mode
 
         # A persistence failure must NOT silently succeed: the clip on disk has
         # already been re-rendered with the new mode, so if metadata.json still
@@ -150,21 +159,21 @@ async def run_reframe(*, job_id: str, clip_index: int, mode: str,
         # (so the live session is correct), but surface the save failure as a 500.
         save_failed = None
         try:
-            save_job_metadata(metadata_path, data)
+            await asyncio.to_thread(update_job_metadata, job_id, output_root, mutate)
         except Exception as e:
             logger.error("Failed to persist metadata.json after reframe: %s", e)
             save_failed = e
 
-        if (
-            job_id in jobs
-            and "result" in jobs[job_id]
-            and "clips" in jobs[job_id]["result"]
-            and clip_index < len(jobs[job_id]["result"]["clips"])
-        ):
-            # In-memory state also gets the clean URL — the frontend applies
-            # its own cache-bust via `new_video_url` below on the <video> tag.
-            jobs[job_id]["result"]["clips"][clip_index]["video_url"] = clean_video_url
-            jobs[job_id]["result"]["clips"][clip_index]["reframe_mode"] = mode
+        # In-memory state also gets the clean URL — the frontend applies its own
+        # cache-bust via `new_video_url` below on the <video> tag. Matched by
+        # original_index: the result list skips deleted/missing clips, so its
+        # positions drift from the metadata indexes.
+        live_clips = ((jobs.get(job_id) or {}).get("result") or {}).get("clips") or []
+        for pos, live in enumerate(live_clips):
+            if live.get("original_index", pos) == clip_index:
+                live["video_url"] = clean_video_url
+                live["reframe_mode"] = mode
+                break
 
         if save_failed is not None:
             raise ClippyMeError(

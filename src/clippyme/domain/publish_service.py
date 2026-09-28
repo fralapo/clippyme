@@ -12,7 +12,8 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from clippyme.domain.clip_resolve import ResolvedClip
+from clippyme.domain.clip_locks import clip_lock
+from clippyme.domain.clip_resolve import ResolvedClip, composed_clip_basename
 from clippyme.domain.compose import compose_layers
 from clippyme.domain.errors import ClippyMeError, NotFoundError, ValidationError
 from clippyme.domain.job_artifacts import record_clip_publish
@@ -33,12 +34,6 @@ async def publish_clip_flow(*, job_id: str, clip_index: int,
     if not api_key:
         raise ValidationError("Zernio API key not configured")
 
-    from clippyme.domain.clip_resolve import composed_clip_basename
-    job_dir = resolved.job_dir
-    base_clip = resolved.clip_path
-    upload_path = base_clip
-    composed_path = os.path.join(job_dir, composed_clip_basename(resolved.clip_info, clip_index))
-
     toggles = req.get("toggles")
     logger.info(
         "publish_clip_flow: job=%s clip=%d compose_first=%s toggles=%s has_hook_params=%s has_sub_params=%s",
@@ -48,6 +43,23 @@ async def publish_clip_flow(*, job_id: str, clip_index: int,
         bool(req.get("subtitle_params")),
     )
 
+    # Held from choosing the file until the upload has read it: a compose of
+    # this clip deletes the composed file up front and rewrites it at the end,
+    # so an unlocked publish could upload the raw clip, a half-copied file or
+    # the other request's version. compose_layers re-enters the same lock.
+    async with clip_lock(resolved.job_dir, clip_index):
+        return await _compose_and_upload(
+            job_id=job_id, clip_index=clip_index, resolved=resolved, req=req,
+            api_key=api_key, zernio_cfg=zernio_cfg)
+
+
+async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
+                              zernio_cfg) -> dict:
+    job_dir = resolved.job_dir
+    base_clip = resolved.clip_path
+    upload_path = base_clip
+    composed_path = os.path.join(job_dir, composed_clip_basename(resolved.clip_info, clip_index))
+    toggles = req.get("toggles")
     if req.get("compose_first") and toggles:
         try:
             composed_filename = await compose_layers(

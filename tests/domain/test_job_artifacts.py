@@ -119,6 +119,24 @@ def test_record_clip_publish_appends_multiple_records(tmp_path):
     assert [r["post_id"] for r in data["shorts"][0]["published"]] == ["p1", "p2"]
 
 
+def test_update_job_metadata_failure_keeps_file_and_releases_lock(tmp_path):
+    """A mutate that raises must neither save a half-edited document nor leave
+    the metadata lock held for the next writer."""
+    out = str(tmp_path)
+    _write_meta(os.path.join(out, "job1"), "vid", {"shorts": [{"start": 0}]})
+
+    def boom(data):
+        data["shorts"][0]["start"] = 99
+        raise RuntimeError("mid-update failure")
+
+    with pytest.raises(RuntimeError):
+        ja.update_job_metadata("job1", out, boom)
+    assert ja.load_job_metadata("job1", out)[1]["shorts"][0]["start"] == 0
+    assert not ja._METADATA_LOCK.locked()
+    ja.record_clip_publish("job1", 0, out, {"post_id": "p1"})
+    assert ja.load_job_metadata("job1", out)[1]["shorts"][0]["published"] == [{"post_id": "p1"}]
+
+
 def test_record_clip_publish_out_of_range_index_is_noop(tmp_path):
     out = str(tmp_path)
     _write_meta(os.path.join(out, "job1"), "vid", {"shorts": [{"start": 0}]})

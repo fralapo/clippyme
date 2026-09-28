@@ -35,7 +35,7 @@ from clippyme.domain.compose import compose_layers
 from clippyme.domain.reframe_service import run_reframe
 from clippyme.domain.errors import ClippyMeError
 from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
-from clippyme.domain.clip_endpoints import run_smart_cut, restore_job_from_disk
+from clippyme.domain.clip_endpoints import run_smart_cut, restore_finished_job
 from clippyme.domain.clip_resolve import resolve_clip
 from clippyme.domain import job_control
 from clippyme.domain.job_actions import cancel_job_action, stop_job_action
@@ -832,6 +832,10 @@ async def publish_clip_endpoint(job_id: str, clip_index: int, req: PublishReques
     enforce_rate_limit(request, "publish", capacity=30, refill_per_sec=30 / 60)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
+    # The pipeline rewrites the whole metadata file from its own copy until the
+    # job finishes, which would erase this publish's record.
+    if (jobs.get(job_id) or {}).get("status") in job_control.ACTIVE_STATES:
+        raise HTTPException(status_code=409, detail="Job is still processing; publish once it has finished")
 
     # require_file=False: the base clip may be absent when a composed file
     # exists on disk — publish_clip_flow resolves the actual upload path.
@@ -922,8 +926,6 @@ async def restore_job(job_id: str, request: Request):
     require_trusted_config_request(request)
     if not is_valid_job_id(job_id):
         raise HTTPException(status_code=400, detail="Invalid job ID")
-    job_dir = os.path.join(OUTPUT_DIR, job_id)
-    job_entry = restore_job_from_disk(job_id, OUTPUT_DIR, job_dir)
-    jobs[job_id] = job_entry
+    job_entry = restore_finished_job(jobs, job_id, OUTPUT_DIR)
     logger.info("Restored job %s into memory (%d clips)", job_id, len(job_entry["result"]["clips"]))
     return {"success": True, "status": "completed", "result": job_entry["result"]}

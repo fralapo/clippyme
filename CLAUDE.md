@@ -261,6 +261,13 @@ through verbatim (the frontend parses per-platform 429 daily limits).
   moving code.
 - **Atomic writes** for anything on disk that a crash could corrupt
   (`job_artifacts.save_job_metadata` pattern: tmp + `os.replace`, 0o600).
+- **Job metadata is one shared document**: API-side writers go through
+  `job_artifacts.update_job_metadata` (re-load + mutate + save under one
+  lock) — never save a copy loaded before a long render. Per-clip work
+  (reframe / compose / smart cut / publish) holds `clip_locks.clip_lock`
+  (re-entrant per task). Reframe, publish and history restore answer 409
+  while the job is still queued/processing/paused (the orchestrator owns
+  the metadata file until then).
 - **Frontend**: `RedesignApp.jsx` owns only top-level state wiring; side
   effects go in `hooks/`, pure logic in `lib/`, visuals in `redesign/`
   components. UI primitives are hand-rolled in `primitives.jsx` (no shadcn

@@ -4,7 +4,8 @@ import json
 import logging
 import os
 import shutil
-from typing import Tuple
+import threading
+from typing import Callable, Tuple
 
 logger = logging.getLogger("clippyme")
 
@@ -59,17 +60,45 @@ def save_job_metadata(metadata_path: str, data: dict) -> None:
         raise
 
 
+# The metadata file is ONE document per job, but its writers work per clip
+# (reframe, publish record, delete-after-publish), under per-clip locks or
+# none. save_job_metadata only makes the file write atomic; a caller that loads,
+# works for minutes and then saves still restores its stale copy of every
+# sibling clip. Writers therefore re-load and mutate inside this lock.
+# ponytail: one process-wide lock — each hold is a small JSON read+write; make
+# it per-file if metadata writes ever show up as contention.
+_METADATA_LOCK = threading.Lock()
+
+
+def update_job_metadata(job_id: str, output_dir: str,
+                        mutate: Callable[[dict], bool]) -> str:
+    """Load → ``mutate(data)`` → save, serialised against every other
+    in-process metadata writer. ``mutate`` returns False to skip the save.
+    Returns the metadata path. Raises ``FileNotFoundError`` like
+    ``load_job_metadata``. A threading lock (not asyncio): callers run both on
+    the event loop and in worker threads, and never await inside ``mutate``.
+    """
+    with _METADATA_LOCK:
+        metadata_path, data = load_job_metadata(job_id, output_dir)
+        if mutate(data) is not False:
+            save_job_metadata(metadata_path, data)
+        return metadata_path
+
+
 def record_clip_publish(job_id: str, clip_index: int, output_dir: str, record: dict) -> None:
     """Append a publish record onto a clip's metadata entry (atomic).
 
     Best-effort by design: callers should treat a failure here as non-fatal
     (the publish itself already succeeded) and just log it.
     """
-    metadata_path, data = load_job_metadata(job_id, output_dir)
-    shorts = data.get("shorts", [])
-    if 0 <= clip_index < len(shorts):
+    def mutate(data):
+        shorts = data.get("shorts", [])
+        if not 0 <= clip_index < len(shorts):
+            return False
         shorts[clip_index].setdefault("published", []).append(record)
-        save_job_metadata(metadata_path, data)
+        return True
+
+    update_job_metadata(job_id, output_dir, mutate)
 
 
 def relocate_root_job_artifacts(job_id: str, job_output_dir: str, output_dir: str) -> bool:

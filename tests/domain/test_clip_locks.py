@@ -57,6 +57,63 @@ def test_registry_is_cleaned_up_after_release():
     asyncio.run(main())
 
 
+def test_holder_can_re_enter_but_other_tasks_still_wait():
+    """publish holds the lock across compose + upload and compose takes it
+    again: the holder's re-entry must pass, another task must not."""
+    order = []
+
+    async def holder(inside: asyncio.Event, release: asyncio.Event):
+        async with clip_lock("output/job", 0):
+            async with clip_lock("output/job", 0):   # re-entry, same task
+                order.append("holder:inner")
+                inside.set()
+                await asyncio.wait_for(release.wait(), timeout=2)
+            order.append("holder:outer-still-held")
+        order.append("holder:released")
+
+    async def other():
+        async with clip_lock("output/job", 0):
+            order.append("other:enter")
+
+    async def main():
+        inside, release = asyncio.Event(), asyncio.Event()
+        h = asyncio.create_task(holder(inside, release))
+        await asyncio.wait_for(inside.wait(), timeout=2)
+        o = asyncio.create_task(other())
+        for _ in range(20):   # let `other` run as far as it can
+            await asyncio.sleep(0)
+        assert order == ["holder:inner"]
+        release.set()
+        await asyncio.wait_for(asyncio.gather(h, o), timeout=2)
+
+    asyncio.run(main())
+    assert order == ["holder:inner", "holder:outer-still-held",
+                     "holder:released", "other:enter"]
+    assert clip_locks._LOCKS == {}
+
+
+def test_lock_is_released_when_the_body_raises():
+    async def failing_render():
+        async with clip_lock("output/job", 5):
+            async with clip_lock("output/job", 5):
+                raise RuntimeError("render failed")
+
+    async def main():
+        try:
+            await asyncio.wait_for(failing_render(), timeout=2)
+        except RuntimeError:
+            pass
+        assert clip_locks._LOCKS == {}
+        await asyncio.wait_for(_enter("output/job", 5), timeout=1)
+
+    asyncio.run(main())
+
+
+async def _enter(job_dir, idx):
+    async with clip_lock(job_dir, idx):
+        return True
+
+
 def test_same_key_for_equivalent_paths():
     async def main():
         async with clip_lock("output/job", 2):

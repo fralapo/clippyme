@@ -1791,12 +1791,16 @@ class LiveMonitor:
         and break their per-clip endpoints. Marking keeps positions stable."""
         if idx is None:
             return
-        from clippyme.domain.job_artifacts import load_job_metadata, save_job_metadata
-        metadata_path, data = load_job_metadata(job_id, self._output_dir)
-        shorts = data.get("shorts", [])
-        if 0 <= idx < len(shorts):
+        from clippyme.domain.job_artifacts import update_job_metadata
+
+        def mutate(data):
+            shorts = data.get("shorts", [])
+            if not 0 <= idx < len(shorts):
+                return False
             shorts[idx]["deleted_after_publish"] = True
-            save_job_metadata(metadata_path, data)
+            return True
+
+        update_job_metadata(job_id, self._output_dir, mutate)
 
     def _maybe_remove_empty_job_dir(self, job_id: str, job_dir: str) -> None:
         """Drop the whole job dir once no clip (.mp4) files remain — but only
