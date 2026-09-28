@@ -6,7 +6,6 @@ fallback) → optional file-existence gate.
 """
 import json
 import os
-import time
 
 import pytest
 
@@ -132,10 +131,12 @@ def test_resolve_clip_end_to_end_with_new_format_metadata(tmp_path, job_dir):
 
 
 def test_latest_metadata_by_mtime_wins(tmp_path, job_dir):
-    _write_meta(job_dir, "old_metadata.json", [{"start": 0, "end": 1}])
-    time.sleep(0.02)
+    older = _write_meta(job_dir, "old_metadata.json", [{"start": 0, "end": 1}])
     newer = _write_meta(job_dir, "new_metadata.json",
                         [{"start": 0, "end": 2}, {"start": 2, "end": 4}])
+    # Explicit mtimes: two writes in a row can share one on a coarse clock.
+    os.utime(older, (1_700_000_000, 1_700_000_000))
+    os.utime(newer, (1_700_000_100, 1_700_000_100))
     (job_dir / "new_clip_2.mp4").write_bytes(b"\x00")
     r = resolve_clip(JOB_ID, 1, str(tmp_path))
     assert r.metadata_path == str(newer)

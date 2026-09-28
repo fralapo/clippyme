@@ -84,7 +84,7 @@ def test_clean_commit_passes_without_scanner_errors(repo):
 def test_each_secret_class_blocks_the_commit(repo, kind):
     _stage(repo, "config.txt", f"line one\nleak = {SECRETS[kind]}\n")
     result = _run_hook(repo)
-    assert result.returncode != 0
+    assert result.returncode == 1  # secret found (2 is reserved for scanner errors)
     assert "possible secret in config.txt" in result.stderr
     assert "No such file" not in result.stderr
 
@@ -111,12 +111,20 @@ def test_renamed_and_edited_file_is_scanned(repo):
     assert "new.txt" in result.stderr
 
 
-@pytest.mark.parametrize("path", [".env", "deploy/.env"])
+@pytest.mark.parametrize("path", [".env", "deploy/.env", "data/config.json",
+                                  "data/cookies.txt", "deploy/cookies.txt"])
 def test_secret_file_path_is_refused(repo, path):
     _stage(repo, path, "EMPTY=1\n")
     result = _run_hook(repo)
-    assert result.returncode != 0
+    assert result.returncode == 1
     assert f"secret file: {path}" in result.stderr
+
+
+def test_gitignored_tmp_path_is_refused(repo):
+    _stage(repo, "tmp/notes.txt", "scratch\n")
+    result = _run_hook(repo)
+    assert result.returncode == 1
+    assert "refusing to commit from gitignored tmp/: tmp/notes.txt" in result.stderr
 
 
 def test_scanner_failure_blocks_instead_of_passing(repo, tmp_path_factory):
@@ -131,5 +139,5 @@ def test_scanner_failure_blocks_instead_of_passing(repo, tmp_path_factory):
     env = dict(os.environ)
     env["BASH_ENV"] = str(shim).replace("\\", "/")
     result = _run_hook(repo, env=env)
-    assert result.returncode != 0
+    assert result.returncode == 2  # scan failed — never "clean", never "found"
     assert "scanner" in result.stderr

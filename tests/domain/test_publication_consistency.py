@@ -120,6 +120,9 @@ class FakeZernio:
         self.by_request_id = {}
         self.presigns = 0
         self.lose_next_create_response = False
+        # Seconds of Retry-After for the next N repeats of a key whose first
+        # request is "still processing" (409 idempotency_conflict).
+        self.in_progress = []
 
     def request(self, method, url, **kwargs):
         path = url.split("/api/v1", 1)[-1] if "/api/v1" in url else url
@@ -138,6 +141,9 @@ class FakeZernio:
         media = tuple(m["url"] for m in body.get("mediaItems", []))
         fingerprint = (json.dumps(body.get("platforms"), sort_keys=True), body.get("content"), media)
         key = headers.get("Idempotency-Key")
+        if key and key in self.by_key and self.in_progress:
+            return _Resp(409, {"error": "Request in progress", "code": "idempotency_conflict"},
+                         {"Retry-After": str(self.in_progress.pop(0))})
         if key and key in self.by_key:
             return _Resp(200, {"post": self.by_key[key]})
         rid = headers.get("x-request-id")
@@ -156,13 +162,14 @@ class FakeZernio:
         if self.lose_next_create_response:
             self.lose_next_create_response = False
             raise requests.ConnectionError("read timed out")  # created, answer lost
-        return _Resp(200, {"post": post})
+        return _Resp(201, {"post": post})
 
 
 class _Resp:
-    def __init__(self, status, payload):
+    def __init__(self, status, payload, headers=None):
         self.status_code = status
         self._payload = payload
+        self.headers = headers or {}
         self.text = json.dumps(payload)
 
     def json(self):
@@ -190,6 +197,30 @@ def test_retry_after_a_lost_create_response_does_not_duplicate_the_post(tmp_path
     zernio.lose_next_create_response = True
     asyncio.run(mon._publish_one(entry))
     assert entry["state"] == "retry_wait"          # outcome unknown → retried
+    asyncio.run(mon._publish_one(entry))
+
+    assert [p["_id"] for p in zernio.posts] == ["post1"]
+    assert mon._pending_publish == [] and mon._failed_publish == []
+
+
+def test_in_progress_conflict_over_http_waits_retry_after_and_keeps_the_key(tmp_path, zernio):
+    """Lost answer → the retry finds the first request still processing: 409
+    ``idempotency_conflict`` with a Retry-After header, through the real HTTP
+    client. The next attempt waits at least that long, with the same key, and
+    then replays the one post."""
+    mon = _monitor(tmp_path)
+    composed = tmp_path / "consolidated.mp4"
+    composed.write_bytes(b"COMPOSED")
+    entry = {"job_id": JOB, "clip": _clip(), "composed_path": str(composed)}
+
+    zernio.lose_next_create_response = True
+    asyncio.run(mon._publish_one(entry))
+    key = entry["request_id"]
+    zernio.in_progress = [900]
+    before = lm.time.time()
+    asyncio.run(mon._publish_one(entry))
+    assert entry["state"] == "retry_wait" and entry["request_id"] == key
+    assert entry["next_retry_at"] >= before + 900 > before + lm.publish_retry_delay(2)
     asyncio.run(mon._publish_one(entry))
 
     assert [p["_id"] for p in zernio.posts] == ["post1"]

@@ -541,6 +541,24 @@ def effective_backfill_start(prelive_skip_seconds: int, covered_elapsed: int,
     return start
 
 
+_BACKFILL_SEGMENT_RE = re.compile(r"^backfill_.+_(\d+)_(\d+)_(\d+)\.mp4$")
+
+
+def _backfill_window_owned(seg_path, stream_start_iso) -> tuple[int, int] | None:
+    """The ``(t1, t2)`` window a backfill segment (named by
+    ``_download_vod_range``) was cut for, if it was cut during the stream that
+    started at ``stream_start_iso`` — a previous stream's same-numbered window
+    is a different piece of footage. None otherwise."""
+    match = _BACKFILL_SEGMENT_RE.match(os.path.basename(seg_path or ""))
+    try:
+        stream_start = datetime.fromisoformat(stream_start_iso).timestamp()
+    except (TypeError, ValueError):
+        return None
+    if not match or int(match[3]) < stream_start:
+        return None
+    return int(match[1]), int(match[2])
+
+
 def build_backfill_cmd(vod_url: str, start_s: int, end_s: int, out_path: str) -> list:
     """yt-dlp argv to download an exact [start, end] range of a VOD."""
     return [sys.executable, "-m", "yt_dlp", vod_url,
@@ -832,7 +850,11 @@ class LiveMonitor:
                 start, end = int(window[0]), int(window[1])
                 if end > start >= 0:
                     restored_windows.append((start, end))
-        self._missed_windows = sorted(set(restored_windows))
+        # Older versions dropped a window only once its job had finished, so a
+        # crash could persist both: that in-flight job still owns its window.
+        owned = {_backfill_window_owned(seg_path, snap.get("covered_stream_start"))
+                 for seg_path in self._inflight_jobs.values()}
+        self._missed_windows = sorted(set(restored_windows) - owned)
         self.backfill_pending = len(self._missed_windows)
         self._vod_baseline_ids = set(snap.get("vod_baseline_ids") or [])
         self._backfill_baseline_ready = bool(
@@ -1250,7 +1272,9 @@ class LiveMonitor:
         for t1, t2 in list(windows):
             if self._stop.is_set():
                 break
-            completed = False
+            window = (int(t1), int(t2))
+            if window not in self._missed_windows:
+                continue  # already taken over by a job (or dropped)
             seg_path = await self._download_vod_range(vod_url, t1, t2)
             if seg_path is not None:
                 duration = await asyncio.to_thread(probe_duration, seg_path)
@@ -1260,22 +1284,26 @@ class LiveMonitor:
                     if job_id is None:  # stopped while the queue was full:
                         _safe_remove(seg_path)  # the window stays pending (durable)
                     else:
+                        # The job takes the window over in the same persist
+                        # that tracks it: after a crash the restart re-attaches
+                        # the job instead of cutting the window again.
+                        self._drop_window(window)
                         self.segments_captured += 1
                         self.current_job_id = job_id
                         self._inflight_jobs[job_id] = seg_path
                         self._persist()
                         await self._await_and_publish(job_id, seg_path)
-                        completed = True
                 else:
                     _safe_remove(seg_path)
-                    completed = True
-            if completed:
-                try:
-                    self._missed_windows.remove((int(t1), int(t2)))
-                except ValueError:
-                    pass
+                    self._drop_window(window)
             self.backfill_pending = len(self._missed_windows)
             self._persist()
+
+    def _drop_window(self, window: tuple[int, int]) -> None:
+        # A new stream may have replaced the list during the awaits above.
+        if window in self._missed_windows:
+            self._missed_windows.remove(window)
+        self.backfill_pending = len(self._missed_windows)
 
     async def _download_vod_range(self, vod_url: str, t1: int, t2: int) -> str | None:
         """Download the [t1, t2] range of a VOD via yt-dlp. None on missing/empty."""
@@ -1519,6 +1547,10 @@ class LiveMonitor:
         try:
             while True:
                 status = self._jobs.get(job_id, {}).get("status")
+                if status is None:
+                    restored = await asyncio.to_thread(self._finished_job_from_disk, job_id)
+                    if restored is not None:
+                        status = self._jobs.setdefault(job_id, restored).get("status")
                 if status is None or status in _TERMINAL_STATUSES or self._stop.is_set():
                     break
                 await asyncio.sleep(JOB_POLL_SECONDS)
@@ -1558,6 +1590,28 @@ class LiveMonitor:
                 self._inflight_jobs.pop(job_id, None)
                 _safe_remove(seg_path)
                 self._persist()
+
+    def _finished_job_from_disk(self, job_id: str) -> dict | None:
+        """Job entry for a job the registry no longer knows, rebuilt from its dir.
+
+        The job journal keeps active jobs only, so a job that completed before
+        a restart — its clips not yet handed to the publish queue — is gone
+        from ``jobs``. Its dir still proves the outcome: a runtime stage of
+        ``completed`` plus the final metadata (what startup recovery checks).
+        Anything else (failed, stopped, cancelled, dir gone) is None and gets
+        released as before.
+        """
+        from clippyme.domain.job_results import load_final_result
+        from clippyme.domain.runtime_state import load_runtime_state
+
+        job_dir = os.path.join(self._output_dir, job_id)
+        state = load_runtime_state(job_dir)
+        final = (load_final_result(job_id, job_dir)
+                 if state and state.get("stage") == "completed" else None)
+        if not final:
+            return None
+        return {"status": "completed", "logs": ["Restored from disk after a restart."],
+                "cmd": [], "env": {}, "output_dir": job_dir, "result": final}
 
     async def _consolidate_clips(self, job_id: str, clips: list[dict]) -> list[dict]:
         """Compose every good clip of a finished job into ``self._clip_dir``,

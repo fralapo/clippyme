@@ -3,7 +3,7 @@
 These are pure/host-runnable: smart_cut's heavy ffmpeg paths are not exercised
 — we monkeypatch the `_run` subprocess shim and assert the caching contract.
 """
-import time
+import os
 
 import pytest
 
@@ -54,8 +54,19 @@ def test_probe_duration_reprobes_when_file_changes(fake_run, tmp_path):
     f.write_bytes(b"data")
     sc._DURATION_CACHE.clear()
     sc._probe_duration(str(f))
-    # Change size + mtime so the (path, size, mtime) key differs.
-    time.sleep(0.01)
+    # A new size alone changes the (path, size, mtime) key.
     f.write_bytes(b"data-much-longer-now")
+    sc._probe_duration(str(f))
+    assert fake_run["n"] == 2
+
+
+def test_probe_duration_reprobes_a_same_size_rewrite(fake_run, tmp_path):
+    f = tmp_path / "clip.mp4"
+    f.write_bytes(b"aaaa")
+    os.utime(f, (1_700_000_000, 1_700_000_000))
+    sc._DURATION_CACHE.clear()
+    sc._probe_duration(str(f))
+    f.write_bytes(b"bbbb")  # same size, rewritten
+    os.utime(f, (1_700_000_100, 1_700_000_100))
     sc._probe_duration(str(f))
     assert fake_run["n"] == 2

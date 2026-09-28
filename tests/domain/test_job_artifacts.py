@@ -1,6 +1,7 @@
 """Host tests for clippyme.domain.job_artifacts (pure filesystem helpers)."""
 import json
 import os
+import threading
 
 import pytest
 
@@ -135,6 +136,46 @@ def test_update_job_metadata_failure_keeps_file_and_releases_lock(tmp_path):
     assert not ja._METADATA_LOCK.locked()
     ja.record_clip_publish("job1", 0, out, {"post_id": "p1"})
     assert ja.load_job_metadata("job1", out)[1]["shorts"][0]["published"] == [{"post_id": "p1"}]
+
+
+def test_concurrent_metadata_writers_never_lose_an_update(tmp_path, monkeypatch):
+    """Two threads updating the same document: B asks for the lock while A is
+    between its load and its save; B must wait and then load A's result — a
+    writer holding a stale copy would erase the other's change."""
+    out = str(tmp_path)
+    _write_meta(os.path.join(out, "job1"), "vid", {"shorts": [{"start": 0}, {"start": 1}]})
+    real = ja._METADATA_LOCK
+    b_waiting, b_done = threading.Event(), threading.Event()
+
+    class SpyLock:
+        def __enter__(self):
+            if threading.current_thread().name == "writer-b":
+                b_waiting.set()
+            real.acquire()
+
+        def __exit__(self, *exc):
+            real.release()
+
+    monkeypatch.setattr(ja, "_METADATA_LOCK", SpyLock())
+
+    def writer_b():
+        ja.record_clip_publish("job1", 1, out, {"post_id": "b"})
+        b_done.set()
+
+    def mutate_a(data):
+        thread_b.start()
+        assert b_waiting.wait(timeout=10), "writer B never reached the metadata lock"
+        assert not b_done.is_set()  # blocked behind A
+        data["shorts"][0]["published"] = [{"post_id": "a"}]
+        return True
+
+    thread_b = threading.Thread(target=writer_b, name="writer-b")
+    ja.update_job_metadata("job1", out, mutate_a)
+    thread_b.join(timeout=10)
+    assert b_done.is_set()
+    shorts = ja.load_job_metadata("job1", out)[1]["shorts"]
+    assert shorts[0]["published"] == [{"post_id": "a"}]
+    assert shorts[1]["published"] == [{"post_id": "b"}]
 
 
 def test_record_clip_publish_out_of_range_index_is_noop(tmp_path):

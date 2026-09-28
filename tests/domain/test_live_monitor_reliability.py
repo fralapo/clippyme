@@ -401,7 +401,11 @@ def test_create_post_sends_the_idempotency_header():
     assert captured["headers"]["x-request-id"] == "0b6f3c8e-6a57-4c1e-9d2f-0f5d7a1b2c3d"
 
 
-def test_publish_clip_reads_the_post_id_of_an_idempotent_replay(tmp_path, monkeypatch):
+def test_publish_clip_still_reads_the_legacy_existing_post_shape(tmp_path, monkeypatch):
+    """Legacy fallback: ``{"existingPost": {...}}`` is NOT in the current
+    Zernio spec (a replay returns ``{"post": {...}}`` — pinned against the
+    vendored spec in integrations/test_zernio_contract.py). Kept so an older
+    answer shape still yields the post id instead of a lost acceptance."""
     clip = tmp_path / "c.mp4"
     clip.write_bytes(b"x")
     seen = {}
