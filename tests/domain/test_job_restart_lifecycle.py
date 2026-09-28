@@ -14,10 +14,10 @@ import time
 
 import psutil
 
-from clippyme.domain import job_journal as jj
-from clippyme.domain.job_runner import make_run_job
-from clippyme.domain.job_worker import make_workers
-from clippyme.domain.runtime_state import load_runtime_state
+from clippyme.jobs import job_journal as jj
+from clippyme.jobs.job_runner import make_run_job
+from clippyme.jobs.job_worker import make_workers
+from clippyme.jobs.runtime_state import load_runtime_state
 
 JOB_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 
@@ -26,7 +26,7 @@ JOB_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 # mid-stage. Every executed/skipped stage is appended to trace.log.
 FAKE_PIPELINE = r'''
 import json, os, sys, time
-from clippyme.domain.runtime_state import RuntimeState
+from clippyme.jobs.runtime_state import RuntimeState
 
 out = sys.argv[1]
 state = RuntimeState(out, job_id=os.environ["CLIPPYME_JOB_ID"])

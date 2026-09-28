@@ -1,5 +1,5 @@
 """Host-unit tests for conversational clip edit — pure prompt + parse."""
-from clippyme.domain.clip_edit_ai import build_edit_prompt, parse_edit_response
+from clippyme.editing.clip_edit_ai import build_edit_prompt, parse_edit_response
 
 
 SEGS = [

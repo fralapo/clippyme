@@ -28,7 +28,7 @@ import tempfile
 import threading
 from typing import Callable
 
-from clippyme.domain.encode import ffmpeg_timeout
+from clippyme.media.encode import ffmpeg_timeout
 
 STALL_TICK_SECONDS = 1.0
 _TAIL_BYTES = 4000

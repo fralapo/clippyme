@@ -1,4 +1,4 @@
-"""Tests for clippyme.domain.history_service.
+"""Tests for clippyme.jobs.history_service.
 
 Covers strict UUID validation and disk scanning (valid/invalid dirs, missing
 metadata, corrupt JSON, mtime-descending sort). Uses tmp_path so no real
@@ -7,7 +7,7 @@ output dir is read.
 import json
 import os
 
-from clippyme.domain import history_service as hs
+from clippyme.jobs import history_service as hs
 
 VALID_UUID = "12345678-1234-4123-8123-1234567890ab"
 VALID_UUID_2 = "abcdef01-2345-4678-9abc-def012345678"

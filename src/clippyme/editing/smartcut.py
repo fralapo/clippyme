@@ -20,7 +20,7 @@ This module is the impure *orchestrator*: subprocess rendering (auto-editor /
 ffmpeg), ffprobe wrappers, per-clip locks, and the public entrypoint. The pure
 transcript-analysis + timeline-building logic lives in ``smartcut_ops.py``
 (host-tested); the names it defines are re-exported below for back-compat, so
-callers and tests that ``from clippyme.domain.smartcut import ...`` keep working.
+callers and tests that ``from clippyme.editing.smartcut import ...`` keep working.
 """
 
 import contextlib
@@ -34,11 +34,11 @@ import threading
 from typing import Optional
 
 from clippyme.pipeline.cut_ops import audio_fade_filter
-from clippyme.domain.encode import x264_video_args
+from clippyme.media.encode import x264_video_args
 
 # Pure logic, re-exported for backwards compatibility (callers/tests import
 # these names from `smartcut`). Several are also used at runtime below.
-from clippyme.domain.smartcut_ops import (  # noqa: F401
+from clippyme.editing.smartcut_ops import (  # noqa: F401
     _CACHE_LIMIT,
     DEFAULT_LANG,
     EXTERNAL_FILLER_CONFIG,
@@ -360,7 +360,7 @@ def _render_with_ffmpeg(
                 # yuv420p + faststart: a single-segment edit is moved straight to
                 # the output (see below) without passing through the concat
                 # re-encode, so the per-segment encode must already be
-                # web-decodable + progressive on its own. See domain/encode.py.
+                # web-decodable + progressive on its own. See media/encode.py.
                 *x264_video_args(),
                 "-c:a", "aac",
                 "-avoid_negative_ts", "make_zero",

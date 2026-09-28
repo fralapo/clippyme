@@ -6,7 +6,7 @@ asserted here so they run under host ``pytest -m "not integration"``.
 """
 import pytest
 
-from clippyme.domain import job_control as jc
+from clippyme.jobs import job_control as jc
 
 
 def test_can_pause_only_while_processing():

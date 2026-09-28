@@ -4,7 +4,7 @@
 
 | Tier | Where | Runs | Covers |
 |------|-------|------|--------|
-| Host (backend) | any machine, Python 3.11+ | `pytest -m "not integration"` | API, domain logic, storage, parsers, pure pipeline logic (`*_ops.py`, `reframe_track.py`, preflight, QA verdicts), integrations against fakes |
+| Host (backend) | any machine, Python 3.11+ | `pytest -m "not integration"` | API, services, storage, parsers, pure pipeline logic (`*_ops.py`, `reframe_track.py`, preflight, QA verdicts), integrations against fakes |
 | Integration (backend) | Docker backend image | `pytest -m integration` | Code that needs OpenCV, MediaPipe, PyTorch, ffmpeg renders: reframe, scene detection, `pipeline.main` |
 | Frontend | Node 24 | `npm test` (Vitest + jsdom) | `dashboard/src/lib/`, hooks, components (`*.test.js[x]` next to the code) |
 

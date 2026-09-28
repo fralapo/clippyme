@@ -1,5 +1,5 @@
 """Host-unit tests for the hook overlay filter builder (pure, #5 animated hooks)."""
-from clippyme.domain.hooks import build_hook_overlay_filter
+from clippyme.editing.hooks import build_hook_overlay_filter
 
 
 def test_static_is_legacy_byte_identical():
@@ -44,7 +44,7 @@ def test_animate_enable_window_applied():
 
 
 def test_logo_filter_enable_window_only_on_hook():
-    from clippyme.domain.hooks import build_hook_logo_filter
+    from clippyme.editing.hooks import build_hook_logo_filter
 
     f = build_hook_logo_filter(10, 20, "scale=100:-1", "5", "7", enable_end=4)
     assert f == (
@@ -61,7 +61,7 @@ def _argv_for(monkeypatch, tmp_path, animate):
     """Run add_hook_to_video with every subprocess stubbed; return the ffmpeg argv."""
     import subprocess
 
-    from clippyme.domain import hooks
+    from clippyme.editing import hooks
 
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"\x00")

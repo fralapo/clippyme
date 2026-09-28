@@ -6,7 +6,7 @@ orchestrator process) would; ``legacy`` counts the billable calls
 """
 import types
 
-from clippyme.domain.runtime_state import RuntimeState
+from clippyme.jobs.runtime_state import RuntimeState
 from clippyme.pipeline import orchestrator
 
 

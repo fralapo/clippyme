@@ -15,10 +15,10 @@ import json
 import os
 import re
 
-from clippyme.domain.compose import _LOGO_SIZE_MAP
-from clippyme.domain.grade import GRADE_PRESETS as BACKEND_GRADES
-from clippyme.domain.hooks import HOOK_STYLE_DEFAULTS
-from clippyme.domain.logo import _POSITIONS as BACKEND_LOGO_POSITIONS
+from clippyme.editing.compose import _LOGO_SIZE_MAP
+from clippyme.editing.grade import GRADE_PRESETS as BACKEND_GRADES
+from clippyme.editing.hooks import HOOK_STYLE_DEFAULTS
+from clippyme.editing.logo import _POSITIONS as BACKEND_LOGO_POSITIONS
 
 _JS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..",

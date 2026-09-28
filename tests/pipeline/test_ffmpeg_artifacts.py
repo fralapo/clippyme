@@ -25,7 +25,7 @@ import time
 
 import pytest
 
-from clippyme.domain.runtime_state import RuntimeState
+from clippyme.jobs.runtime_state import RuntimeState
 from clippyme.pipeline import orchestrator
 from clippyme.pipeline.media_qa import probe_media
 from clippyme.pipeline.run_ops import build_cut_command

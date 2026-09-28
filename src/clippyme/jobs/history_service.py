@@ -6,7 +6,7 @@ import os
 import re
 from typing import List
 
-from clippyme.domain.clip_resolve import clip_filename_for
+from clippyme.clips.clip_resolve import clip_filename_for
 
 logger = logging.getLogger("clippyme")
 

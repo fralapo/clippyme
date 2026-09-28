@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from clippyme.domain import hooks
+from clippyme.editing import hooks
 
 
 class Response(io.BytesIO):

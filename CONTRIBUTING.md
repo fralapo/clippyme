@@ -20,7 +20,7 @@ The repository is mounted into both containers:
 
 - **Dashboard** changes reload in the browser immediately.
 - **Pipeline** changes apply to the next job (each job is a new process).
-- **API / domain** changes need `docker compose restart backend`.
+- **API / service** changes need `docker compose restart backend`.
 
 For tests and lint without Docker, install the light host environment
 described in [docs/development/testing.md](docs/development/testing.md).
@@ -35,8 +35,9 @@ described in [docs/development/testing.md](docs/development/testing.md).
 
 ## Rules that matter most
 
-- API handlers stay thin: validate, call a `clippyme.domain` function, return
-  JSON. Domain code never imports FastAPI; it raises `ClippyMeError`
+- API handlers stay thin: validate, call a service function (`clippyme.jobs`,
+  `clips`, `editing`, `monitoring`, `publishing`), return JSON. Service code
+  never imports FastAPI; it raises `ClippyMeError`
   subclasses.
 - Logic that can be tested without OpenCV/PyTorch goes in the pure modules
   (`*_ops.py`, `reframe_track.py`, …), never inline in `pipeline/main.py` or
@@ -45,7 +46,7 @@ described in [docs/development/testing.md](docs/development/testing.md).
   through `job_artifacts.update_job_metadata`, never from a stale copy.
 - Respect the lock order and the other invariants listed in
   [CLAUDE.md](CLAUDE.md#invariants).
-- Every libx264 encode uses `domain/encode.py`.
+- Every libx264 encode uses `media/encode.py`.
 
 ## Before opening a pull request
 

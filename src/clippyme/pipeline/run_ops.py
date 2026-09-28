@@ -7,7 +7,7 @@ Only stdlib + ``domain.encode`` here.
 import os
 import re
 
-from clippyme.domain.encode import x264_video_args
+from clippyme.media.encode import x264_video_args
 
 _VIDEO_SUFFIXES = {".mp4", ".mkv", ".mov", ".webm", ".avi"}
 

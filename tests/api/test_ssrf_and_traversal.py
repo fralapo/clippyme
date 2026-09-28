@@ -8,7 +8,7 @@ Covers (all host-runnable, no heavy deps):
 import pytest
 
 from clippyme.api.schemas import validate_public_url
-from clippyme.domain.url_utils import filename_from_video_url
+from clippyme.clips.url_utils import filename_from_video_url
 from clippyme.integrations.social_publisher import (
     ZernioError,
     _reject_internal_upload_url,

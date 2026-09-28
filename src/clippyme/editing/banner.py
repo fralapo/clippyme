@@ -174,7 +174,7 @@ def render_banner_png(platform, handle, width, out_path) -> tuple[str, int, int]
     """Render the transparent attribution pill and return path/width/height."""
     from PIL import Image, ImageDraw, ImageFont
 
-    from clippyme.domain.hooks import _resolve_hook_font_path
+    from clippyme.editing.hooks import _resolve_hook_font_path
 
     text = banner_text(platform, handle) or ""
     logo_h = max(8, int(width * 56 / 1080))
@@ -241,7 +241,7 @@ def add_banner_to_video(video_path, banner_params, out_path) -> bool:
     """Overlay an attribution banner onto a clip using a unique temp PNG."""
     import subprocess
 
-    from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
+    from clippyme.media.encode import ffmpeg_timeout, x264_video_args
     from clippyme.pipeline.media_probe import probe_dimensions
 
     if not os.path.exists(video_path):

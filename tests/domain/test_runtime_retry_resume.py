@@ -1,7 +1,7 @@
 import asyncio
 import io
 
-from clippyme.domain import job_runner
+from clippyme.jobs import job_runner
 
 
 class _Process:

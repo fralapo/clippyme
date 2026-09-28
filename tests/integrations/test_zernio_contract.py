@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import requests
 
-from clippyme.domain import live_monitor as lm
+from clippyme.monitoring import live_monitor as lm
 from clippyme.integrations import social_publisher as sp
 
 SPEC = Path(__file__).resolve().parents[2] / "docs" / "vendor" / "zernio-openapi.yaml"

@@ -65,7 +65,7 @@ intentional.
 **Post-process** (`pipeline/postprocess.py`). A subtle Ken Burns push
 (1.0 → 1.05) is folded into the reframe encode (off for `disabled` reframe),
 audio is normalised to EBU R128 −14 LUFS, and a cover frame is chosen. Every
-libx264 encode in the project uses `domain/encode.py` (CRF 18 by default) so
+libx264 encode in the project uses `media/encode.py` (CRF 18 by default) so
 repeated passes do not compound into soft output; files are written with
 `+faststart`.
 
@@ -103,8 +103,8 @@ fade renders nothing.
 
 ## Smart Cut
 
-`domain/smartcut.py` (ffmpeg and auto-editor orchestration) and
-`domain/smartcut_ops.py` (pure logic). Silences and filler words found in the
+`editing/smartcut.py` (ffmpeg and auto-editor orchestration) and
+`editing/smartcut_ops.py` (pure logic). Silences and filler words found in the
 transcript are cut through a hand-built auto-editor v3 timeline (ffmpeg concat
 if the binary is missing), followed by an audio-threshold polish pass that is
 skipped when a cheap silence probe predicts no useful saving. Manual trims

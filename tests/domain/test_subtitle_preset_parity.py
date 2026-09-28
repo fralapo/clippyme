@@ -16,7 +16,7 @@ does not carry those (the real render uses the backend preset directly).
 import os
 import re
 
-from clippyme.domain.subtitles import SUBTITLE_PRESETS as BACKEND
+from clippyme.editing.subtitles import SUBTITLE_PRESETS as BACKEND
 
 _JS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..",

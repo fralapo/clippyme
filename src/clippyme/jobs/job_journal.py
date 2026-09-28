@@ -13,8 +13,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 
-from clippyme.domain.job_control import ACTIVE_STATES, terminate_tree
-from clippyme.domain.runtime_state import (
+from clippyme.jobs.job_control import ACTIVE_STATES, terminate_tree
+from clippyme.jobs.runtime_state import (
     is_resumable,
     load_runtime_state,
     runtime_result_fields,
@@ -229,9 +229,9 @@ def _may_restore_completed(output_dir: str) -> bool:
 
 def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) -> dict:
     """Recover queued, completed-on-disk, and checkpoint-resumable jobs."""
-    from clippyme.domain.clip_endpoints import restore_job_from_disk
-    from clippyme.domain.errors import ClippyMeError
-    from clippyme.domain.job_results import load_final_result
+    from clippyme.clips.clip_endpoints import restore_job_from_disk
+    from clippyme.core.errors import ClippyMeError
+    from clippyme.jobs.job_results import load_final_result
 
     plan = plan_recovery(load_journal(journal_path))
     counts = {"requeued": 0, "resumed": 0, "failed": 0, "restored": 0}

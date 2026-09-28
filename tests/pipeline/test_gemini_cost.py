@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from clippyme.domain import history_service
+from clippyme.jobs import history_service
 from clippyme.pipeline import gemini_request
 from clippyme.pipeline.gemini_request import (
     MODEL_PRICING,

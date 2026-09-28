@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
+from clippyme.media.encode import ffmpeg_timeout, x264_video_args
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ def _resolve_hook_font_path(font_name):
     if safe_name and _FONT_NAME_RE.fullmatch(safe_name):
         dirs = [FONT_DIR]
         try:
-            from clippyme.domain.subtitles import USER_FONTS_DIR
+            from clippyme.editing.subtitles import USER_FONTS_DIR
             dirs.append(USER_FONTS_DIR)
         except Exception:
             pass
@@ -460,7 +460,7 @@ def add_hook_to_video(video_path, text, output_path, position="top", font_scale=
         animate = bool((style or {}).get("animate", False))
         extra_inputs = []
         if logo and logo.get("path") and os.path.exists(logo["path"]):
-            from clippyme.domain.logo import DEFAULT_POSITION, logo_filter_chain
+            from clippyme.editing.logo import DEFAULT_POSITION, logo_filter_chain
 
             logo_chain, lx, ly = logo_filter_chain(
                 video_width,

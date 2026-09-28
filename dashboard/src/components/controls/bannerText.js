@@ -1,4 +1,4 @@
-// Pure mirror of clippyme.domain.banner.sanitize_handle / banner_text, so the
+// Pure mirror of clippyme.editing.banner.sanitize_handle / banner_text, so the
 // live "kick.com/grenbaud"-style preview matches what the backend will burn.
 // Kept host-testable (no deps) — see bannerText.test.js.
 

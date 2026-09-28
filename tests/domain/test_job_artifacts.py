@@ -1,11 +1,11 @@
-"""Host tests for clippyme.domain.job_artifacts (pure filesystem helpers)."""
+"""Host tests for clippyme.jobs.job_artifacts (pure filesystem helpers)."""
 import json
 import os
 import threading
 
 import pytest
 
-from clippyme.domain import job_artifacts as ja
+from clippyme.jobs import job_artifacts as ja
 
 
 def _write_meta(job_dir, base, data):

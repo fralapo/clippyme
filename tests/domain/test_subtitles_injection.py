@@ -1,7 +1,7 @@
 """Regression tests for ASS-injection guards in generate_ass_karaoke."""
 import pytest
 
-from clippyme.domain.subtitles import generate_ass_karaoke
+from clippyme.editing.subtitles import generate_ass_karaoke
 
 
 def _transcript(word):

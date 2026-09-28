@@ -2,8 +2,8 @@
 import asyncio
 import json
 
-from clippyme.domain import job_journal as jj
-from clippyme.domain.runtime_state import RuntimeState
+from clippyme.jobs import job_journal as jj
+from clippyme.jobs.runtime_state import RuntimeState
 
 JOB_Q = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 JOB_P = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"

@@ -51,7 +51,7 @@ export const SUB_FONTS = [
 export const SUB_COLORS = ['#FFFFFF', '#FDE700', '#581BBA', '#FFE000', '#00FF66', '#00E5FF', '#FF4D6D', '#000000'];
 
 // Brand-logo overlay placement (compose-time layer). Values match the
-// _POSITIONS keys in domain/logo.py.
+// _POSITIONS keys in editing/logo.py.
 export const LOGO_POSITIONS = [
   ['top-left', 'Top L'], ['top-center', 'Top C'], ['top-right', 'Top R'],
   ['bottom-left', 'Bot L'], ['bottom-center', 'Bot C'], ['bottom-right', 'Bot R'],
@@ -61,7 +61,7 @@ export const LOGO_POSITIONS = [
 export const LOGO_SIZES = [['S', 'S'], ['M', 'M'], ['L', 'L']];
 
 // Colour-grade looks — ids MUST match backend GRADE_PRESETS keys
-// (clippyme/domain/grade.py). 'none' is represented by the Grade toggle being
+// (clippyme/editing/grade.py). 'none' is represented by the Grade toggle being
 // off, so it is not offered as a pickable look here.
 export const GRADE_PRESETS = [
   { id: 'warm_cinematic', label: 'Warm' },
@@ -80,7 +80,7 @@ export const SUBTITLE_PRESETS = [
 ];
 
 // Instagram-Stories-style hook text defaults. Keys match the backend
-// create_hook_image `style` dict (domain/hooks.py:HOOK_STYLE_DEFAULTS).
+// create_hook_image `style` dict (editing/hooks.py:HOOK_STYLE_DEFAULTS).
 // Default look = bannerless white Anton with a thin black outline (the
 // bannerless path also auto-adds a soft drop shadow for legibility). Users can
 // still re-enable the banner / pick any colour or font per clip.

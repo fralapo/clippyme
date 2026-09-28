@@ -21,8 +21,8 @@ import time
 import psutil
 import pytest
 
-from clippyme.domain.job_control import terminate_tree
-from clippyme.domain.runtime_state import load_runtime_state
+from clippyme.jobs.job_control import terminate_tree
+from clippyme.jobs.runtime_state import load_runtime_state
 from clippyme.pipeline.media_qa import probe_media
 
 pytestmark = pytest.mark.skipif(
@@ -35,7 +35,7 @@ OFFSET = 5.0
 FAKE_MAIN = textwrap.dedent('''
     """ffmpeg-only stand-in for clippyme.pipeline.main (no cv2 / Gemini)."""
     import os, shutil, subprocess
-    from clippyme.domain.encode import x264_video_args
+    from clippyme.media.encode import x264_video_args
     from clippyme.pipeline.postprocess import normalize_audio  # the real one
 
     MODEL_PRICING = {}

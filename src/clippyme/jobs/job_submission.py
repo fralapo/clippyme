@@ -8,8 +8,8 @@ import logging
 import os
 import shutil
 
-from clippyme.domain.errors import ClippyMeError
-from clippyme.domain.runtime_state import RuntimeState, runtime_result_fields
+from clippyme.core.errors import ClippyMeError
+from clippyme.jobs.runtime_state import RuntimeState, runtime_result_fields
 
 logger = logging.getLogger("clippyme")
 

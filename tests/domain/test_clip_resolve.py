@@ -1,4 +1,4 @@
-"""Host tests for clippyme.domain.clip_resolve — the shared job/clip resolver.
+"""Host tests for clippyme.clips.clip_resolve — the shared job/clip resolver.
 
 Pins the resolution chain every per-clip endpoint depends on: job dir →
 latest-by-mtime metadata → clip entry → filename (video_url first, positional
@@ -9,10 +9,10 @@ import os
 
 import pytest
 
-from clippyme.domain.clip_resolve import (
+from clippyme.clips.clip_resolve import (
     clip_filename_for, composed_clip_basename, resolve_clip,
 )
-from clippyme.domain.errors import NotFoundError
+from clippyme.core.errors import NotFoundError
 
 
 def test_composed_clip_basename_title_based():

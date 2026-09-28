@@ -22,11 +22,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from clippyme.domain import job_journal as jj
-from clippyme.domain import live_monitor as lm
-from clippyme.domain.job_results import load_final_result
-from clippyme.domain.live_monitor import LiveMonitor, LiveMonitorRegistry
-from clippyme.domain.runtime_state import RuntimeState
+from clippyme.jobs import job_journal as jj
+from clippyme.monitoring import live_monitor as lm
+from clippyme.jobs.job_results import load_final_result
+from clippyme.monitoring.live_monitor import LiveMonitor, LiveMonitorRegistry
+from clippyme.jobs.runtime_state import RuntimeState
 
 from .test_live_monitor_reliability import (
     ScriptedStrategy, _fake_publisher, _until, _wire_e2e,

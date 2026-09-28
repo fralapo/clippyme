@@ -305,7 +305,7 @@ def test_auto_schedule_uses_configured_timezone_not_server_local(monkeypatch, tm
 def test_presigned_upload_dns_failure_is_fail_closed(monkeypatch):
     import socket
 
-    from clippyme import netutil
+    from clippyme.core import netutil
     monkeypatch.setattr(netutil, "resolve_host_addresses", lambda *a, **k: (_ for _ in ()).throw(socket.gaierror()))
     with pytest.raises(sp.ZernioError, match="safely resolved"):
         sp._reject_internal_upload_url("https://upload.example.test/object")

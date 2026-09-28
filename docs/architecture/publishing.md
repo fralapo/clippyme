@@ -6,7 +6,7 @@ or automatically by the [live monitor](live-monitor.md).
 
 ## Manual publish
 
-`POST /api/publish/{job_id}/{clip_index}` (`domain/publish_service.py`,
+`POST /api/publish/{job_id}/{clip_index}` (`publishing/publish_service.py`,
 `integrations/social_publisher.py`):
 
 1. Optionally re-compose the clip with the current edit layers, so the upload

@@ -34,19 +34,19 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from clippyme.domain.job_results import build_main_cmd, canonical_reframe_mode
-from clippyme.domain.compose import compose_layers
-from clippyme.domain.reframe_service import run_reframe
-from clippyme.domain.errors import ClippyMeError
-from clippyme.domain.uploads import stream_upload_within_limit, FileTooLarge
-from clippyme.domain.clip_endpoints import run_smart_cut, restore_finished_job
-from clippyme.domain.clip_resolve import resolve_clip
-from clippyme.domain import job_control
-from clippyme.domain.job_actions import cancel_job_action, stop_job_action
-from clippyme.domain.job_journal import JOURNAL_FILENAME, make_journal_writer, recover_jobs
-from clippyme.domain.job_runner import make_run_job
-from clippyme.domain.job_submission import QueueFullError, submit_job
-from clippyme.domain.publish_service import publish_clip_flow
+from clippyme.jobs.job_results import build_main_cmd, canonical_reframe_mode
+from clippyme.editing.compose import compose_layers
+from clippyme.clips.reframe_service import run_reframe
+from clippyme.core.errors import ClippyMeError
+from clippyme.jobs.uploads import stream_upload_within_limit, FileTooLarge
+from clippyme.clips.clip_endpoints import run_smart_cut, restore_finished_job
+from clippyme.clips.clip_resolve import resolve_clip
+from clippyme.jobs import job_control
+from clippyme.jobs.job_actions import cancel_job_action, stop_job_action
+from clippyme.jobs.job_journal import JOURNAL_FILENAME, make_journal_writer, recover_jobs
+from clippyme.jobs.job_runner import make_run_job
+from clippyme.jobs.job_submission import QueueFullError, submit_job
+from clippyme.publishing.publish_service import publish_clip_flow
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
@@ -70,8 +70,8 @@ from clippyme.storage.config_store import (
     save_persistent_config,
     load_zernio_config,
 )
-from clippyme.domain.job_worker import make_workers
-from clippyme.domain.history_service import scan_history, is_valid_job_id
+from clippyme.jobs.job_worker import make_workers
+from clippyme.jobs.history_service import scan_history, is_valid_job_id
 from clippyme.api.config_routes import router as config_router
 
 # Constants
@@ -110,14 +110,14 @@ JOURNAL_PATH = os.path.join(DATA_DIR, JOURNAL_FILENAME)
 persist_jobs = make_journal_writer(jobs=jobs, path=JOURNAL_PATH)
 
 # The per-job subprocess runner, bound to the shared jobs dict (thin-handler
-# rule: the body lives in clippyme.domain.job_runner).
+# rule: the body lives in clippyme.jobs.job_runner).
 run_job = make_run_job(jobs=jobs, output_root=OUTPUT_DIR, on_change=persist_jobs)
 
 # Multi-platform content monitor registry: concurrent asyncio tasks (one per
 # platform:channel) that detect live streams / new VODs, submit them as normal
 # jobs, and auto-publish clips with GLOBAL publish spacing. Bound to the same
 # shared job state (thin-handler rule: logic lives in domain.live_monitor).
-from clippyme.domain.live_monitor import LiveMonitorRegistry
+from clippyme.monitoring.live_monitor import LiveMonitorRegistry
 live_monitor = LiveMonitorRegistry(
     jobs=jobs, job_queue=job_queue, output_dir=OUTPUT_DIR,
     upload_dir=UPLOAD_DIR, on_job_change=persist_jobs,
@@ -659,7 +659,7 @@ async def clip_transcript(job_id: str, clip_index: int, request: Request):
     transcript = resolved.metadata.get("transcript") or {}
     clip = resolved.clip_info
     start, end = clip.get("start", 0), clip.get("end", 0)
-    from clippyme.domain.smartcut import clip_transcript_segments
+    from clippyme.editing.smartcut import clip_transcript_segments
     segments = clip_transcript_segments(transcript, start, end)
     return {
         "segments": segments,
@@ -689,7 +689,7 @@ async def edit_clip_ai(
     duration = round(max(0.0, end - start), 3)
 
     transcript = resolved.metadata.get("transcript") or {}
-    from clippyme.domain.smartcut import clip_transcript_segments
+    from clippyme.editing.smartcut import clip_transcript_segments
     segments = clip_transcript_segments(transcript, start, end)
 
     cfg = load_persistent_config() or {}
@@ -698,7 +698,7 @@ async def edit_clip_ai(
     if not key:
         raise HTTPException(status_code=400, detail="Gemini API key not configured")
 
-    from clippyme.domain.clip_edit_ai import suggest_drops
+    from clippyme.editing.clip_edit_ai import suggest_drops
     result = await asyncio.to_thread(
         suggest_drops,
         api_key=key,

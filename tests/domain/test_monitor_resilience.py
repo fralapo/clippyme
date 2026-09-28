@@ -24,9 +24,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from clippyme.domain import live_monitor as lm
-from clippyme.domain.clip_locks import clip_lock
-from clippyme.domain.live_monitor import (
+from clippyme.monitoring import live_monitor as lm
+from clippyme.clips.clip_locks import clip_lock
+from clippyme.monitoring.live_monitor import (
     LiveMonitor, LiveMonitorRegistry, SharedGapScheduler, validate_monitor_config,
 )
 from clippyme.integrations import social_publisher as sp
@@ -611,7 +611,7 @@ def test_post_accept_io_frees_the_loop_but_not_the_clip(tmp_path, monkeypatch):
 
 
 def test_accept_still_records_the_monitor_publish(tmp_path, monkeypatch):
-    from clippyme.domain import job_artifacts
+    from clippyme.jobs import job_artifacts
 
     job_dir = _two_clip_job(tmp_path)
     _fake_publisher(monkeypatch)
@@ -722,7 +722,7 @@ def test_retry_wait_deadline_survives_a_restart(tmp_path, monkeypatch):
 def test_goal8_lifecycle_across_backpressure_conflict_and_restart(tmp_path, monkeypatch):
     import time as real_time
 
-    from clippyme.domain import job_artifacts
+    from clippyme.jobs import job_artifacts
 
     records = []
     real_record = job_artifacts.record_clip_publish

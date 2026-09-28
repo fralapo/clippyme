@@ -11,7 +11,7 @@ worker loops, the auto-editor updater and the monitor registry are stand-ins.
 import asyncio
 
 from clippyme.api import app as app_module
-from clippyme.domain import job_journal as jj
+from clippyme.jobs import job_journal as jj
 from clippyme.integrations import auto_editor_updater
 
 

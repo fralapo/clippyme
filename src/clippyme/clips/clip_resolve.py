@@ -13,9 +13,9 @@ import json
 import os
 from dataclasses import dataclass
 
-from clippyme.domain.errors import NotFoundError
-from clippyme.domain.job_artifacts import find_job_metadata_path
-from clippyme.domain.url_utils import filename_from_video_url
+from clippyme.core.errors import NotFoundError
+from clippyme.jobs.job_artifacts import find_job_metadata_path
+from clippyme.clips.url_utils import filename_from_video_url
 
 
 @dataclass(frozen=True)

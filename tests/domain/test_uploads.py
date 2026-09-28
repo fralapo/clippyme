@@ -1,10 +1,10 @@
-"""Unit tests for clippyme.domain.uploads.stream_upload_within_limit."""
+"""Unit tests for clippyme.jobs.uploads.stream_upload_within_limit."""
 import asyncio
 import os
 
 import pytest
 
-from clippyme.domain.uploads import FileTooLarge, stream_upload_within_limit
+from clippyme.jobs.uploads import FileTooLarge, stream_upload_within_limit
 
 
 class FakeUpload:

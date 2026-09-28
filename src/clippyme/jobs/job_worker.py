@@ -48,7 +48,7 @@ def active_input_paths(jobs: Dict[str, Dict]) -> set[str]:
     processing, or paused job can still read it.  Building the set in one pass
     also avoids repeatedly scanning the job registry for every upload file.
     """
-    from clippyme.domain.job_control import ACTIVE_STATES
+    from clippyme.jobs.job_control import ACTIVE_STATES
 
     protected = set()
     for job in jobs.values():
@@ -93,8 +93,8 @@ def make_workers(
                 # sweeps in that case so a stale mtime can't trigger
                 # a bulk delete behind the user's back.
                 if job_retention_seconds > 0:
-                    from clippyme.domain.history_service import is_valid_job_id
-                    from clippyme.domain.job_control import can_purge
+                    from clippyme.jobs.history_service import is_valid_job_id
+                    from clippyme.jobs.job_control import can_purge
                     # OUTPUT_DIR: purge stale job folders. Only ever delete
                     # directories whose name is a valid job id — never a
                     # symlink, the thumbnails dir, or a hand-placed folder.

@@ -1,7 +1,7 @@
 """Subtitle styling correctness: vertical offset sign, fontsize clamp, hex
 validation, and preset-honouring uppercase.
 
-Pure / file-only tests for ``clippyme.domain.subtitles`` — no ffmpeg, no model
+Pure / file-only tests for ``clippyme.editing.subtitles`` — no ffmpeg, no model
 load, host-runnable. These guard the customization flow fixes:
 
 - ``_offset_margin``: a POSITIVE offset_y moves the caption DOWN regardless of
@@ -12,7 +12,7 @@ load, host-runnable. These guard the customization flow fixes:
 """
 import pytest
 
-from clippyme.domain.subtitles import (
+from clippyme.editing.subtitles import (
     _clamp_fontsize,
     _offset_margin,
     _SUB_FONTSIZE_MAX,

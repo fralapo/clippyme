@@ -1,6 +1,6 @@
 import os
 
-from clippyme.domain.runtime_state import (
+from clippyme.jobs.runtime_state import (
     RuntimeState,
     format_runtime_log,
     is_resumable,

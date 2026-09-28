@@ -11,9 +11,9 @@ import time
 
 import pytest
 
-from clippyme.domain import job_journal as jj
-from clippyme.domain import live_monitor as lm
-from clippyme.domain.live_monitor import LiveMonitor, LiveMonitorRegistry, validate_monitor_config
+from clippyme.jobs import job_journal as jj
+from clippyme.monitoring import live_monitor as lm
+from clippyme.monitoring.live_monitor import LiveMonitor, LiveMonitorRegistry, validate_monitor_config
 from clippyme.integrations import social_publisher as sp
 from clippyme.integrations.social_publisher import ZernioError
 

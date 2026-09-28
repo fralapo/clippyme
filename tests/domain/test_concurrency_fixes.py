@@ -12,8 +12,8 @@ Covers two pure (no cv2/ffmpeg) fixes:
 import io
 import os
 
-import clippyme.domain.job_worker as job_worker
-from clippyme.domain.smartcut import _CLIP_LOCKS, _clip_lock
+import clippyme.jobs.job_worker as job_worker
+from clippyme.editing.smartcut import _CLIP_LOCKS, _clip_lock
 
 
 def test_enqueue_output_caps_log_buffer(monkeypatch):

@@ -1,12 +1,12 @@
-"""Host tests for clippyme.domain.banner."""
+"""Host tests for clippyme.editing.banner."""
 import os
 import sys
 from types import SimpleNamespace
 
 import pytest
 
-from clippyme.domain import banner
-from clippyme.domain.banner import (
+from clippyme.editing import banner
+from clippyme.editing.banner import (
     DEFAULT_BANNER_Y_PCT,
     banner_text,
     clamp_y_pct,

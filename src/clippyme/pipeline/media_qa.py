@@ -12,7 +12,7 @@ import re
 import subprocess
 from typing import Any
 
-from clippyme.domain.clip_qa import evaluate_clip_qa
+from clippyme.pipeline.quality.clip_qa import evaluate_clip_qa
 
 _BLACK_RE = re.compile(r"black_duration:([0-9.]+)")
 _MEAN_RE = re.compile(r"mean_volume:\s*(-?(?:inf|[0-9.]+))\s*dB", re.IGNORECASE)

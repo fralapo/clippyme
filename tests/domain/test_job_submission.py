@@ -1,9 +1,9 @@
-"""Host tests for clippyme.domain.job_submission — enqueue + queue-full rollback."""
+"""Host tests for clippyme.jobs.job_submission — enqueue + queue-full rollback."""
 import asyncio
 
 import pytest
 
-from clippyme.domain.job_submission import QueueFullError, submit_job
+from clippyme.jobs.job_submission import QueueFullError, submit_job
 
 JOB_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 JOB_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"

@@ -1,4 +1,4 @@
-"""Tests for clippyme.domain.live_monitor pure helpers + config validation.
+"""Tests for clippyme.monitoring.live_monitor pure helpers + config validation.
 
 No curl_cffi / ffmpeg / event loop needed — LiveMonitor.__init__ is cheap and
 the helpers under test are pure.
@@ -8,8 +8,8 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from clippyme.domain.errors import ConflictError, ValidationError
-from clippyme.domain.live_monitor import (
+from clippyme.core.errors import ConflictError, ValidationError
+from clippyme.monitoring.live_monitor import (
     LiveMonitorRegistry,
     SharedGapScheduler,
     allocate_clip_filename,
@@ -256,7 +256,7 @@ def test_validate_config_custom_timezone_passthrough():
 def test_validate_config_instructions_trimmed_and_capped():
     cfg = validate_monitor_config(_base_cfg(instructions="  find the funniest bits  "))
     assert cfg["instructions"] == "find the funniest bits"
-    from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
+    from clippyme.jobs.job_results import MAX_INSTRUCTIONS_LEN
     cfg = validate_monitor_config(_base_cfg(instructions="x" * (MAX_INSTRUCTIONS_LEN + 1000)))
     assert len(cfg["instructions"]) == MAX_INSTRUCTIONS_LEN
 
@@ -391,7 +391,7 @@ def test_delete_after_publish_rejects_non_bool():
 # --- LiveMonitor.update_config / LiveMonitorRegistry.update_config ---------
 
 def test_monitor_update_config_swaps_cfg_and_persists(tmp_path):
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     persisted = []
     mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path),
@@ -405,12 +405,12 @@ def test_monitor_update_config_swaps_cfg_and_persists(tmp_path):
     assert persisted  # _persist() called
 
     # returned dict is snapshot-shaped: only _SNAPSHOT_CONFIG_FIELDS keys
-    from clippyme.domain.live_monitor import _SNAPSHOT_CONFIG_FIELDS
+    from clippyme.monitoring.live_monitor import _SNAPSHOT_CONFIG_FIELDS
     assert set(result) == set(_SNAPSHOT_CONFIG_FIELDS)
 
 
 def test_monitor_status_includes_config_allow_list(tmp_path):
-    from clippyme.domain.live_monitor import _SNAPSHOT_CONFIG_FIELDS, LiveMonitor
+    from clippyme.monitoring.live_monitor import _SNAPSHOT_CONFIG_FIELDS, LiveMonitor
 
     mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path))
     mon.cfg = _running_cfg(slug="foo")
@@ -426,7 +426,7 @@ def test_monitor_status_includes_config_allow_list(tmp_path):
 
 
 def test_status_exposes_gemini_exhausted_at(tmp_path):
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path))
 
@@ -438,7 +438,7 @@ def test_registry_update_config_not_found(tmp_path):
     reg = LiveMonitorRegistry(
         jobs={}, job_queue=None, output_dir=str(tmp_path),
         state_path=str(tmp_path / "state.json"))
-    with pytest.raises(__import__("clippyme.domain.errors", fromlist=["NotFoundError"]).NotFoundError):
+    with pytest.raises(__import__("clippyme.core.errors", fromlist=["NotFoundError"]).NotFoundError):
         reg.update_config("kick:nope", {"min_gap_seconds": 60})
 
 
@@ -467,7 +467,7 @@ def test_registry_update_config_delegates_and_persists(tmp_path):
 
 
 def test_snapshot_includes_config_for_restart_survival(tmp_path):
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
     mon = LiveMonitor(id="kick:foo", jobs={}, job_queue=None, output_dir=str(tmp_path))
     mon.cfg = _running_cfg(slug="foo", banner={"enabled": False}, compose={"toggles": {}})
     snap = mon.snapshot()
@@ -533,7 +533,7 @@ def test_registry_stop_retires_monitor_but_keeps_snapshot(tmp_path):
 
 
 def test_loop_monitor_snapshot_marks_resume_on_start(tmp_path, monkeypatch):
-    from clippyme.domain import live_monitor as lm
+    from clippyme.monitoring import live_monitor as lm
     from clippyme.storage import config_store
 
     monkeypatch.setattr(config_store, "load_persistent_config", lambda: {"GEMINI_API_KEY": "g"})
@@ -621,7 +621,7 @@ def test_registry_shutdown_preserves_resume_on_start(tmp_path):
 
 
 def test_registry_auto_resume_starts_marked_snapshots_and_preserves_guards(tmp_path, monkeypatch):
-    from clippyme.domain import live_monitor as lm
+    from clippyme.monitoring import live_monitor as lm
     from clippyme.storage import config_store
 
     state = tmp_path / "state.json"
@@ -793,7 +793,7 @@ def test_find_live_vod_no_match_or_malformed():
 # --- effective_backfill_start (restart mid-stream coverage guard) ----------
 
 def test_effective_backfill_start_same_stream_uses_coverage():
-    from clippyme.domain.live_monitor import effective_backfill_start
+    from clippyme.monitoring.live_monitor import effective_backfill_start
     # Same stream session → prior coverage floors the backfill start.
     assert effective_backfill_start(1800, 40000, "2026-07-20T10:00:00+00:00",
                                     "2026-07-20T10:00:00+00:00") == 40000
@@ -802,7 +802,7 @@ def test_effective_backfill_start_same_stream_uses_coverage():
 
 
 def test_effective_backfill_start_new_stream_ignores_coverage():
-    from clippyme.domain.live_monitor import effective_backfill_start
+    from clippyme.monitoring.live_monitor import effective_backfill_start
     assert effective_backfill_start(1800, 40000, "2026-07-20T10:00:00+00:00",
                                     "2026-07-21T09:00:00+00:00") == 1800
     assert effective_backfill_start(1800, 40000, None, "x") == 1800
@@ -810,7 +810,7 @@ def test_effective_backfill_start_new_stream_ignores_coverage():
 
 
 def test_snapshot_restore_roundtrips_coverage(tmp_path):
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None,
                       output_dir=str(tmp_path))
     mon._covered_elapsed = 12345
@@ -830,7 +830,7 @@ def test_schedule_backfill_live_only_skips_windows_and_tasks(tmp_path):
     Twitch in-progress-VOD backfill task — only bookkeep 'now' as covered."""
     import asyncio
 
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
     mon.cfg = _running_cfg(catchup="live_only")
@@ -857,7 +857,7 @@ def test_schedule_backfill_backfill_mode_still_queues_kick_windows(tmp_path):
     """Unchanged default behaviour: catchup='backfill' still queues windows."""
     import asyncio
 
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
     mon.cfg = _running_cfg()  # default catchup="backfill"
@@ -878,7 +878,7 @@ def test_recover_kick_backfill_noop_in_live_only(tmp_path):
     _recover_kick_backfill must not submit a job when catchup='live_only'."""
     import asyncio
 
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
     mon.cfg = _running_cfg(catchup="live_only")
@@ -895,7 +895,7 @@ def test_recover_kick_backfill_noop_in_live_only(tmp_path):
 def test_backfill_from_vod_noop_in_live_only(tmp_path):
     import asyncio
 
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
     mon.cfg = _running_cfg(catchup="live_only")
@@ -914,8 +914,8 @@ def test_publish_one_retries_on_429_then_succeeds(tmp_path, monkeypatch):
     """A Zernio 429 must be retried after backoff, not drop the clip."""
     import asyncio
 
-    from clippyme.domain import live_monitor as lm
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring import live_monitor as lm
+    from clippyme.monitoring.live_monitor import LiveMonitor
     from clippyme.integrations import social_publisher as sp
     from clippyme.integrations.social_publisher import ZernioError
 
@@ -954,7 +954,7 @@ def test_publish_one_rolls_start_date_on_daily_limit(tmp_path, monkeypatch):
     import asyncio
     from datetime import date, timedelta
 
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
     from clippyme.integrations import social_publisher as sp
     from clippyme.integrations.social_publisher import ZernioError
 
@@ -993,7 +993,7 @@ def test_publish_one_rolls_start_date_on_daily_limit(tmp_path, monkeypatch):
 def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
     import asyncio
 
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
     from clippyme.integrations import social_publisher as sp
     from clippyme.integrations.social_publisher import ZernioError
 
@@ -1029,7 +1029,7 @@ def test_publish_one_non_429_fails_without_retry(tmp_path, monkeypatch):
 
 def _publishing_monitor(tmp_path, monkeypatch, *, jobs=None):
     """A LiveMonitor wired with a fake publish_clip (records calls, succeeds)."""
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
     from clippyme.integrations import social_publisher as sp
 
     calls = []
@@ -1054,7 +1054,7 @@ def test_paused_publish_queues_instead_of_publishing(tmp_path, monkeypatch):
     and the flag + pending round-trip through snapshot/restore."""
     import asyncio
 
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     job_dir = tmp_path / "job1"
     job_dir.mkdir()
@@ -1086,7 +1086,7 @@ def test_resume_drains_pending_in_order_with_spacing(tmp_path, monkeypatch):
     consecutive publishes."""
     import asyncio
 
-    from clippyme.domain import live_monitor as lm
+    from clippyme.monitoring import live_monitor as lm
 
     job_dir = tmp_path / "job1"
     job_dir.mkdir()
@@ -1125,7 +1125,7 @@ def test_drain_recomposes_missing_composed_path_and_survives_failure(tmp_path, m
     never aborts draining the other pending clips."""
     import asyncio
 
-    from clippyme.domain import live_monitor as lm
+    from clippyme.monitoring import live_monitor as lm
 
     job_dir = tmp_path / "job1"
     job_dir.mkdir()
@@ -1277,7 +1277,7 @@ def test_deletion_failure_does_not_raise_and_clip_stays_published(tmp_path, monk
     """os.remove blowing up must not surface — the publish already succeeded."""
     import asyncio
 
-    from clippyme.domain import live_monitor as lm
+    from clippyme.monitoring import live_monitor as lm
 
     job_dir = tmp_path / "job1"
     job_dir.mkdir()
@@ -1301,8 +1301,8 @@ def test_deletion_failure_does_not_raise_and_clip_stays_published(tmp_path, monk
 
 
 def test_registry_set_publishing_unknown_id_raises_not_found(tmp_path):
-    from clippyme.domain.errors import NotFoundError
-    from clippyme.domain.live_monitor import LiveMonitorRegistry
+    from clippyme.core.errors import NotFoundError
+    from clippyme.monitoring.live_monitor import LiveMonitorRegistry
 
     reg = LiveMonitorRegistry(jobs={}, job_queue=None, output_dir=str(tmp_path),
                               state_path=str(tmp_path / "state.json"))
@@ -1316,7 +1316,7 @@ def test_restored_monitor_with_pending_and_enabled_drains_on_start(tmp_path, mon
     pause/resume — start() must kick the existing drain helper itself."""
     import asyncio
 
-    from clippyme.domain import live_monitor as lm
+    from clippyme.monitoring import live_monitor as lm
     from clippyme.storage import config_store
 
     job_dir = tmp_path / "job1"
@@ -1369,7 +1369,7 @@ def test_validate_config_malformed_max_clips_uses_default():
 
 
 def test_zero_max_clips_survives_as_uncapped(tmp_path):
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     cfg = validate_monitor_config(_base_cfg(max_clips=0))
     assert cfg["max_clips"] == 0        # 0 = no cap, never clamped back up to 1
@@ -1392,7 +1392,7 @@ def test_validate_config_clip_selection_defaults_and_bounds():
 
 
 def test_clip_selection_env_only_set_in_auto_mode(tmp_path):
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     mon = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
     mon._gemini_key = "k"
@@ -1410,7 +1410,7 @@ def test_clip_selection_env_only_set_in_auto_mode(tmp_path):
 
 def test_monitor_snapshot_restores_pending_backfill(tmp_path):
     import json
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
     original = LiveMonitor(id="kick:chan", jobs={}, job_queue=None, output_dir=str(tmp_path))
     original._missed_windows = [(1800, 3600), (3600, 5400)]
     original._vod_baseline_ids = {"old-vod"}
@@ -1441,7 +1441,7 @@ def test_non_youtube_monitor_id_remains_human_readable():
 def test_vod_start_offset_skips_prelive_only_where_a_prelive_exists():
     from types import SimpleNamespace
 
-    from clippyme.domain.live_monitor import LiveMonitor
+    from clippyme.monitoring.live_monitor import LiveMonitor
 
     cfg = {"prelive_skip_seconds": 1800}
     # A Kick/Twitch VOD is the recording of a live: same waiting screen at the head.

@@ -4,9 +4,9 @@ import logging
 import os
 import shutil
 
-from clippyme.domain import job_control
-from clippyme.domain.errors import ConflictError, ValidationError
-from clippyme.domain.job_results import load_partial_result
+from clippyme.jobs import job_control
+from clippyme.core.errors import ConflictError, ValidationError
+from clippyme.jobs.job_results import load_partial_result
 
 logger = logging.getLogger("clippyme")
 

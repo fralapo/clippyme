@@ -87,7 +87,7 @@ def _reject_internal_upload_url(url: str) -> None:
     import socket
     from urllib.parse import urlparse
 
-    from clippyme.netutil import resolve_host_addresses
+    from clippyme.core.netutil import resolve_host_addresses
 
     parsed = urlparse((url or "").strip())
     if parsed.scheme.lower() != "https":

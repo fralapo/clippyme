@@ -9,7 +9,7 @@ test_smartcut_manual_trim.py (which imports the same names via smartcut).
 import json
 import os
 
-from clippyme.domain import smartcut_ops as ops
+from clippyme.editing import smartcut_ops as ops
 
 
 _PROBE = {"fps_num": 30, "fps_den": 1, "width": 1080, "height": 1920, "samplerate": 48000}

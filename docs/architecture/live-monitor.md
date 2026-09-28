@@ -2,7 +2,7 @@
 
 The live monitor watches creator channels and turns their content into
 published shorts without manual steps. It runs inside the backend process
-(`domain/live_monitor.py`: `LiveMonitorRegistry` plus one strategy per
+(`monitoring/live_monitor.py`: `LiveMonitorRegistry` plus one strategy per
 platform) and submits ordinary jobs through the same queue as the dashboard.
 
 ## What it watches

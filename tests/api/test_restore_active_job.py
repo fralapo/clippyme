@@ -19,8 +19,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clippyme.api import app as app_module
-from clippyme.domain import job_journal as jj
-from clippyme.domain.job_runner import make_run_job
+from clippyme.jobs import job_journal as jj
+from clippyme.jobs.job_runner import make_run_job
 
 JOB_ID = "77777777-7777-4777-8777-777777777777"
 ORIGIN = {"Origin": "http://localhost:5175"}

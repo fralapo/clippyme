@@ -4,7 +4,7 @@ import tempfile
 
 import pytest
 
-from clippyme.domain.hooks import _hex_to_rgba, HOOK_STYLE_DEFAULTS
+from clippyme.editing.hooks import _hex_to_rgba, HOOK_STYLE_DEFAULTS
 
 
 def test_hex_to_rgba_valid():
@@ -29,7 +29,7 @@ def test_hook_style_defaults_match_frontend():
 
 def test_create_hook_image_styled_renders_png():
     PIL = pytest.importorskip("PIL")  # noqa: F841
-    from clippyme.domain.hooks import create_hook_image
+    from clippyme.editing.hooks import create_hook_image
     out = os.path.join(tempfile.gettempdir(), "hook_style_test.png")
     p, w, h = create_hook_image(
         "THIS changed everything", 972, out, font_scale=1.0,
@@ -43,7 +43,7 @@ def test_create_hook_image_styled_renders_png():
 
 def test_create_hook_image_bannerless_renders():
     pytest.importorskip("PIL")
-    from clippyme.domain.hooks import create_hook_image
+    from clippyme.editing.hooks import create_hook_image
     out = os.path.join(tempfile.gettempdir(), "hook_nobanner_test.png")
     p, w, h = create_hook_image(
         "NO BANNER", 972, out,

@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from clippyme.domain import smartcut as sc
+from clippyme.editing import smartcut as sc
 
 
 # --- LRU helper ------------------------------------------------------------

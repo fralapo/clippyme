@@ -24,7 +24,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
+from clippyme.media.encode import ffmpeg_timeout, x264_video_args
 from clippyme.pipeline.ffmpeg_exec import FfmpegError, FrameEncoder
 from clippyme.pipeline.media_probe import (
     audio_sync_seek_args,

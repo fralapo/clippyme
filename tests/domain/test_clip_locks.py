@@ -6,8 +6,8 @@ can't grow unbounded across a long session.
 """
 import asyncio
 
-from clippyme.domain import clip_locks
-from clippyme.domain.clip_locks import clip_lock
+from clippyme.clips import clip_locks
+from clippyme.clips.clip_locks import clip_lock
 
 
 def test_same_clip_is_serialised():

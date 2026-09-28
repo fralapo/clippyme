@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from clippyme import netutil
+from clippyme.core import netutil
 from clippyme.pipeline import download as dl
 
 

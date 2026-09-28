@@ -10,8 +10,8 @@ import os
 
 import pytest
 
-from clippyme.domain.clip_endpoints import restore_job_from_disk
-from clippyme.domain.errors import NotFoundError
+from clippyme.clips.clip_endpoints import restore_job_from_disk
+from clippyme.core.errors import NotFoundError
 
 
 def _write_job(tmp_path, job_id, shorts, present_indices):

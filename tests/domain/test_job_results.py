@@ -1,9 +1,9 @@
-"""Tests for clippyme.domain.job_results command/result helpers."""
+"""Tests for clippyme.jobs.job_results command/result helpers."""
 import json
 
 import pytest
 
-from clippyme.domain.job_results import (
+from clippyme.jobs.job_results import (
     MAX_INSTRUCTIONS_LEN,
     _build_clips,
     build_main_cmd,
@@ -102,7 +102,7 @@ def test_reframe_mode_subject_is_forwarded():
 
 
 def test_reframe_mode_object_legacy_alias_is_accepted():
-    from clippyme.domain.job_results import canonical_reframe_mode
+    from clippyme.jobs.job_results import canonical_reframe_mode
 
     cmd = build_main_cmd(url="https://x.com/v", output_dir="o", reframe_mode="object")
     assert cmd[cmd.index("--reframe-mode") + 1] == "object"
@@ -235,7 +235,7 @@ def test_load_final_result_surfaces_gemini_exhausted(tmp_path):
 
 
 def test_load_final_result_includes_runtime_operations(tmp_path):
-    from clippyme.domain.runtime_state import RuntimeState
+    from clippyme.jobs.runtime_state import RuntimeState
 
     RuntimeState(str(tmp_path), job_id="job1").start("quality", progress=92)
     (tmp_path / "vid_metadata.json").write_text(json.dumps({"shorts": []}))

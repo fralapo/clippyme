@@ -32,7 +32,7 @@ from clippyme.storage.config_store import (
 )
 
 # Custom fonts (e.g. a licensed Stratos TTF the client needs).
-from clippyme.domain.subtitles import (
+from clippyme.editing.subtitles import (
     list_available_fonts as _list_fonts,
     USER_FONTS_DIR as _USER_FONTS_DIR,
     _FONT_NAME_RE as _FONT_NAME_RE,

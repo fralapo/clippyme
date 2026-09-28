@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import ValidationError
 
-from clippyme.schemas import ViralClipsResponse
+from clippyme.core.schemas import ViralClipsResponse
 
 logger = logging.getLogger(__name__)
 
@@ -244,7 +244,7 @@ def validate_and_dedupe(
         ViralClipsResponse.model_validate(data)
         return []
 
-    from clippyme.schemas import ViralClip  # neutral module, no api dependency
+    from clippyme.core.schemas import ViralClip  # neutral module, no api dependency
 
     candidates: List = []
     dropped_invalid = 0

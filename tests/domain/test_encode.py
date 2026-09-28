@@ -1,7 +1,7 @@
 """Host tests for the shared libx264 encode-settings helper."""
 import pytest
 
-from clippyme.domain.encode import x264_crf, x264_preset, x264_video_args
+from clippyme.media.encode import x264_crf, x264_preset, x264_video_args
 
 
 def test_defaults_are_near_visually_lossless(monkeypatch):
@@ -64,7 +64,7 @@ def test_video_args_is_a_fresh_list_each_call():
 
 
 def test_ffmpeg_timeout_default_and_env(monkeypatch):
-    from clippyme.domain.encode import ffmpeg_timeout
+    from clippyme.media.encode import ffmpeg_timeout
 
     monkeypatch.delenv("CLIPPYME_FFMPEG_TIMEOUT", raising=False)
     assert ffmpeg_timeout() == 600

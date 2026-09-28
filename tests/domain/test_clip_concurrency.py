@@ -17,16 +17,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from clippyme.domain import compose as compose_mod
-from clippyme.domain import hooks as hooks_mod
-from clippyme.domain import reframe_service
-from clippyme.domain import smartcut
-from clippyme.domain.clip_endpoints import run_smart_cut
-from clippyme.domain.clip_resolve import composed_clip_basename, resolve_clip
-from clippyme.domain.errors import ClippyMeError
-from clippyme.domain.job_artifacts import load_job_metadata, record_clip_publish
-from clippyme.domain.live_monitor import LiveMonitor
-from clippyme.domain.publish_service import publish_clip_flow
+from clippyme.editing import compose as compose_mod
+from clippyme.editing import hooks as hooks_mod
+from clippyme.clips import reframe_service
+from clippyme.editing import smartcut
+from clippyme.clips.clip_endpoints import run_smart_cut
+from clippyme.clips.clip_resolve import composed_clip_basename, resolve_clip
+from clippyme.core.errors import ClippyMeError
+from clippyme.jobs.job_artifacts import load_job_metadata, record_clip_publish
+from clippyme.monitoring.live_monitor import LiveMonitor
+from clippyme.publishing.publish_service import publish_clip_flow
 from clippyme.integrations import social_publisher
 
 JOB_ID = "44444444-4444-4444-8444-444444444444"

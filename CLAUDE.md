@@ -27,8 +27,15 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
 
 - `src/clippyme/api/` — FastAPI routes (`app.py`: jobs, clips, monitor;
   `config_routes.py`: settings), `schemas.py`, `security.py`.
-- `src/clippyme/domain/` — endpoint logic, job lifecycle, compose, smart cut,
-  publishing, live monitor. Never imports FastAPI.
+- Service packages (endpoint logic; never import FastAPI):
+  `src/clippyme/jobs/` job lifecycle (submission, queue, runner, control,
+  journal, runtime state, results, history, uploads); `clips/` per-clip
+  operations (resolution, locks, smart cut and restore endpoints, reframe
+  requests); `editing/` compose layers (grade, subtitles, smart cut, hook,
+  logo, banner, AI trim); `monitoring/` live monitor; `publishing/` manual
+  publish.
+- `src/clippyme/core/` — errors, SSRF-safe DNS (`netutil`), Gemini clip
+  schema. `media/` — encode settings shared by every libx264 pass.
 - `src/clippyme/pipeline/` — the per-job subprocess. Entrypoint is
   `orchestrator.py` (preflight, checkpoints, retries, output QA) wrapping
   `main.py` (transcription, Gemini, cut, reframe).
@@ -60,9 +67,9 @@ CV-dependent pipeline code, the Dockerfile or dependency files.
 
 ## Code rules
 
-- **Thin handlers**: validate → call a `clippyme.domain` helper → return JSON.
-  More than ~25 lines of logic in a handler gets extracted. Domain code raises
-  `errors.ValidationError` (400), `NotFoundError` (404), `ConflictError`
+- **Thin handlers**: validate → call a service helper → return JSON.
+  More than ~25 lines of logic in a handler gets extracted. Service code raises
+  `core.errors.ValidationError` (400), `NotFoundError` (404), `ConflictError`
   (409), mapped by one app-level handler.
 - **Per-clip endpoints resolve through `clip_resolve.resolve_clip()`**; do not
   re-implement the metadata/filename fallback chain. Clip files resolve via
@@ -79,7 +86,7 @@ CV-dependent pipeline code, the Dockerfile or dependency files.
   `os.replace`, mode `0o600` (`job_artifacts.save_job_metadata` pattern); add
   fsync where the state must survive power loss (`runtime_state`,
   `job_journal`).
-- **One encode setting**: every libx264 pass uses `domain/encode.x264_video_args()`;
+- **One encode setting**: every libx264 pass uses `media/encode.x264_video_args()`;
   no raw `-crf` literals.
 - **Shared frontend controls**: subtitle/logo/grade controls are shared between
   Create and the edit modal via `subtitleControls.jsx` / `layerControls.jsx`
@@ -88,7 +95,7 @@ CV-dependent pipeline code, the Dockerfile or dependency files.
   conditionally rendered and lose state on unmount. UI primitives are
   hand-rolled in `primitives.jsx` (no shadcn CLI).
 - **Defaults duplicated across stacks** (hook style in `dashboard/src/lib/data.js` and
-  `domain/hooks.py`, grade/logo presets) are pinned by
+  `editing/hooks.py`, grade/logo presets) are pinned by
   `tests/domain/test_frontend_backend_parity.py`; change both sides and the test.
 - **Lint config**: extend rules in `dashboard/eslint.a11y.config.js`, which
   composes the base `eslint.config.js`.

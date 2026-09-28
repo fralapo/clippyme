@@ -1,8 +1,8 @@
 import asyncio
 import json
 
-from clippyme.domain import job_journal
-from clippyme.domain.runtime_state import RuntimeState
+from clippyme.jobs import job_journal
+from clippyme.jobs.runtime_state import RuntimeState
 
 
 JOB_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"

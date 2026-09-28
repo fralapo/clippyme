@@ -18,7 +18,8 @@ PROBE = r"""
 import json
 import clippyme.api.app as app
 from clippyme.api import security
-from clippyme.domain import compose, job_worker, smartcut, subtitles
+from clippyme.editing import compose, smartcut, subtitles
+from clippyme.jobs import job_worker
 print(json.dumps({
     "allowed_origins": security.ALLOWED_ORIGINS,
     "rate_limit_max_buckets": security._RATE_STATE_MAX,

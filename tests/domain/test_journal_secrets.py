@@ -9,8 +9,8 @@ import asyncio
 import json
 import secrets
 
-from clippyme.domain import job_journal as jj
-from clippyme.domain.live_monitor import LiveMonitor, validate_monitor_config
+from clippyme.jobs import job_journal as jj
+from clippyme.monitoring.live_monitor import LiveMonitor, validate_monitor_config
 
 SECRET_KEYS = ("GEMINI_API_KEY", "ZERNIO_API_KEY", "DEEPGRAM_API_KEY",
                "ELEVENLABS_API_KEY", "HF_TOKEN", "TWITCH_CLIENT_SECRET")

@@ -2,7 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { sanitizeHandle, bannerText } from './bannerText.js';
 
-// Mirrors clippyme.domain.banner (sanitize_handle / banner_text) — the
+// Mirrors clippyme.editing.banner (sanitize_handle / banner_text) — the
 // display-text preview shown in the UI must match what the backend burns.
 
 test('bannerText forces the "@" prefix for youtube only', () => {

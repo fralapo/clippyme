@@ -7,9 +7,9 @@ import logging
 import os
 import re
 
-from clippyme.domain.clip_resolve import clip_filename_for
+from clippyme.clips.clip_resolve import clip_filename_for
 from clippyme.pipeline.reframe_ops import normalize_letterbox_zoom
-from clippyme.domain.runtime_state import runtime_result_fields
+from clippyme.jobs.runtime_state import runtime_result_fields
 
 logger = logging.getLogger("clippyme")
 

@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from clippyme.api import app as app_module
-from clippyme.domain.job_artifacts import load_job_metadata, record_clip_publish
+from clippyme.jobs.job_artifacts import load_job_metadata, record_clip_publish
 from clippyme.integrations import social_publisher
 from clippyme.pipeline.orchestrator import _save_metadata
 

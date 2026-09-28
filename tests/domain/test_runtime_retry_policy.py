@@ -3,8 +3,8 @@ import io
 
 import pytest
 
-from clippyme.domain import job_runner
-from clippyme.domain.job_submission import configured_max_attempts
+from clippyme.jobs import job_runner
+from clippyme.jobs.job_submission import configured_max_attempts
 
 
 def test_configured_max_attempts_is_bounded_and_tolerant():

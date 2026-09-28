@@ -1,5 +1,5 @@
 // Pure helpers for the Live Monitor start form (host-tested, no DOM/network).
-// Mirrors the backend's per-platform channel validation (domain/live_monitor.py
+// Mirrors the backend's per-platform channel validation (monitoring/live_monitor.py
 // _validate_channel) so the form can reject a bad channel before the request
 // round-trip.
 const SLUG_RE = /^[a-z0-9_-]+$/; // kick / twitch login

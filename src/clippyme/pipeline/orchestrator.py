@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from clippyme.domain.runtime_state import RuntimeState
+from clippyme.jobs.runtime_state import RuntimeState
 from clippyme.pipeline.ffmpeg_exec import FfmpegError, remove_quietly, run_ffmpeg_atomic
 from clippyme.pipeline.gemini_request import DEFAULT_RETRY_MODEL, build_model_chain
 from clippyme.pipeline.media_qa import inspect_clip, probe_media

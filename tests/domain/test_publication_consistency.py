@@ -29,13 +29,13 @@ import requests
 from fastapi.testclient import TestClient
 
 from clippyme.api import app as app_module
-from clippyme.domain import clip_locks
-from clippyme.domain import compose as compose_mod
-from clippyme.domain import live_monitor as lm
-from clippyme.domain.clip_locks import clip_lock
-from clippyme.domain.clip_resolve import composed_clip_basename
-from clippyme.domain.job_artifacts import load_job_metadata
-from clippyme.domain.live_monitor import LiveMonitor, validate_monitor_config
+from clippyme.clips import clip_locks
+from clippyme.editing import compose as compose_mod
+from clippyme.monitoring import live_monitor as lm
+from clippyme.clips.clip_locks import clip_lock
+from clippyme.clips.clip_resolve import composed_clip_basename
+from clippyme.jobs.job_artifacts import load_job_metadata
+from clippyme.monitoring.live_monitor import LiveMonitor, validate_monitor_config
 from clippyme.integrations import social_publisher as sp
 from clippyme.integrations.social_publisher import ZernioError
 

@@ -6,11 +6,11 @@ import os
 import subprocess
 import threading
 
-from clippyme.domain import job_control
-from clippyme.domain.job_artifacts import relocate_root_job_artifacts
-from clippyme.domain.job_results import load_final_result, load_partial_result
-from clippyme.domain.job_worker import enqueue_output
-from clippyme.domain.runtime_state import (
+from clippyme.jobs import job_control
+from clippyme.jobs.job_artifacts import relocate_root_job_artifacts
+from clippyme.jobs.job_results import load_final_result, load_partial_result
+from clippyme.jobs.job_worker import enqueue_output
+from clippyme.jobs.runtime_state import (
     collect_runtime_metrics,
     estimate_eta,
     format_runtime_log,

@@ -3,8 +3,8 @@ import os
 import re
 import subprocess
 
-from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
-from clippyme.domain.errors import ComposeError
+from clippyme.media.encode import ffmpeg_timeout, x264_video_args
+from clippyme.core.errors import ComposeError
 
 logger = logging.getLogger(__name__)
 
@@ -300,7 +300,7 @@ SUBTITLE_PRESETS = {
 
 # Bundled TTF fonts live at repo-root `fonts/` and are also mounted by
 # the FastAPI static handler at /fonts. We resolve the repo root by
-# walking 3 levels up from this file (src/clippyme/domain/subtitles.py
+# walking 3 levels up from this file (src/clippyme/editing/subtitles.py
 # → src/clippyme/domain → src/clippyme → src → repo-root). CWD-based
 # resolution was fragile: any caller running from a different directory
 # (tests, reframe subprocess, ad-hoc scripts) got a bogus path and
@@ -845,7 +845,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         '-vf', vf_filter,
         '-c:a', 'copy',
         # Shared near-visually-lossless encode (CRF 18 / medium) + faststart so a
-        # subtitle-only composed clip streams progressively. See domain/encode.py.
+        # subtitle-only composed clip streams progressively. See media/encode.py.
         *x264_video_args(),
         output_path
     ]

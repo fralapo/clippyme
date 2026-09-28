@@ -1,4 +1,4 @@
-"""Tests for clippyme.domain.job_worker helpers.
+"""Tests for clippyme.jobs.job_worker helpers.
 
 The log-reader thread feeds the job's user-visible log list. It must survive
 non-UTF-8 bytes on the subprocess stream: before the fix, one bad byte raised
@@ -8,7 +8,7 @@ froze for the rest of the run while the subprocess kept working.
 import io
 import os
 
-from clippyme.domain.job_worker import MAX_LOG_LINES, active_input_paths, enqueue_output
+from clippyme.jobs.job_worker import MAX_LOG_LINES, active_input_paths, enqueue_output
 
 
 def _run(stream_bytes, job_id="j", jobs=None):
@@ -72,7 +72,7 @@ def test_dispatcher_shutdown_cancels_and_awaits_active_jobs(tmp_path):
     import asyncio
 
     async def scenario():
-        from clippyme.domain.job_worker import make_workers
+        from clippyme.jobs.job_worker import make_workers
 
         jobs = {"j": {"status": "queued"}}
         queue = asyncio.Queue()

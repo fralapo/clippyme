@@ -41,9 +41,9 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
-from clippyme.domain.clip_locks import clip_lock
-from clippyme.domain.errors import ConflictError, NotFoundError, ValidationError
-from clippyme.domain.job_results import MAX_INSTRUCTIONS_LEN
+from clippyme.clips.clip_locks import clip_lock
+from clippyme.core.errors import ConflictError, NotFoundError, ValidationError
+from clippyme.jobs.job_results import MAX_INSTRUCTIONS_LEN
 from clippyme.integrations.social_publisher import SmartScheduler
 from clippyme.pipeline.run_ops import sanitize_windows_basename
 
@@ -259,7 +259,7 @@ def build_monitor_compose(platform: str, channel: str, clip: dict, override=None
     defaults: ``{toggles?, hook_params?, subtitle_params?, banner?}``. Pure /
     host-testable — no I/O. Returns kwargs for ``compose_layers``.
     """
-    from clippyme.domain.banner import monitor_banner_params
+    from clippyme.editing.banner import monitor_banner_params
 
     ov = override or {}
     banner = monitor_banner_params(platform, channel, ov.get("banner"))
@@ -491,7 +491,7 @@ def _hhmmss(seconds: int) -> str:
 
 def _journal_env(env: dict) -> dict:
     """The monitor's non-secret pipeline knobs a resumed job must keep."""
-    from clippyme.domain.job_journal import JOURNAL_ENV_KEYS
+    from clippyme.jobs.job_journal import JOURNAL_ENV_KEYS
     return {key: env[key] for key in JOURNAL_ENV_KEYS if key in env}
 
 
@@ -1429,7 +1429,7 @@ class LiveMonitor:
         backoff shown in ``last_error``. Returns the job id, or None if the
         monitor stopped first. Any other error still propagates.
         """
-        from clippyme.domain.job_submission import QueueFullError
+        from clippyme.jobs.job_submission import QueueFullError
 
         waits = 0
         while True:
@@ -1478,8 +1478,8 @@ class LiveMonitor:
         return job_id, job_dir, env
 
     async def _submit_segment_job(self, seg_path: str) -> str:
-        from clippyme.domain.job_results import build_main_cmd
-        from clippyme.domain.job_submission import submit_job
+        from clippyme.jobs.job_results import build_main_cmd
+        from clippyme.jobs.job_submission import submit_job
 
         job_id, job_dir, env = self._new_job_dir()
         # Letterbox (reframe disabled): the monitor recipe places a hook in the
@@ -1512,8 +1512,8 @@ class LiveMonitor:
         return float(self.cfg.get("prelive_skip_seconds") or 0)
 
     async def _submit_url_job(self, url: str) -> str:
-        from clippyme.domain.job_results import build_main_cmd
-        from clippyme.domain.job_submission import submit_job
+        from clippyme.jobs.job_results import build_main_cmd
+        from clippyme.jobs.job_submission import submit_job
 
         job_id, job_dir, env = self._new_job_dir()
         cookies_path = os.path.join("data", "cookies.txt")
@@ -1601,8 +1601,8 @@ class LiveMonitor:
         Anything else (failed, stopped, cancelled, dir gone) is None and gets
         released as before.
         """
-        from clippyme.domain.job_results import load_final_result
-        from clippyme.domain.runtime_state import load_runtime_state
+        from clippyme.jobs.job_results import load_final_result
+        from clippyme.jobs.runtime_state import load_runtime_state
 
         job_dir = os.path.join(self._output_dir, job_id)
         state = load_runtime_state(job_dir)
@@ -1658,8 +1658,8 @@ class LiveMonitor:
         failure (the consolidation caller handles per-clip). Otherwise falls
         back to ``base_path`` (raw clip) on any resolution/compose failure so a
         (recompose-on-drain) publish is never lost to a compose hiccup."""
-        from clippyme.domain.clip_resolve import resolve_clip
-        from clippyme.domain.compose import compose_layers
+        from clippyme.clips.clip_resolve import resolve_clip
+        from clippyme.editing.compose import compose_layers
 
         idx = clip.get("original_index")
         if idx is None:
@@ -1931,7 +1931,7 @@ class LiveMonitor:
         # published and a later manual publish of it is a visible choice.
         idx = entry["clip"].get("original_index")
         if idx is not None:
-            from clippyme.domain.job_artifacts import record_clip_publish
+            from clippyme.jobs.job_artifacts import record_clip_publish
             try:
                 record_clip_publish(entry["job_id"], idx, self._output_dir, {
                     "platforms": self.cfg.get("platforms"),
@@ -2031,7 +2031,7 @@ class LiveMonitor:
                 os.path.join(job_dir, f"{stem}_cover.jpg"),
             ]
             if idx is not None:
-                from clippyme.domain.clip_resolve import composed_clip_basename
+                from clippyme.clips.clip_resolve import composed_clip_basename
                 targets.append(os.path.join(job_dir, composed_clip_basename(clip, idx)))
             for path in targets:
                 _safe_remove(path)
@@ -2048,7 +2048,7 @@ class LiveMonitor:
         and break their per-clip endpoints. Marking keeps positions stable."""
         if idx is None:
             return
-        from clippyme.domain.job_artifacts import update_job_metadata
+        from clippyme.jobs.job_artifacts import update_job_metadata
 
         def mutate(data):
             shorts = data.get("shorts", [])
@@ -2304,7 +2304,7 @@ class LiveMonitorRegistry:
     # -- persistence (atomic) --------------------------------------------
 
     def persist(self) -> None:
-        from clippyme.domain.job_journal import save_journal
+        from clippyme.jobs.job_journal import save_journal
         snapshots = {mid: m.snapshot() for mid, m in self._monitors.items()}
         # Keep restored-but-not-started monitors in the file so their guards
         # survive a start of a *different* monitor.

@@ -17,7 +17,7 @@ import types
 import pytest
 
 import clippyme.pipeline as pipeline
-from clippyme.domain.runtime_state import load_runtime_state
+from clippyme.jobs.runtime_state import load_runtime_state
 from clippyme.pipeline import orchestrator
 from clippyme.pipeline.preflight import PreflightRejected
 

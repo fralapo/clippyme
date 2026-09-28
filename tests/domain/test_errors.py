@@ -1,9 +1,9 @@
-"""Tests for the clippyme.domain.errors hierarchy.
+"""Tests for the clippyme.core.errors hierarchy.
 
 These lock the contract the API exception handler relies on: every domain error
 carries a `status_code` + `detail`, and the subclasses map to the right codes.
 """
-from clippyme.domain.errors import (
+from clippyme.core.errors import (
     ClippyMeError,
     ComposeError,
     NotFoundError,

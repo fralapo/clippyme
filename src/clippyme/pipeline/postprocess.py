@@ -12,7 +12,7 @@ import json
 import os
 import subprocess
 
-from clippyme.domain.encode import x264_video_args
+from clippyme.media.encode import x264_video_args
 
 
 def _safe_float(value, name):

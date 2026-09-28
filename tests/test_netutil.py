@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from clippyme import netutil
+from clippyme.core import netutil
 
 
 def test_returns_parsed_addresses(monkeypatch):

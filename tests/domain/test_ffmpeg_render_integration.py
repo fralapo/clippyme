@@ -55,7 +55,7 @@ def clip(tmp_path):
 
 
 def test_grade_renders(clip, tmp_path):
-    from clippyme.domain.grade import apply_grade
+    from clippyme.editing.grade import apply_grade
 
     out = str(tmp_path / "graded.mp4")
     assert apply_grade(clip, out, "warm_cinematic") is True
@@ -64,7 +64,7 @@ def test_grade_renders(clip, tmp_path):
 
 
 def test_grade_none_is_noop(clip, tmp_path):
-    from clippyme.domain.grade import apply_grade
+    from clippyme.editing.grade import apply_grade
 
     out = str(tmp_path / "none.mp4")
     assert apply_grade(clip, out, "none") is False
@@ -72,7 +72,7 @@ def test_grade_none_is_noop(clip, tmp_path):
 
 
 def test_animated_hook_renders(clip, tmp_path):
-    from clippyme.domain.hooks import add_hook_to_video
+    from clippyme.editing.hooks import add_hook_to_video
 
     out = str(tmp_path / "hooked.mp4")
     ok = add_hook_to_video(clip, "HELLO WORLD", out, position="top",
@@ -84,7 +84,7 @@ def test_animated_hook_renders(clip, tmp_path):
 
 
 def test_static_hook_still_renders(clip, tmp_path):
-    from clippyme.domain.hooks import add_hook_to_video
+    from clippyme.editing.hooks import add_hook_to_video
 
     out = str(tmp_path / "hooked_static.mp4")
     assert add_hook_to_video(clip, "STATIC", out, style={"animate": False}) is True
@@ -92,7 +92,7 @@ def test_static_hook_still_renders(clip, tmp_path):
 
 
 def test_smartcut_afade_segments_render(clip, tmp_path):
-    from clippyme.domain.smartcut import _render_with_ffmpeg
+    from clippyme.editing.smartcut import _render_with_ffmpeg
 
     out = str(tmp_path / "cut.mp4")
     # Two kept segments → one internal concat boundary that must fade, not pop.
@@ -109,7 +109,7 @@ def _make_logo_png(path):
 
 def test_hook_plus_logo_single_pass_renders(clip, tmp_path):
     """Wave-5 fusion: hook + brand logo composited in ONE encode."""
-    from clippyme.domain.hooks import add_hook_to_video
+    from clippyme.editing.hooks import add_hook_to_video
 
     logo_png = str(tmp_path / "logo.png")
     _make_logo_png(logo_png)
@@ -126,7 +126,7 @@ def test_hook_plus_logo_single_pass_renders(clip, tmp_path):
 
 
 def test_hook_plus_logo_animated_renders(clip, tmp_path):
-    from clippyme.domain.hooks import add_hook_to_video
+    from clippyme.editing.hooks import add_hook_to_video
 
     logo_png = str(tmp_path / "logo.png")
     _make_logo_png(logo_png)
@@ -141,8 +141,8 @@ def test_hook_plus_logo_animated_renders(clip, tmp_path):
 
 def test_burn_subtitles_with_grade_prevf_renders(clip, tmp_path):
     """Wave-5 fusion: grade chain rides as pre_vf on the subtitle burn."""
-    from clippyme.domain.grade import build_grade_filter
-    from clippyme.domain.subtitles import burn_subtitles
+    from clippyme.editing.grade import build_grade_filter
+    from clippyme.editing.subtitles import burn_subtitles
 
     srt = tmp_path / "s.srt"
     srt.write_text("1\n00:00:00,000 --> 00:00:01,500\nHello grade\n",

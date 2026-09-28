@@ -1,5 +1,5 @@
 """Host-unit tests for the colour-grade filter builder (pure)."""
-from clippyme.domain.grade import GRADE_PRESETS, build_grade_filter
+from clippyme.editing.grade import GRADE_PRESETS, build_grade_filter
 
 
 def test_none_and_unknown_are_empty():
@@ -26,7 +26,7 @@ def test_apply_grade_timeout_returns_false(monkeypatch):
     """
     import subprocess
 
-    from clippyme.domain import grade as grade_module
+    from clippyme.editing import grade as grade_module
 
     def hang(*a, **k):
         raise subprocess.TimeoutExpired(cmd="ffmpeg", timeout=1)

@@ -1,7 +1,7 @@
 """Logo overlay geometry + custom-font discovery (host-safe, no ffmpeg)."""
 import os
 
-from clippyme.domain.logo import logo_overlay_xy, DEFAULT_POSITION, _POSITIONS
+from clippyme.editing.logo import logo_overlay_xy, DEFAULT_POSITION, _POSITIONS
 
 
 def test_logo_corners_use_margin():
@@ -34,7 +34,7 @@ def test_all_positions_have_expressions():
 
 
 def test_list_available_fonts_includes_user_upload(tmp_path, monkeypatch):
-    import clippyme.domain.subtitles as subs
+    import clippyme.editing.subtitles as subs
     bundled = tmp_path / "bundled"
     user = tmp_path / "user"
     bundled.mkdir()
@@ -51,7 +51,7 @@ def test_list_available_fonts_includes_user_upload(tmp_path, monkeypatch):
 
 
 def test_effective_fonts_dir_seeds_user_dir(tmp_path, monkeypatch):
-    import clippyme.domain.subtitles as subs
+    import clippyme.editing.subtitles as subs
     bundled = tmp_path / "bundled"
     user = tmp_path / "user"
     bundled.mkdir()

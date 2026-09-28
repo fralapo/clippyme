@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import yt_dlp
 
-from clippyme.netutil import resolve_host_addresses
+from clippyme.core.netutil import resolve_host_addresses
 
 
 # Remote URL jobs are intentionally limited to the platforms ClippyMe actually
@@ -207,7 +207,7 @@ SOURCE_INFO_FILENAME = "source_info.json"
 def _write_source_info(output_dir, info):
     """Persist source-channel metadata as a best-effort sidecar."""
     try:
-        from clippyme.domain.banner import suggest_banner
+        from clippyme.editing.banner import suggest_banner
 
         channel_url = info.get("channel_url") or info.get("uploader_url")
         webpage_url = info.get("webpage_url") or info.get("original_url")

@@ -12,7 +12,7 @@ import logging
 import os
 import subprocess
 
-from clippyme.domain.encode import ffmpeg_timeout, x264_video_args
+from clippyme.media.encode import ffmpeg_timeout, x264_video_args
 
 logger = logging.getLogger(__name__)
 

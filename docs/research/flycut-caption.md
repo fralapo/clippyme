@@ -54,7 +54,7 @@ flycut's genuine differentiator: the operator can **look at the transcript and h
 
 ## What was ported
 
-`src/clippyme/domain/smartcut.py` — pure interval arithmetic, host-unit-tested (`tests/domain/test_smartcut_manual_trim.py`), no ffmpeg/cv2:
+`src/clippyme/editing/smartcut.py` — pure interval arithmetic, host-unit-tested (`tests/domain/test_smartcut_manual_trim.py`), no ffmpeg/cv2:
 
 - `normalize_drop_ranges(raw)` — tolerant coercion of HTTP-supplied spans (`[[s,e],…]` or `[{"start","end"},…]`); discards garbage, caps count.
 - `subtract_ranges(keep, drops)` — removes hand-picked spans from the keep-segment list, splitting a kept span when a drop lands inside it.

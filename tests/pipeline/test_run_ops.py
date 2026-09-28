@@ -57,7 +57,7 @@ def test_cut_command_shape_and_precision():
 
 
 def test_cut_command_uses_shared_x264_settings():
-    from clippyme.domain.encode import x264_video_args
+    from clippyme.media.encode import x264_video_args
     cmd = build_cut_command("/in.mp4", 0, 10, "/out.mp4")
     for arg in x264_video_args(faststart=False):
         assert arg in cmd

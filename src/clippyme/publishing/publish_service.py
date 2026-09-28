@@ -13,11 +13,11 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from clippyme.domain.clip_locks import clip_lock
-from clippyme.domain.clip_resolve import ResolvedClip, composed_clip_basename
-from clippyme.domain.compose import compose_layers
-from clippyme.domain.errors import ClippyMeError, NotFoundError, ValidationError
-from clippyme.domain.job_artifacts import load_job_metadata, record_clip_publish
+from clippyme.clips.clip_locks import clip_lock
+from clippyme.clips.clip_resolve import ResolvedClip, composed_clip_basename
+from clippyme.editing.compose import compose_layers
+from clippyme.core.errors import ClippyMeError, NotFoundError, ValidationError
+from clippyme.jobs.job_artifacts import load_job_metadata, record_clip_publish
 
 logger = logging.getLogger("clippyme")
 

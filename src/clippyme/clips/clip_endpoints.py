@@ -5,11 +5,11 @@ import json
 import logging
 import os
 
-from clippyme.domain.clip_locks import clip_lock
-from clippyme.domain.clip_resolve import ResolvedClip, clip_filename_for
-from clippyme.domain.errors import ClippyMeError, ConflictError, NotFoundError, ValidationError
-from clippyme.domain.job_control import ACTIVE_STATES
-from clippyme.domain.smartcut import smart_cut
+from clippyme.clips.clip_locks import clip_lock
+from clippyme.clips.clip_resolve import ResolvedClip, clip_filename_for
+from clippyme.core.errors import ClippyMeError, ConflictError, NotFoundError, ValidationError
+from clippyme.jobs.job_control import ACTIVE_STATES
+from clippyme.editing.smartcut import smart_cut
 
 logger = logging.getLogger(__name__)
 

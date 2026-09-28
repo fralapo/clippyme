@@ -11,13 +11,13 @@ import os
 import shutil
 import subprocess
 
-from clippyme.domain.clip_locks import clip_lock
-from clippyme.domain.errors import ValidationError
+from clippyme.clips.clip_locks import clip_lock
+from clippyme.core.errors import ValidationError
 
 logger = logging.getLogger(__name__)
 
-from clippyme.domain.smartcut import smart_cut
-from clippyme.domain.subtitles import generate_ass_karaoke, generate_srt, burn_subtitles
+from clippyme.editing.smartcut import smart_cut
+from clippyme.editing.subtitles import generate_ass_karaoke, generate_srt, burn_subtitles
 
 
 _SIZE_MAP = {"S": 0.8, "M": 1.0, "L": 1.3}
@@ -35,7 +35,7 @@ async def _apply_logo(
     logo_params: dict,
     intermediate_files: list,
 ) -> str:
-    from clippyme.domain.logo import add_logo_to_video, DEFAULT_POSITION
+    from clippyme.editing.logo import add_logo_to_video, DEFAULT_POSITION
 
     logo_output = os.path.join(job_dir, f"composed_logo_{clip_index}.mp4")
     intermediate_files.append(logo_output)
@@ -68,7 +68,7 @@ async def _apply_grade(
     """Apply an optional colour grade. Runs FIRST (before subtitles) so overlay
     colours are not shifted by the grade. Silently keeps the input if the
     preset is none/unknown or ffmpeg fails."""
-    from clippyme.domain.grade import apply_grade_async, DEFAULT_GRADE
+    from clippyme.editing.grade import apply_grade_async, DEFAULT_GRADE
 
     preset = (grade_params or {}).get("preset", DEFAULT_GRADE)
     grade_output = os.path.join(job_dir, f"composed_grade_{clip_index}.mp4")
@@ -105,7 +105,7 @@ async def _self_eval(
 ) -> None:
     """video-use step 7 / superpowers verification: probe the rendered output and
     log any QA issues. Never raises — a QA miss surfaces a warning, not a 500."""
-    from clippyme.domain.clip_qa import evaluate_clip_qa
+    from clippyme.pipeline.quality.clip_qa import evaluate_clip_qa
 
     try:
         dur, has_audio, size = await asyncio.to_thread(_probe_qa, composed_path)
@@ -180,7 +180,7 @@ async def _apply_hook(
 
     The hook is visible for the first 4s of the clip only, EXCEPT when
     ``reframe_mode`` is the literal 'disabled' (letterbox) — full clip then."""
-    from clippyme.domain.hooks import add_hook_to_video
+    from clippyme.editing.hooks import add_hook_to_video
 
     hook_duration = None if reframe_mode == "disabled" else 4
 
@@ -205,7 +205,7 @@ async def _apply_hook(
             "opacity": lp.get("opacity", 1.0),
             "margin": lp.get("margin", 0.04),
         }
-        from clippyme.domain.logo import DEFAULT_POSITION
+        from clippyme.editing.logo import DEFAULT_POSITION
         logo["position"] = logo["position"] or DEFAULT_POSITION
     await asyncio.to_thread(
         add_hook_to_video,
@@ -237,7 +237,7 @@ async def _apply_banner(
     the pill hugs the video band's bottom edge; otherwise it rides the safe-zone
     ``y_pct``. Silently keeps the input when the params don't resolve to a real
     banner (defensive — the caller already gated on ``enabled``)."""
-    from clippyme.domain.banner import add_banner_to_video, banner_text
+    from clippyme.editing.banner import add_banner_to_video, banner_text
 
     bp = dict(banner_params or {})
     if not banner_text(bp.get("platform"), bp.get("handle")):
@@ -269,7 +269,7 @@ def _letterbox_caption_band_top(video_path, clip_info, subtitle_params, banner_a
         return None
     if str((subtitle_params or {}).get("position", "bottom")).lower() != "bottom":
         return None
-    from clippyme.domain.banner import letterbox_band_bottom
+    from clippyme.editing.banner import letterbox_band_bottom
     from clippyme.pipeline.media_probe import probe_dimensions
 
     try:
@@ -468,7 +468,7 @@ async def _compose_layers_impl(
 
     current_input = base_clip
     intermediate_files: list = []
-    from clippyme.domain.clip_resolve import composed_clip_basename
+    from clippyme.clips.clip_resolve import composed_clip_basename
     composed_filename = composed_clip_basename(clip_info, clip_index)
     composed_path = os.path.join(job_dir, composed_filename)
     # Always wipe a stale composed file from a previous compose pass so
@@ -514,7 +514,7 @@ async def _compose_layers_impl(
         # encode generation cheaper. Grade-only keeps its own pass.
         merged_grade_vf = None
         if active.get("grade") and active.get("subtitles"):
-            from clippyme.domain.grade import DEFAULT_GRADE, build_grade_filter
+            from clippyme.editing.grade import DEFAULT_GRADE, build_grade_filter
             merged_grade_vf = build_grade_filter(
                 (grade_params or {}).get("preset", DEFAULT_GRADE)) or None
 
@@ -609,7 +609,7 @@ async def _compose_layers_impl(
         # explicit banner_params.enabled (frontend sends the latter). Separate
         # pass on purpose: fusing a third overlay into the hook+logo filtergraph
         # is not trivial, and correctness > one saved encode generation.
-        from clippyme.domain.banner import banner_text
+        from clippyme.editing.banner import banner_text
         bp = banner_params or {}
         banner_active = bool(active.get("banner") or bp.get("enabled"))
         if banner_active and not banner_text(bp.get("platform"), bp.get("handle")):

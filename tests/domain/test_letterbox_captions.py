@@ -1,7 +1,7 @@
 """Captions parked in the black band of a reframe-OFF (letterbox) clip."""
-from clippyme.domain.banner import letterbox_band_bottom
-from clippyme.domain.compose import CAPTION_BAND_PAD, _letterbox_caption_band_top
-from clippyme.domain.subtitles import generate_ass_karaoke
+from clippyme.editing.banner import letterbox_band_bottom
+from clippyme.editing.compose import CAPTION_BAND_PAD, _letterbox_caption_band_top
+from clippyme.editing.subtitles import generate_ass_karaoke
 
 
 def _toy_transcript():
