@@ -2,7 +2,7 @@
 // pieces shared by the Create recipe and the EditClipModal (hookStyle.jsx
 // precedent: controlled values + partial-emitting onChange, UI only).
 import { Segmented } from '../primitives';
-import { LOGO_POSITIONS, LOGO_SIZES, GRADE_PRESETS } from '../../lib/data';
+import { LOGO_POSITIONS, LOGO_SIZES, GRADE_PRESETS } from '../../lib/uiOptions';
 
 // The two cf-rows of the logo drawer. No wrapper: each surface keeps its own
 // .cfg-drawer (Create appends an upload hint under these rows).

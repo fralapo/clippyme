@@ -3,7 +3,7 @@
 // app; users can save their own and pick one as the default (auto-applied when
 // Create loads). Stored per-browser in localStorage — fits the self-hosted,
 // single-user app (no accounts/backend needed).
-import { PRESETS as BUILTIN_PRESETS } from '../../lib/data';
+import { PRESETS as BUILTIN_PRESETS } from '../../lib/uiOptions';
 
 const PRESETS_KEY = 'clippyme_user_presets_v1';
 const DEFAULT_KEY = 'clippyme_default_preset_v1';

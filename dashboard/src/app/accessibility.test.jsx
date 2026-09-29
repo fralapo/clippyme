@@ -1,7 +1,7 @@
 import { cleanup, render } from '@testing-library/react'
 import axe from 'axe-core'
 import { afterEach, expect, test, vi } from 'vitest'
-import { TopNav, Hero } from '../components/chrome'
+import { TopNav, Hero } from '../components/headers'
 import { ProcessingView } from '../features/processing/processing'
 import { Btn, Panel, Segmented, Stepper, Switch } from '../components/primitives'
 import { ResultsView } from '../features/results/results'

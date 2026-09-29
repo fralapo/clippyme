@@ -18,7 +18,7 @@
 // logo — is applied across the selected clips (see lib/bulkApply.js).
 import { useState } from 'react';
 import { Icon, Btn } from '../../components/primitives';
-import { HOOK_STYLE_DEFAULT } from '../../lib/data';
+import { HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
 import { useModalA11y } from '../../hooks/useModalA11y';
 import { clipPreviewSrc } from '../../api/client';
 import { useManualTrim } from './useManualTrim';

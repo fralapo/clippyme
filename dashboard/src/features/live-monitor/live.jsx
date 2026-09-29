@@ -3,7 +3,7 @@
 // capture→process→publish state. Reuses the Zernio platform-picker pattern
 // from publish.jsx (same PLAT map + accounts source).
 import { useState, useEffect } from 'react';
-import { Hero } from '../../components/chrome';
+import { Hero } from '../../components/headers';
 import { Icon, Panel, Btn, Badge, Switch, Segmented, PlatPill, PLATFORMS } from '../../components/primitives';
 import { getZernio, startLiveMonitor, stopLiveMonitor, updateMonitorConfig, setMonitorPublishing } from '../../api/client';
 import { PLAT } from '../publishing/publish';

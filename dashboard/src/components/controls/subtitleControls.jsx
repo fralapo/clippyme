@@ -18,7 +18,7 @@
 //      (edit) — a real visual difference between the surfaces.
 //   D3 the alignment hint copy differs by a few words.
 import { Segmented, Switch } from '../primitives';
-import { SUBTITLE_PRESETS, SUB_COLORS } from '../../lib/data';
+import { SUBTITLE_PRESETS, SUB_COLORS } from '../../lib/uiOptions';
 import { useFontList } from '../../hooks/useFontList';
 
 const ALIGN_HINT = {

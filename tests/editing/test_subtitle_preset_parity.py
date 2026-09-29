@@ -3,7 +3,7 @@
 The old pixel-faithful mirror (dashboard/src/lib/subtitlePresets.js) was deleted
 with the legacy SubtitleModal component tree — nothing live rendered it. The
 UI's preset grid is a *cosmetic* CSS mirror in dashboard/src/lib/
-data.js (system fonts, no fontsize) whose ONLY data-bearing field is the `hi`
+uiOptions.js (system fonts, no fontsize) whose ONLY data-bearing field is the `hi`
 highlight colour. This test enforces that:
 
   1. the preview lists exactly the backend preset ids, and
@@ -20,12 +20,12 @@ from clippyme.editing.subtitles import SUBTITLE_PRESETS as BACKEND
 
 _JS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..",
-    "dashboard", "src", "lib", "data.js",
+    "dashboard", "src", "lib", "uiOptions.js",
 )
 
 
 def _parse_preview_presets(text: str) -> dict:
-    """Extract {id: hi_hex_upper} from the data.js SUBTITLE_PRESETS array."""
+    """Extract {id: hi_hex_upper} from the uiOptions.js SUBTITLE_PRESETS array."""
     body = text.split("SUBTITLE_PRESETS", 1)[1]
     out: dict = {}
     # Each entry: { id: 'classic_white', label: 'Classic', hi: '#FFFF00', ... }
@@ -49,5 +49,5 @@ def test_preview_highlight_colors_match_backend():
     for pid, bp in BACKEND.items():
         assert preview[pid] == bp["highlight_color"].upper(), (
             f"{pid}: highlight backend={bp['highlight_color']} preview={preview[pid]} — "
-            f"update data.js SUBTITLE_PRESETS `hi` to match subtitles.py"
+            f"update uiOptions.js SUBTITLE_PRESETS `hi` to match subtitles.py"
         )

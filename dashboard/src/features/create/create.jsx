@@ -1,8 +1,8 @@
 // ClippyMe — Create flow: presets + source + calm options recipe.
 import { useState, useRef } from 'react';
 import { Icon, Btn, Panel, Segmented, Switch, Stepper } from '../../components/primitives';
-import { Hero } from '../../components/chrome';
-import { LANGUAGES, GEMINI_MODELS, HOOK_STYLE_DEFAULT } from '../../lib/data';
+import { Hero } from '../../components/headers';
+import { LANGUAGES, GEMINI_MODELS, HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
 import { HookStyleControls, HookPreview } from '../../components/controls/hookStyle';
 import { SubtitleControls } from '../../components/controls/subtitleControls';
 import { LogoControls, GradeControls } from '../../components/controls/layerControls';

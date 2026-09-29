@@ -2,8 +2,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Icon, Btn, Badge, Panel } from '../../components/primitives';
 import { LazyVideo } from '../../components/LazyVideo';
-import { Hero } from '../../components/chrome';
-import { PIPE } from '../../lib/data';
+import { Hero } from '../../components/headers';
+import { PIPE } from '../../lib/uiOptions';
 import { pipelineStepMeta } from '../../lib/pipelineStep';
 import { clipVideoSrc, fmtDuration } from '../../api/client';
 import { latestRuntimeTelemetry, formatEta, formatMetric } from './runtimeTelemetry';

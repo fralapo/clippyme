@@ -19,7 +19,7 @@ def test_hex_to_rgba_bad_falls_back():
 
 def test_hook_style_defaults_match_frontend():
     # Bannerless white Anton with a thin black outline — kept in sync with the
-    # frontend HOOK_STYLE_DEFAULT (dashboard/src/lib/data.js).
+    # frontend HOOK_STYLE_DEFAULT (dashboard/src/lib/uiOptions.js).
     assert HOOK_STYLE_DEFAULTS["bg_enabled"] is False
     assert HOOK_STYLE_DEFAULTS["text_color"] == "#FFFFFF"
     assert HOOK_STYLE_DEFAULTS["outline_width"] == 4

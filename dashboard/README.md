@@ -8,11 +8,11 @@ proxying `/api`, `/videos`, `/thumbnails` and `/fonts` to the backend).
 |------|----------|
 | `src/main.jsx` | Entry point |
 | `src/app/` | `App.jsx` wires top-level state and navigation; error boundary; the Axe accessibility test |
-| `src/features/` | One folder per screen or flow: `create`, `processing`, `results`, `clip-editor`, `publishing`, `live-monitor`, `history-settings`. Each holds its components, feature-only logic and tests |
-| `src/components/` | UI shared across features: `primitives.jsx`, `icon.jsx`, `LazyVideo.jsx`, `chrome.jsx` (top nav); `controls/` holds the subtitle, logo, grade, banner and hook controls shared by Create, the clip editor and Live |
+| `src/features/` | One folder per screen or flow: `create`, `processing`, `results`, `clip-editor`, `publishing`, `live-monitor`, `history`, `settings`. Each holds its components, feature-only logic and tests |
+| `src/components/` | UI shared across features: `primitives.jsx`, `icon.jsx`, `LazyVideo.jsx`, `headers.jsx` (top nav and screen heading); `controls/` holds the subtitle, logo, grade, banner and hook controls shared by Create, the clip editor and Live |
 | `src/api/` | Backend client: `client.js` (most endpoints), `jobs.js` (submit and poll), `apiToken.js`, `config.js` (API base URL) |
 | `src/hooks/` | Cross-feature side effects: job submission and polling, history, session, clip states, backend status, fonts, modal focus trap |
-| `src/lib/` | Cross-feature pure logic, unit-tested; `data.js` holds the option catalogs and defaults mirrored by the backend |
+| `src/lib/` | Cross-feature pure logic, unit-tested; `uiOptions.js` holds the option catalogs and defaults mirrored by the backend |
 | `src/styles/` | `index.css` (Tailwind entry), `tokens.css` (design tokens, fonts), `app.css` (the visual system) |
 | `src/assets/` | Images bundled by Vite |
 | `src/test/setup.js` | Vitest setup: jest-dom matchers, cleanup between tests |

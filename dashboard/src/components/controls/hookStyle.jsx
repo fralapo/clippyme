@@ -4,7 +4,7 @@
 // merges updates. A live WYSIWYG preview sits on top so the user sees the
 // banner / colours / outline before reprocessing.
 import { Segmented, Switch } from '../primitives';
-import { SUB_COLORS, HOOK_OUTLINE } from '../../lib/data';
+import { SUB_COLORS, HOOK_OUTLINE } from '../../lib/uiOptions';
 import { useFontList } from '../../hooks/useFontList';
 
 function Swatches({ value, onPick, label }) {

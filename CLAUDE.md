@@ -50,7 +50,7 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
   auto-editor updater. `storage/` — `data/config.json`.
 - `dashboard/src/` — the UI: `app/App.jsx` (state wiring only), `features/`
   (one folder per screen: create, processing, results, clip-editor,
-  publishing, live-monitor, history-settings), `components/` (cross-feature
+  publishing, live-monitor, history, settings), `components/` (cross-feature
   UI; `controls/` = shared subtitle/logo/grade/banner/hook controls), `api/`
   (backend client), `hooks/` side effects, `lib/` pure logic, `styles/`.
 - `tests/` mirrors `src/clippyme/`; frontend tests sit next to the code.
@@ -101,7 +101,7 @@ CV-dependent pipeline code, the Dockerfile or dependency files.
   state lives in the `editClipModal.jsx` shell: tab bodies in `editTabs.jsx` are
   conditionally rendered and lose state on unmount. UI primitives are
   hand-rolled in `primitives.jsx` (no shadcn CLI).
-- **Defaults duplicated across stacks** (hook style in `dashboard/src/lib/data.js` and
+- **Defaults duplicated across stacks** (hook style in `dashboard/src/lib/uiOptions.js` and
   `editing/hook_overlay.py`, grade/logo presets) are pinned by
   `tests/editing/test_frontend_backend_parity.py`; change both sides and the test.
 - **Lint config**: extend rules in `dashboard/eslint.a11y.config.js`, which
