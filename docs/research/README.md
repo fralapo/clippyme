@@ -20,7 +20,6 @@ saves re-running the same evaluation later.
 | [autocrop-vertical.md](autocrop-vertical.md) | kamilstanuch/Autocrop-vertical | VFR normalisation, audio start-time compensation, corrupt-frame resilience (`media_probe.py`, `reframe.py`) |
 | [auto-vertical-reframe.md](auto-vertical-reframe.md) | KazKozDev/auto-vertical-reframe | Damped-spring smoother ported (`REFRAME_SMOOTHER=spring`); the subject-ranking port was later removed as unused |
 | [smart-reframe.md](smart-reframe.md) | gauravzazz/smart-reframe | Asymmetric zoom easing ported (fast pull-back, slow push-in) |
-| [smart-video-reframe.md](smart-video-reframe.md) | obi19999/smart-video-reframe | Split-screen idea studied; the unwired port was later removed |
 | [montage-ai.md](montage-ai.md) | mfahsold/montage-ai | Kalman / L2 camera-path smoothers ported (`REFRAME_GLOBAL_METHOD`) |
-| [reframe-prior-art.md](reframe-prior-art.md) | Nine other reframing / shorts projects | Survey, nothing ported directly |
+| [reframe-prior-art.md](reframe-prior-art.md) | Nine other reframing / shorts projects, including obi19999/smart-video-reframe | Survey; the split-screen idea from smart-video-reframe was ported, then removed as unused |
 | [browser-editors.md](browser-editors.md) | FreeCut, OpenReel, WebCut | Rejected: different product and execution model |

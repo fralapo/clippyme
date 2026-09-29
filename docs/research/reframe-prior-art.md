@@ -5,8 +5,9 @@
 A survey of projects that solve part of the same problem (landscape → vertical
 crop, or long video → short clips). Each entry records the technique and how it
 relates to ClippyMe's approach at the time of the survey. Deeper per-project
-studies exist for [Autocrop-vertical](autocrop-vertical.md) and
-[smart-video-reframe](smart-video-reframe.md).
+studies exist for [Autocrop-vertical](autocrop-vertical.md),
+[smart-reframe](smart-reframe.md) and
+[auto-vertical-reframe](auto-vertical-reframe.md).
 
 ## Crop / track reframers
 
@@ -17,8 +18,18 @@ exact frame number; VFR normalised first; audio muxed back with a start-time
 offset. Closest match to ClippyMe's design.
 
 **[obi19999/smart-video-reframe](https://github.com/obi19999/smart-video-reframe)**
-— YOLOv8 face tracking with continuous crop/pan, desktop GUI. Same idea as
-ClippyMe, but no active-speaker scoring.
+(studied 2026-06-17) — a ~1000-LOC CLI (the README advertises a GUI and
+installers that do not exist): YOLO `.track()` faces, per-scene smoothing,
+fit-with-blur fallback, all frames buffered in RAM, `shell=True` ffmpeg, no
+tests. ClippyMe already covered everything except one idea: **split-screen
+layouts for several faces** (portrait: 2 stacked rows, 3 = top banner + bottom
+pair, 4 = 2×2 grid; landscape: equal columns). The layout geometry was ported
+as `reframe_ops.split_screen_slots` and removed in 2026-07 because no
+multi-face render mode was ever built (git history has it). Wiring such a mode
+would need per-face tracking, a most-common face count over a window (so the
+layout does not flicker), a per-face box EMA, a new render branch and a
+`reframe_mode` option in the UI. It is a product decision, since ClippyMe
+deliberately renders one tracked camera.
 
 **[paulpierre/autocrop](https://github.com/paulpierre/autocrop)** — classical
 CV, no tracking: samples frames, detects a uniform background, finds the
