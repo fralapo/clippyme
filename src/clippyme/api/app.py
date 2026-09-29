@@ -39,7 +39,8 @@ from clippyme.editing.compose import compose_layers
 from clippyme.clips.reframe_service import run_reframe
 from clippyme.core.errors import ClippyMeError
 from clippyme.jobs.uploads import stream_upload_within_limit, FileTooLarge
-from clippyme.clips.clip_endpoints import run_smart_cut, restore_finished_job
+from clippyme.clips.smartcut_service import run_smart_cut
+from clippyme.jobs.job_restore import restore_finished_job
 from clippyme.clips.clip_resolve import resolve_clip
 from clippyme.jobs import job_control
 from clippyme.jobs.job_actions import cancel_job_action, stop_job_action

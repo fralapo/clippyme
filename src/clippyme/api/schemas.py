@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from clippyme.jobs.job_results import ALLOWED_LANGUAGES, GEMINI_MODEL_RE, MAX_INSTRUCTIONS_LEN
 from clippyme.core.netutil import resolve_host_addresses
-from clippyme.core.schemas import ViralClip, ViralClipsResponse  # noqa: F401
+from clippyme.core.clip_schema import ViralClip, ViralClipsResponse  # noqa: F401
 
 
 def _reject_internal_host(host: str) -> None:

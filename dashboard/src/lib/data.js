@@ -80,7 +80,7 @@ export const SUBTITLE_PRESETS = [
 ];
 
 // Instagram-Stories-style hook text defaults. Keys match the backend
-// create_hook_image `style` dict (editing/hooks.py:HOOK_STYLE_DEFAULTS).
+// create_hook_image `style` dict (editing/hook_overlay.py:HOOK_STYLE_DEFAULTS).
 // Default look = bannerless white Anton with a thin black outline (the
 // bannerless path also auto-adds a soft drop shadow for legibility). Users can
 // still re-enable the banner / pick any colour or font per clip.

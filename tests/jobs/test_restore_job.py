@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from clippyme.clips.clip_endpoints import restore_job_from_disk
+from clippyme.jobs.job_restore import restore_job_from_disk
 from clippyme.core.errors import NotFoundError
 
 

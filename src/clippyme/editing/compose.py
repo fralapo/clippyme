@@ -180,7 +180,7 @@ async def _apply_hook(
 
     The hook is visible for the first 4s of the clip only, EXCEPT when
     ``reframe_mode`` is the literal 'disabled' (letterbox) — full clip then."""
-    from clippyme.editing.hooks import add_hook_to_video
+    from clippyme.editing.hook_overlay import add_hook_to_video
 
     hook_duration = None if reframe_mode == "disabled" else 4
 

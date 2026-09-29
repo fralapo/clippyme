@@ -72,7 +72,7 @@ def test_grade_none_is_noop(clip, tmp_path):
 
 
 def test_animated_hook_renders(clip, tmp_path):
-    from clippyme.editing.hooks import add_hook_to_video
+    from clippyme.editing.hook_overlay import add_hook_to_video
 
     out = str(tmp_path / "hooked.mp4")
     ok = add_hook_to_video(clip, "HELLO WORLD", out, position="top",
@@ -84,7 +84,7 @@ def test_animated_hook_renders(clip, tmp_path):
 
 
 def test_static_hook_still_renders(clip, tmp_path):
-    from clippyme.editing.hooks import add_hook_to_video
+    from clippyme.editing.hook_overlay import add_hook_to_video
 
     out = str(tmp_path / "hooked_static.mp4")
     assert add_hook_to_video(clip, "STATIC", out, style={"animate": False}) is True
@@ -109,7 +109,7 @@ def _make_logo_png(path):
 
 def test_hook_plus_logo_single_pass_renders(clip, tmp_path):
     """Wave-5 fusion: hook + brand logo composited in ONE encode."""
-    from clippyme.editing.hooks import add_hook_to_video
+    from clippyme.editing.hook_overlay import add_hook_to_video
 
     logo_png = str(tmp_path / "logo.png")
     _make_logo_png(logo_png)
@@ -126,7 +126,7 @@ def test_hook_plus_logo_single_pass_renders(clip, tmp_path):
 
 
 def test_hook_plus_logo_animated_renders(clip, tmp_path):
-    from clippyme.editing.hooks import add_hook_to_video
+    from clippyme.editing.hook_overlay import add_hook_to_video
 
     logo_png = str(tmp_path / "logo.png")
     _make_logo_png(logo_png)

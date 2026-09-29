@@ -48,7 +48,7 @@ export function seedLogoParams(preselections) {
     };
 }
 
-// Instagram-Stories-style hook text style keys (mirror editing/hooks.py
+// Instagram-Stories-style hook text style keys (mirror editing/hook_overlay.py
 // HOOK_STYLE_DEFAULTS). Forwarded to the compose hook layer.
 const HOOK_STYLE_KEYS = ['bg_enabled', 'bg_color', 'bg_opacity', 'text_color', 'outline_width', 'outline_color', 'font'];
 

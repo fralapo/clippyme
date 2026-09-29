@@ -17,7 +17,7 @@ import os
 
 from clippyme.editing import compose
 from clippyme.editing import subtitles as subtitles_module
-from clippyme.editing.hooks import build_hook_logo_filter
+from clippyme.editing.hook_overlay import build_hook_logo_filter
 from clippyme.editing.logo import logo_filter_chain
 
 
@@ -214,7 +214,7 @@ def test_apply_hook_duration_by_reframe_mode(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "clippyme.editing.hooks.add_hook_to_video", fake_add_hook_to_video,
+        "clippyme.editing.hook_overlay.add_hook_to_video", fake_add_hook_to_video,
     )
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(b"in")

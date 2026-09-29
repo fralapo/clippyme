@@ -29,7 +29,7 @@ starlette>=1.0.1
 uvicorn==0.42.0
 # 0.0.31 fixes CVE-2026-40347/42561/53538/53539/53540 (multipart parser DoS).
 python-multipart==0.0.31
-# Fonts/emoji rendering in subtitles.py + hooks.py assume the Pillow 12.x
+# Fonts/emoji rendering in subtitles.py + hook_overlay.py assume the Pillow 12.x
 # FreeType/OTF API. Allow patch/minor security updates, block the next major.
 # 12.3.0 floor: PYSEC-2026-2254 (FontFile.compile decompression bomb).
 Pillow>=12.3.0,<13

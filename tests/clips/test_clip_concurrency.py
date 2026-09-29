@@ -18,10 +18,10 @@ from types import SimpleNamespace
 import pytest
 
 from clippyme.editing import compose as compose_mod
-from clippyme.editing import hooks as hooks_mod
+from clippyme.editing import hook_overlay as hook_overlay_mod
 from clippyme.clips import reframe_service
 from clippyme.editing import smartcut
-from clippyme.clips.clip_endpoints import run_smart_cut
+from clippyme.clips.smartcut_service import run_smart_cut
 from clippyme.clips.clip_resolve import composed_clip_basename, resolve_clip
 from clippyme.core.errors import ClippyMeError
 from clippyme.jobs.job_artifacts import load_job_metadata, record_clip_publish
@@ -346,7 +346,7 @@ def _stub_hook(monkeypatch, gate=None):
             assert gate.wait(GATE_TIMEOUT)
         _write(output_path, f"HOOK:{text}:".encode() + seen)
 
-    monkeypatch.setattr(hooks_mod, "add_hook_to_video", fake_hook)
+    monkeypatch.setattr(hook_overlay_mod, "add_hook_to_video", fake_hook)
     monkeypatch.setattr(compose_mod, "_self_eval", _no_self_eval)
     return started
 

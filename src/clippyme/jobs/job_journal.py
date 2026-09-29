@@ -229,7 +229,7 @@ def _may_restore_completed(output_dir: str) -> bool:
 
 def recover_jobs(*, journal_path: str, jobs: dict, job_queue, output_root: str) -> dict:
     """Recover queued, completed-on-disk, and checkpoint-resumable jobs."""
-    from clippyme.clips.clip_endpoints import restore_job_from_disk
+    from clippyme.jobs.job_restore import restore_job_from_disk
     from clippyme.core.errors import ClippyMeError
     from clippyme.jobs.job_results import load_final_result
 

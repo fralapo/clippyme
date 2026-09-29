@@ -174,7 +174,7 @@ def render_banner_png(platform, handle, width, out_path) -> tuple[str, int, int]
     """Render the transparent attribution pill and return path/width/height."""
     from PIL import Image, ImageDraw, ImageFont
 
-    from clippyme.editing.hooks import _resolve_hook_font_path
+    from clippyme.editing.hook_overlay import _resolve_hook_font_path
 
     text = banner_text(platform, handle) or ""
     logo_h = max(8, int(width * 56 / 1080))

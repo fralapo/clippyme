@@ -17,7 +17,7 @@ import re
 
 from clippyme.editing.compose import _LOGO_SIZE_MAP
 from clippyme.editing.grade import GRADE_PRESETS as BACKEND_GRADES
-from clippyme.editing.hooks import HOOK_STYLE_DEFAULTS
+from clippyme.editing.hook_overlay import HOOK_STYLE_DEFAULTS
 from clippyme.editing.logo import _POSITIONS as BACKEND_LOGO_POSITIONS
 
 _JS_PATH = os.path.join(
@@ -87,7 +87,7 @@ def _parse_hook_style_default() -> dict:
 
 
 def test_hook_style_defaults_match_backend():
-    """Every key data.js declares must equal hooks.py HOOK_STYLE_DEFAULTS.
+    """Every key data.js declares must equal hook_overlay.py HOOK_STYLE_DEFAULTS.
 
     (data.js intentionally omits corner_radius/shadow — those have no UI
     control — so only the shared keys are compared, but at least the core
@@ -102,5 +102,5 @@ def test_hook_style_defaults_match_backend():
         assert js_val == HOOK_STYLE_DEFAULTS[key], (
             f"hook style default drift on {key!r}: data.js={js_val!r} "
             f"backend={HOOK_STYLE_DEFAULTS[key]!r} — change BOTH sides together "
-            f"(data.js + hooks.py) or the WYSIWYG preview diverges from the render"
+            f"(data.js + hook_overlay.py) or the WYSIWYG preview diverges from the render"
         )

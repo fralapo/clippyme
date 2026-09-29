@@ -29,13 +29,13 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
   `config_routes.py`: settings), `schemas.py`, `security.py`.
 - Service packages (endpoint logic; never import FastAPI):
   `src/clippyme/jobs/` job lifecycle (submission, queue, runner with the
-  retry loop, control, journal, runtime state, results, history, uploads); `clips/` per-clip
-  operations (resolution, locks, smart cut and restore endpoints, reframe
-  requests); `editing/` compose layers (grade, subtitles, smart cut, hook,
+  retry loop, control, journal, runtime state, results, history and
+  restore, uploads); `clips/` per-clip operations (resolution, locks, smart
+  cut and reframe requests); `editing/` compose layers (grade, subtitles, smart cut, hook,
   logo, banner, AI trim); `monitoring/` live monitor; `publishing/` manual
   publish.
 - `src/clippyme/core/` — errors, SSRF-safe DNS (`netutil`), Gemini clip
-  schema. `media/` — ffmpeg/ffprobe primitives shared by the pipeline and
+  schema (`clip_schema`). `media/` — ffmpeg/ffprobe primitives shared by the pipeline and
   the compose layers: `encode`, `media_probe`, `ffmpeg_exec`.
 - `src/clippyme/pipeline/` — the per-job subprocess. Entrypoint is
   `orchestrator.py` (preflight, checkpoints, retries, output QA) wrapping
@@ -102,7 +102,7 @@ CV-dependent pipeline code, the Dockerfile or dependency files.
   conditionally rendered and lose state on unmount. UI primitives are
   hand-rolled in `primitives.jsx` (no shadcn CLI).
 - **Defaults duplicated across stacks** (hook style in `dashboard/src/lib/data.js` and
-  `editing/hooks.py`, grade/logo presets) are pinned by
+  `editing/hook_overlay.py`, grade/logo presets) are pinned by
   `tests/editing/test_frontend_backend_parity.py`; change both sides and the test.
 - **Lint config**: extend rules in `dashboard/eslint.a11y.config.js`, which
   composes the base `eslint.config.js`.
