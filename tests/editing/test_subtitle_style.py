@@ -141,29 +141,19 @@ def _style_fields(ass_text):
     raise AssertionError("no Viral style line")
 
 
-def test_center_no_offset_uses_centered_anchor(tmp_path):
+@pytest.mark.parametrize("offset_y", [0, 10])
+def test_center_is_top_anchored_from_the_frame_centre(tmp_path, offset_y):
+    # libass ignores MarginV for \an5, so center is a top anchor (8) for every
+    # nudge, 0 included: the 40 px line centred, moved 19.2 px per unit, down.
     out = tmp_path / "x.ass"
     generate_ass_karaoke(
         _transcript("hi"), 0, 10, str(out), preset="classic_white",
-        position="center", offset_y=0,
-    )
-    f = _style_fields(out.read_text(encoding="utf-8"))
-    align, margin_v = f[-5], f[-2]
-    assert align == "5" and margin_v == "0"
-
-
-def test_center_with_offset_reanchors_so_nudge_works(tmp_path):
-    # A non-zero nudge at center must NOT silently no-op: re-anchor to top (8)
-    # with an absolute margin measured from frame centre, positive = down.
-    out = tmp_path / "x.ass"
-    generate_ass_karaoke(
-        _transcript("hi"), 0, 10, str(out), preset="classic_white",
-        position="center", offset_y=10,
+        position="center", offset_y=offset_y,
     )
     f = _style_fields(out.read_text(encoding="utf-8"))
     align, margin_v = f[-5], f[-2]
     assert align == "8"
-    assert int(margin_v) == 960 + int(1920 * 10 / 100)
+    assert int(margin_v) == 960 - 40 // 2 + round(1920 * offset_y / 100)
 
 
 def test_extreme_fontsize_clamped_in_output(tmp_path):

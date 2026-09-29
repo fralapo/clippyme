@@ -125,21 +125,39 @@ def test_classic_background_box_padding_matches_karaoke_box(tmp_path, monkeypatc
     assert _frame_px(style, "Outline", "y") == pytest.approx(1, abs=0.05)
 
 
-@pytest.mark.parametrize("offset_y", [-50, -25, 25, 45])
+@pytest.mark.parametrize("offset_y", [-50, -25, 0, 25, 45])
 def test_classic_center_offset_moves_the_caption(tmp_path, monkeypatch, offset_y):
     # libass ignores MarginV for middle alignment (SSA 9/10/11), so the nudge was
-    # a no-op. Like karaoke, re-anchor to the top with a margin from the centre.
+    # a no-op. Like karaoke, every nudge (0 included) is a top anchor placed by
+    # the shared center formula: one Auto-size line, outline 2.
     style = _classic_force_style(tmp_path, monkeypatch, alignment="center", offset_y=offset_y)
     assert style["Alignment"] == "6"
-    assert _frame_px(style, "MarginV") == pytest.approx(
-        subs._offset_margin("top", FRAME_H // 2, offset_y), abs=FRAME_H / 288)
+    assert int(style["MarginV"]) == subs._center_margin_v(offset_y, subs._CLASSIC_AUTO_FONTSIZE, 2)
     left = _classic_force_style(tmp_path, monkeypatch, alignment="center", offset_y=offset_y, h_align="left")
     assert left["Alignment"] == "5"
 
 
-def test_classic_center_without_offset_stays_middle(tmp_path, monkeypatch):
-    assert _classic_force_style(tmp_path, monkeypatch, alignment="center")["Alignment"] == "10"
-    assert _classic_force_style(tmp_path, monkeypatch, alignment="center", h_align="left")["Alignment"] == "9"
+def test_classic_center_margin_centres_the_tallest_cue(tmp_path, monkeypatch):
+    # One force_style MarginV serves every cue: it is set for the cue that wraps most.
+    captured = {}
+
+    class _Ok:
+        returncode = 0
+        stderr = b""
+
+    monkeypatch.setattr(subs.subprocess, "run", lambda cmd, **k: captured.update(cmd=cmd) or _Ok())
+    monkeypatch.setattr(subs, "effective_fonts_dir", lambda: str(tmp_path))
+    long_cue = "When everybody told me this would never work I kept building anyway"
+    srt = tmp_path / "s.srt"
+    srt.write_text(f"1\n00:00:00,000 --> 00:00:01,000\nHi\n\n2\n00:00:01,000 --> 00:00:02,000\n{long_cue}\n",
+                   encoding="utf-8")
+    subs.burn_subtitles("in.mp4", str(srt), "out.mp4", alignment="center", font_name="Montserrat-Black")
+    vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
+    style = dict(i.split("=", 1) for i in re.search(r"force_style='([^']*)'", vf).group(1).split(","))
+    width_of = subs._text_width("Montserrat-Black", subs._CLASSIC_AUTO_FONTSIZE)
+    lines = subs._wrapped_line_count(long_cue, width_of, FRAME_W - 2 * subs._SUB_MARGIN_EDGE)
+    assert lines >= 3
+    assert int(style["MarginV"]) == subs._center_margin_v(0, lines * subs._CLASSIC_AUTO_FONTSIZE, 2)
 
 
 @pytest.mark.parametrize("alignment, code", [("bottom", "2"), ("top", "6")])

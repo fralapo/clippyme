@@ -4,6 +4,8 @@ import re
 import struct
 import subprocess
 
+from PIL import ImageFont
+
 from clippyme.media.encode import ffmpeg_timeout, x264_video_args
 from clippyme.core.errors import ComposeError
 
@@ -480,6 +482,88 @@ _SUB_PLAYRES_X, _SUB_PLAYRES_Y = 1080, 1920
 # Classic "Auto" size (no size chosen; the classic UI has no size control): the
 # size it always had, ffmpeg's SRT default 16 * 0.85 = 13 units of 288 lines.
 _CLASSIC_AUTO_FONTSIZE = round(13 * _SUB_PLAYRES_Y / 288, 2)
+# Width of one character, in Fontsize units, for a font that is neither bundled
+# nor uploaded (e.g. Verdana, which fontconfig resolves at render time).
+_FALLBACK_CHAR_WIDTH = 0.6
+
+
+def _center_margin_v(offset_y, block_height, pad):
+    """MarginV of a TOP-anchored caption block in the 'center' position.
+
+    One formula for every nudge, 0 included: the block's centre sits at the
+    frame centre moved by ``offset_y`` percent of the 1920 px frame (positive =
+    down, as in _offset_margin). The whole block, outline / shadow / box
+    ``pad`` included, then stays inside the frame-edge safe zone the side
+    margins use, so +/-50 rest against the bottom/top edge instead of leaving
+    the frame. ``block_height`` is lines * Fontsize: libass stacks lines
+    exactly Fontsize apart.
+    """
+    try:
+        shift = _SUB_PLAYRES_Y * float(offset_y) / 100
+    except (TypeError, ValueError):
+        shift = 0.0
+    desired = _SUB_PLAYRES_Y / 2 + shift - block_height / 2
+    lowest = _SUB_PLAYRES_Y - _SUB_MARGIN_EDGE - pad - block_height
+    return round(max(_SUB_MARGIN_EDGE + pad, min(desired, lowest)))
+
+
+def _sfnt_em_per_line(path):
+    """unitsPerEm / (usWinAscent + usWinDescent) of a TTF/OTF/TTC file, or None."""
+    try:
+        with open(path, "rb") as file:
+            data = file.read()
+        base = struct.unpack(">I", data[12:16])[0] if data[:4] == b"ttcf" else 0
+        (count,) = struct.unpack(">H", data[base + 4:base + 6])
+        tables = {}
+        for i in range(count):
+            tag, _, offset, _ = struct.unpack(">4sIII", data[base + 12 + 16 * i:base + 28 + 16 * i])
+            tables[tag] = offset
+        (units_per_em,) = struct.unpack(">H", data[tables[b"head"] + 18:tables[b"head"] + 20])
+        ascent, descent = struct.unpack(">HH", data[tables[b"OS/2"] + 74:tables[b"OS/2"] + 78])
+        return units_per_em / (ascent + descent)
+    except (OSError, KeyError, struct.error, ZeroDivisionError):
+        return None
+
+
+def _text_width(font_name, fontsize):
+    """text -> width in script pixels, laid out as libass draws `font_name` at `fontsize`.
+
+    libass sizes a face so one line (OS/2 win ascent + descent) is Fontsize, so
+    its em is Fontsize * unitsPerEm / (winAscent + winDescent).
+    """
+    for directory in (USER_FONTS_DIR, FONTS_DIR):
+        for ext in _FONT_EXTS:
+            path = os.path.join(directory, f"{font_name}{ext}")
+            em_per_line = _sfnt_em_per_line(path)
+            if em_per_line:
+                try:
+                    return ImageFont.truetype(path, fontsize * em_per_line).getlength
+                except OSError:
+                    break
+    return lambda text: len(text) * fontsize * _FALLBACK_CHAR_WIDTH
+
+
+def _srt_cue_texts(path):
+    """Text of every cue in an SRT file, hard line breaks kept."""
+    with open(path, encoding="utf-8", errors="replace") as file:
+        blocks = file.read().replace("\r\n", "\n").strip().split("\n\n")
+    return ["\n".join(block.split("\n")[2:]) for block in blocks]
+
+
+def _wrapped_line_count(text, width_of, max_width):
+    """Lines libass breaks `text` into: each hard line wrapped at spaces once it
+    is wider than `max_width` (script px between MarginL and MarginR)."""
+    count = 0
+    for hard_line in text.split("\n"):
+        count += 1
+        line = ""
+        for word in hard_line.split():
+            candidate = f"{line} {word}" if line else word
+            if line and width_of(candidate) > max_width:
+                count += 1
+                candidate = word
+            line = candidate
+    return count
 
 
 # ASS \an numpad code for the centred caption at each vertical anchor.
@@ -573,6 +657,7 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
     position_norm = str(position).lower()
     if position_norm == "middle":
         position_norm = "center"  # frontend alias
+    pad = style["outline_width"] + style.get("shadow", 0)  # ink beyond the line boxes
     if band_top is not None:
         # Letterbox clip with nothing else in the black band: anchor the caption
         # to the TOP so its first line starts right under the video (MarginV is
@@ -583,16 +668,12 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         vpos = "top"
         margin_v = _offset_margin("top", 260, offset_y)
     elif position_norm == "center":
-        if offset_y:
-            # libass IGNORES MarginV for the centred anchor (\an5), so a non-zero
-            # nudge would silently no-op. Re-anchor to the top anchor with an
-            # absolute margin measured from the vertical centre (960px of the
-            # 1920px frame) so the slider actually moves the caption.
-            vpos = "top"
-            margin_v = _offset_margin("top", 960, offset_y)
-        else:
-            vpos = "center"
-            margin_v = 0
+        # libass IGNORES MarginV for the centred anchor (\an5), so every nudge,
+        # 0 included, is a top anchor placed by _center_margin_v. The margin
+        # depends on how many lines the event wraps to, so each event carries
+        # its own (below); the style keeps the one-line value.
+        vpos = "top"
+        margin_v = _center_margin_v(offset_y, style["fontsize"], pad)
     else:
         vpos = "bottom"
         margin_v = _offset_margin("bottom", style.get("margin_v", 350), offset_y)
@@ -650,25 +731,35 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         # Word group mode: small groups of N words
         groups = _group_words_by_count(words, clip_start, words_per_group)
 
+    centred = band_top is None and position_norm == "center"
+    if centred:
+        width_of = _text_width(style["font"], style["fontsize"])
+
     for group in groups:
         event_start = max(0, group[0]['start'] - clip_start)
         event_end = max(0, group[-1]['end'] - clip_start)
 
         karaoke_parts = []
+        plain_words = []
         for w in group:
             duration_cs = max(1, int((w['end'] - w['start']) * 100))
             text = _strip_ass_braces(w['word'].strip())
             if style["uppercase"]:
                 text = text.upper()
             karaoke_parts.append(f"{{\\k{duration_cs}}}{text}")
+            plain_words.append(text)
 
         line_text = " ".join(karaoke_parts)
         # Fix: \k tags shouldn't have space before them inside the line
         # Actually the space goes between words, which is correct
+        event_margin_v = 0  # 0 = the style's MarginV
+        if centred:
+            lines = _wrapped_line_count(" ".join(plain_words), width_of, 1080 - margin_l - margin_r)
+            event_margin_v = _center_margin_v(offset_y, lines * style["fontsize"], pad)
 
         ass_content += (
             f"Dialogue: 0,{format_ass_time(event_start)},{format_ass_time(event_end)},"
-            f"Viral,,0,0,0,,{line_text}\n"
+            f"Viral,,0,0,{event_margin_v},,{line_text}\n"
         )
 
     with open(output_path, 'w', encoding='utf-8') as f:
@@ -861,16 +952,11 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None
         if align_lower == 'top':
             ass_alignment = 6
             srt_margin_v = _offset_margin('top', 350, offset_y)
-        elif align_lower in ('middle', 'center') and offset_y:
-            # libass ignores MarginV for the middle codes, so, as in karaoke,
-            # re-anchor to the top with a margin measured from the frame centre.
-            ass_alignment = 6
-            srt_margin_v = _offset_margin('top', _SUB_PLAYRES_Y // 2, offset_y)
         elif align_lower in ('middle', 'center'):
-            # 'center' is the value the frontend always sends; alias it to the
-            # legacy SSA middle-centre code (it used to fall through to bottom).
-            ass_alignment = 10
-            srt_margin_v = 350
+            # libass ignores MarginV for the middle codes (9/10/11), so every
+            # nudge, 0 included, is a top anchor placed like karaoke (below).
+            ass_alignment = 6
+            srt_margin_v = None
         else:  # bottom (and any unknown) → bottom-centre
             ass_alignment = 2
             srt_margin_v = _offset_margin('bottom', 350, offset_y)
@@ -896,6 +982,13 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None
             outline_w = max(1, border_width)
 
         back_colour = hex_to_ass_color("#000000", 0.0)
+
+        if srt_margin_v is None:
+            # One MarginV serves every cue: centre the tallest (most lines) one.
+            width_of = _text_width(font_name, final_fontsize)
+            lines = max((_wrapped_line_count(cue, width_of, _SUB_PLAYRES_X - srt_margin_l - srt_margin_r)
+                         for cue in _srt_cue_texts(srt_path)), default=1)
+            srt_margin_v = _center_margin_v(offset_y, lines * final_fontsize, outline_w)
 
         style_string = (
             f"PlayResX={_SUB_PLAYRES_X},"

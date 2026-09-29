@@ -288,7 +288,7 @@ def _render_karaoke(subs, tmp_path, size, text, name, **kwargs):
     words = [{"word": w, "start": 0.0, "end": 1.5} for w in text.split()]
     ass = str(tmp_path / f"{name}.ass")
     assert subs.generate_ass_karaoke({"segments": [{"words": words}]}, 0, 1.5, ass,
-                                     preset="classic_white", mode="full_line", **kwargs)
+                                     **{"preset": "classic_white", "mode": "full_line", **kwargs})
     out = str(tmp_path / f"{name}.mp4")
     assert subs.burn_subtitles(video, ass, out) is True
     return _ink_and_fill(out, str(tmp_path / f"{name}.png"))
@@ -370,9 +370,10 @@ def test_classic_center_offset_moves_the_caption(subs_module, tmp_path, size):
         assert ink and ink[1] >= 0 and ink[3] <= h, (offset, ink)
         tops[offset] = ink[1] / h
     assert tops[-50] < tops[-25] < tops[0] < tops[25] < tops[45], tops
-    # Top-anchored at the centre +/- 25% of the height: the line moves by half the frame.
+    # +/-25% of the height from the centre: the line moves by half the frame.
     assert tops[25] - tops[-25] == pytest.approx(0.5, abs=0.01), tops
-    assert tops[-50] < 0.03, tops
+    # -50 rests against the top safe edge (110 px of 1920) instead of the frame edge.
+    assert 0.05 <= tops[-50] <= 0.08, tops
 
 
 @pytest.mark.parametrize("size", ["720x1280", "1080x1920", "1440x2560"])
@@ -386,3 +387,91 @@ def test_classic_long_caption_wraps_inside_the_safe_area(subs_module, tmp_path, 
             assert 0.17 * h <= h - y1 <= 0.22 * h, (vpos, ink)
         else:
             assert 0.17 * h <= y0 <= 0.2 * h, (vpos, ink)
+
+
+# --- Center position + vertical nudge: continuous and inside the frame ------
+
+_MANY_LINES = "When everybody told me this would never work I kept building anyway every single day"
+# One karaoke event (full_line groups up to 60 characters): 2 lines at 40, 3 at 90.
+_KARAOKE_LINES = "When everybody told me this would never work I kept going"
+_CENTER_CASES = [
+    pytest.param("karaoke", "HELLO WORLD", {}, id="karaoke-1-line"),
+    pytest.param("karaoke", _KARAOKE_LINES, {}, id="karaoke-2-lines"),
+    pytest.param("karaoke", _KARAOKE_LINES, {"font_size": 90}, id="karaoke-3-lines"),
+    pytest.param("classic", "HELLO WORLD", {}, id="classic-1-line"),
+    pytest.param("classic", _MANY_LINES, {}, id="classic-4-lines"),
+]
+
+
+def _render_center(subs, tmp_path, mode, size, text, nudge, **kwargs):
+    """(frame height, ink bbox) of a center-positioned caption nudged by `nudge`."""
+    name = f"{mode}{nudge}"
+    if mode == "karaoke":
+        (_, h), ink, _ = _render_karaoke(subs, tmp_path, size, text, name, position="center",
+                                         offset_y=nudge, **kwargs)
+    else:
+        (_, h), ink, _ = _render_classic(subs, tmp_path, size, text, name, alignment="center",
+                                         offset_y=nudge, **kwargs)
+    return h, ink
+
+
+def _assert_inside(h, ink, what):
+    # Whole caption (outline, shadow, box) visible and clear of the frame edge.
+    assert ink, f"{what}: caption is not in the frame"
+    assert ink[1] >= 0.05 * h and ink[3] <= 0.95 * h, (what, ink)
+
+
+@pytest.mark.parametrize("size", ["720x1280", "1080x1920", "1440x2560"])
+@pytest.mark.parametrize("mode, text, kwargs", _CENTER_CASES)
+def test_center_nudge_extremes_keep_the_caption_in_frame(subs_module, tmp_path, mode, text, kwargs, size):
+    """+50 used to put the caption below the frame and -50 flush against the top."""
+    for nudge in (-50, -49, 49, 50):
+        h, ink = _render_center(subs_module, tmp_path, mode, size, text, nudge, **kwargs)
+        _assert_inside(h, ink, (mode, size, nudge))
+
+
+@pytest.mark.parametrize("size", ["720x1280", "1080x1920", "1440x2560"])
+@pytest.mark.parametrize("mode, text, kwargs", _CENTER_CASES)
+def test_center_nudge_is_centred_at_zero_and_continuous(subs_module, tmp_path, mode, text, kwargs, size):
+    """0 was centred by libass and +/-1 top-anchored: the caption jumped by half its height."""
+    centres = {}
+    for nudge in (-1, 0, 1, 10, 11):
+        h, ink = _render_center(subs_module, tmp_path, mode, size, text, nudge, **kwargs)
+        centres[nudge] = (ink[1] + ink[3]) / 2 / h
+    # Glyphs sit a little off their line boxes' centre (ascent vs descent).
+    assert centres[0] == pytest.approx(0.5, abs=0.006), centres
+    for a, b in ((-1, 0), (0, 1), (10, 11)):
+        assert centres[b] - centres[a] == pytest.approx(0.01, abs=0.003), centres
+
+
+@pytest.mark.parametrize("mode, text, kwargs", _CENTER_CASES)
+def test_center_nudge_moves_monotonically(subs_module, tmp_path, mode, text, kwargs):
+    nudges = (-50, -40, -30, -20, -10, -1, 0, 1, 10, 20, 30, 40, 50)
+    tops = [_render_center(subs_module, tmp_path, mode, "1080x1920", text, n, **kwargs)[1][1] for n in nudges]
+    assert all(b >= a for a, b in zip(tops, tops[1:])), tops  # rests at the edges, never moves back
+    middle = tops[nudges.index(-20):nudges.index(20) + 1]
+    assert all(b > a for a, b in zip(middle, middle[1:])), tops
+
+
+@pytest.mark.parametrize("preset", ["classic_white", "hormozi_bold", "neon_glow", "mrbeast_box",
+                                    "minimal_clean", "fire_impact"])
+def test_center_nudge_every_karaoke_preset_stays_in_frame(subs_module, tmp_path, preset):
+    for font_size in (None, 90):
+        for nudge in (-50, 0, 50):
+            h, ink = _render_center(subs_module, tmp_path, "karaoke", "1080x1920", _KARAOKE_LINES, nudge,
+                                    preset=preset, font_size=font_size)
+            _assert_inside(h, ink, (preset, font_size, nudge))
+
+
+@pytest.mark.parametrize("font", ["Montserrat-Black", "Bangers-Regular", "Anton-Regular",
+                                  "Poppins-Black", "Poppins-Medium"])
+def test_center_nudge_every_classic_font_stays_in_frame(subs_module, tmp_path, font):
+    for nudge in (-50, 0, 50):
+        h, ink = _render_center(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, nudge, font_name=font)
+        _assert_inside(h, ink, (font, nudge))
+
+
+def test_center_nudge_keeps_the_classic_background_box_in_frame(subs_module, tmp_path):
+    for nudge in (-50, 50):
+        h, ink = _render_center(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, nudge, bg_opacity=1.0)
+        _assert_inside(h, ink, nudge)
