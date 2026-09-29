@@ -445,27 +445,6 @@ def _clamp_fontsize(size, default):
     return max(_SUB_FONTSIZE_MIN, min(_SUB_FONTSIZE_MAX, s))
 
 
-def _offset_margin(position_norm, base_margin_v, offset_y):
-    """Apply a vertical offset (percent of the 1920px frame) to a base MarginV.
-
-    Convention shared by the karaoke ASS path and the classic SRT path: a
-    POSITIVE ``offset_y`` moves the caption DOWN on screen, negative moves it UP
-    — matching the frontend slider where +50 ≈ bottom and -50 ≈ top.
-
-    MarginV semantics depend on the anchor: for a TOP-anchored caption MarginV
-    is the gap from the top edge (larger = lower) so we ADD; for bottom/center it
-    is the gap from the bottom edge (larger = higher) so we SUBTRACT. The result
-    is clamped at 0 so an aggressive offset never produces a negative margin.
-    """
-    try:
-        delta = int(1920 * float(offset_y) / 100)
-    except (TypeError, ValueError):
-        delta = 0
-    if position_norm == "top":
-        return base_margin_v + delta
-    return max(0, base_margin_v - delta)
-
-
 # Horizontal alignment. Only LEFT (ragged / "a bandiera") and CENTER are offered:
 # right-alignment is deliberately excluded because the social UI (like / comment /
 # share buttons) lives down the right edge and would overlap right-aligned text.
@@ -500,19 +479,39 @@ def _bounded_margin_v(margin_v, block_height, pad):
     return round(max(_SUB_MARGIN_EDGE + pad, min(margin_v, highest)))
 
 
+def _nudge_margin_v(anchor, base_margin_v, offset_y, block_height, pad):
+    """MarginV of a caption block after the vertical nudge slider.
+
+    Convention shared by the karaoke ASS path and the classic SRT path: the
+    slider runs -50..50 and a POSITIVE ``offset_y`` moves the caption DOWN. It
+    spans the room this block really has: 0 keeps ``base_margin_v``, -50 puts
+    the block against the top safe edge and +50 against the bottom one,
+    linearly in between with one step size per half (the base is rarely in
+    the middle). ``anchor`` is the edge MarginV is measured from, "top" or
+    "bottom" (a bottom MarginV grows as the caption moves up).
+    _bounded_margin_v stays as the last clamp.
+    """
+    try:
+        t = float(offset_y) / 50
+    except (TypeError, ValueError):
+        t = 0.0
+    t = max(-1.0, min(1.0, t)) if t == t else 0.0  # NaN -> 0
+    if anchor != "top":
+        t = -t
+    low = _SUB_MARGIN_EDGE + pad
+    high = _SUB_PLAYRES_Y - _SUB_MARGIN_EDGE - pad - block_height
+    base = max(low, min(base_margin_v, high))
+    end = high if t > 0 else low
+    return _bounded_margin_v(base + (end - base) * abs(t), block_height, pad)
+
+
 def _center_margin_v(offset_y, block_height, pad):
     """MarginV of a TOP-anchored caption block in the 'center' position.
 
-    One formula for every nudge, 0 included: the block's centre sits at the
-    frame centre moved by ``offset_y`` percent of the 1920 px frame (positive =
-    down, as in _offset_margin), then _bounded_margin_v keeps it in frame, so
-    +/-50 rest against the bottom/top edge instead of leaving the frame.
+    libass ignores MarginV for the middle alignment, so every nudge, 0
+    included, is a top anchor whose base centres the block in the frame.
     """
-    try:
-        shift = _SUB_PLAYRES_Y * float(offset_y) / 100
-    except (TypeError, ValueError):
-        shift = 0.0
-    return _bounded_margin_v(_SUB_PLAYRES_Y / 2 + shift - block_height / 2, block_height, pad)
+    return _nudge_margin_v("top", _SUB_PLAYRES_Y / 2 - block_height / 2, offset_y, block_height, pad)
 
 
 def _sfnt_em_per_line(path):
@@ -660,8 +659,8 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
     if uppercase is not None:
         style["uppercase"] = uppercase
 
-    # Position → ASS alignment + margin. Positive offset_y moves the caption
-    # DOWN (see _offset_margin).
+    # Position → ASS alignment + base margin; the nudge slider (positive = down)
+    # moves the block from there (see _nudge_margin_v).
     position_norm = str(position).lower()
     if position_norm == "middle":
         position_norm = "center"  # frontend alias
@@ -671,10 +670,10 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         # to the TOP so its first line starts right under the video (MarginV is
         # measured from the top for \an7-9), instead of floating low in the black.
         vpos = "top"
-        edge_margin_v = _offset_margin("top", int(band_top), offset_y)
+        edge_margin_v = int(band_top)
     elif position_norm == "top":
         vpos = "top"
-        edge_margin_v = _offset_margin("top", 260, offset_y)
+        edge_margin_v = 260
     elif position_norm == "center":
         # libass IGNORES MarginV for the centred anchor (\an5), so every nudge,
         # 0 included, is a top anchor placed by _center_margin_v.
@@ -682,14 +681,14 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         edge_margin_v = None
     else:
         vpos = "bottom"
-        edge_margin_v = _offset_margin("bottom", style.get("margin_v", 350), offset_y)
+        edge_margin_v = style.get("margin_v", 350)
 
     def place(block_height):
         # The margin depends on how many lines an event wraps to, so each event
         # carries its own (below); the style keeps the one-line value.
         if edge_margin_v is None:
             return _center_margin_v(offset_y, block_height, pad)
-        return _bounded_margin_v(edge_margin_v, block_height, pad)
+        return _nudge_margin_v(vpos, edge_margin_v, offset_y, block_height, pad)
 
     margin_v = place(style["fontsize"])
     # Horizontal alignment (left = ragged "a bandiera" / center) → ASS \an code +
@@ -964,7 +963,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None
         align_lower = str(alignment).lower()
         if align_lower == 'top':
             ass_alignment = 6
-            edge_margin_v = _offset_margin('top', 350, offset_y)
+            edge_margin_v = 350
         elif align_lower in ('middle', 'center'):
             # libass ignores MarginV for the middle codes (9/10/11), so every
             # nudge, 0 included, is a top anchor placed like karaoke (below).
@@ -972,7 +971,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None
             edge_margin_v = None
         else:  # bottom (and any unknown) → bottom-centre
             ass_alignment = 2
-            edge_margin_v = _offset_margin('bottom', 350, offset_y)
+            edge_margin_v = 350
         h_left = normalize_h_align(h_align) == "left"
         if h_left:
             ass_alignment -= 1  # 6→5, 10→9, 2→1 (centre → left at same anchor)
@@ -1003,7 +1002,8 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None
         if edge_margin_v is None:
             srt_margin_v = _center_margin_v(offset_y, lines * final_fontsize, outline_w)
         else:
-            srt_margin_v = _bounded_margin_v(edge_margin_v, lines * final_fontsize, outline_w)
+            srt_margin_v = _nudge_margin_v('top' if ass_alignment in (5, 6) else 'bottom', edge_margin_v,
+                                           offset_y, lines * final_fontsize, outline_w)
 
         style_string = (
             f"PlayResX={_SUB_PLAYRES_X},"

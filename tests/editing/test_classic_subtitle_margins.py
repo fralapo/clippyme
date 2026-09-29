@@ -47,9 +47,10 @@ def test_classic_vertical_margin_matches_karaoke_in_frame_pixels(tmp_path, monke
     assert _frame_px(style, "MarginV") == pytest.approx(350, abs=FRAME_H / 288)
 
 
-def test_classic_offset_moves_caption_by_the_same_frame_distance_as_karaoke(tmp_path, monkeypatch):
+def test_classic_offset_uses_the_karaoke_nudge_mapping(tmp_path, monkeypatch):
     style = _classic_force_style(tmp_path, monkeypatch, alignment="bottom", offset_y=10)
-    expected = subs._offset_margin("bottom", 350, 10)  # karaoke MarginV, frame px
+    # One Auto-size line, outline 2, in frame px like karaoke.
+    expected = subs._nudge_margin_v("bottom", 350, 10, subs._CLASSIC_AUTO_FONTSIZE, 2)
     assert _frame_px(style, "MarginV") == pytest.approx(expected, abs=FRAME_H / 288)
 
 

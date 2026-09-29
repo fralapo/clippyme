@@ -1,10 +1,11 @@
 """Top / bottom position + vertical nudge: the whole caption block stays in frame.
 
-The nudge is a percentage of the 1920 px frame, positive = down. Top anchors
-the first line box at MarginV (260 karaoke, 350 classic) plus the nudge; bottom
-anchors the last one at 1920 - MarginV, MarginV 350 minus the nudge. Nothing
-bounded the block: top below about -13 drew it above the frame (gone at -50)
-and bottom from about +18 put it flush against the frame's bottom edge.
+Top anchors the first line box at MarginV (260 karaoke, 350 classic at nudge
+0); bottom anchors the last one at 1920 - MarginV (350 at 0). The nudge used to
+add 19.2 px per unit with nothing bounding the block: top below about -13 drew
+it above the frame (gone at -50) and bottom from about +18 put it flush against
+the frame's bottom edge. How the slider spans the room is in
+test_subtitle_nudge_range.py.
 
 These tests read the real karaoke ASS / classic force_style and rebuild each
 caption's line-box block in 1080x1920 frame pixels (libass stacks lines
@@ -17,7 +18,6 @@ import pytest
 from clippyme.editing import subtitles as subs
 
 FRAME_H = 1920
-STEP = FRAME_H / 100  # one slider unit
 EDGE = subs._SUB_MARGIN_EDGE
 SERIES = (-50, -40, -30, -25, -20, -14, -13, -8, -7, -5, -1, 0, 1, 5, 10, 12, 13, 14, 20, 25, 30, 40, 50)
 _LONG = "When everybody told me this would never work I kept building anyway"
@@ -84,16 +84,12 @@ _CLASSIC_CASES = [
 
 
 def _assert_bounded_monotonic(blocks_by_nudge):
-    """Every block inside the edge safe zone; blocks move down with the nudge,
-    by the nudge distance except where one rests against an edge."""
+    """Every block inside the edge safe zone; blocks move down with the nudge."""
     tops = []
     for n, (top, bottom, pad) in blocks_by_nudge:
         assert top - pad >= EDGE - 0.5 and bottom + pad <= FRAME_H - EDGE + 0.5, (n, top, bottom, pad)
         tops.append(top)
     assert all(b >= a for a, b in zip(tops, tops[1:])), tops
-    for (n0, _), (n1, _), t0, t1 in zip(blocks_by_nudge, blocks_by_nudge[1:], tops, tops[1:]):
-        if all(abs(t - tops[0]) > 1 and abs(t - tops[-1]) > 1 for t in (t0, t1)):
-            assert t1 - t0 == pytest.approx((n1 - n0) * STEP, abs=1), (n0, n1, t0, t1)
 
 
 @pytest.mark.parametrize("position", ["top", "bottom"])
@@ -131,17 +127,10 @@ def test_edge_extremes_rest_on_the_safe_edge_in_both_paths(tmp_path, monkeypatch
         assert (k_bottom + k_pad, c_bottom + c_pad) == (FRAME_H - EDGE, FRAME_H - EDGE)
 
 
-# Nudges whose block already sits inside the safe edge: output must not move.
-_UNCLAMPED = {"top": (-7, -5, -1, 0, 1, 5, 10, 25, 50), "bottom": (-50, -25, -10, -1, 0, 1, 5, 10, 12)}
-
-
 @pytest.mark.parametrize("position", ["top", "bottom"])
-def test_edge_placement_is_unchanged_where_it_fits(tmp_path, monkeypatch, position):
-    for nudge in _UNCLAMPED[position]:
-        style_margin, blocks = _karaoke(tmp_path, position, nudge)
-        assert style_margin == subs._offset_margin(position, _BASE["karaoke", position], nudge), nudge
-        margin, _ = _classic(tmp_path, monkeypatch, position, nudge)
-        assert margin == subs._offset_margin(position, _BASE["classic", position], nudge), nudge
+def test_edge_placement_is_unchanged_at_zero(tmp_path, monkeypatch, position):
+    assert _karaoke(tmp_path, position, 0)[0] == _BASE["karaoke", position]
+    assert _classic(tmp_path, monkeypatch, position, 0)[0] == _BASE["classic", position]
     # Nudge 0 stays byte-identical: one-line events keep MarginV 0 (= the style's).
     ass = tmp_path / "k.ass"
     subs.generate_ass_karaoke({"segments": [{"words": [{"word": "hi", "start": 0.0, "end": 0.5}]}]}, 0, 1,
@@ -149,20 +138,11 @@ def test_edge_placement_is_unchanged_where_it_fits(tmp_path, monkeypatch, positi
     assert ",Viral,,0,0,0,," in ass.read_text(encoding="utf-8")
 
 
-@pytest.mark.parametrize("position", ["top", "bottom"])
-def test_clamp_enters_exactly_where_the_block_would_cross_the_edge(tmp_path, position):
-    # classic_white: one 40 px line, pad 4 -> the margin may not go below 114.
-    raw = {n: subs._offset_margin(position, _BASE["karaoke", position], n) for n in range(-50, 51)}
-    margins = {n: _karaoke(tmp_path, position, n)[0] for n in raw}
-    for n, value in raw.items():
-        assert margins[n] == max(value, EDGE + 4), (n, value, margins[n])
-    assert any(margins[n] != raw[n] for n in raw)
-
-
 def test_letterbox_band_caption_is_bounded(tmp_path):
     """Reframe-off clips anchor bottom captions under the video (a top anchor at
-    the band); the band placement keeps its value until the block would leave."""
-    for nudge, expected in ((0, 1290), (10, 1290 + 192), (50, FRAME_H - EDGE - 4 - 40)):
+    the band); 0 keeps the band, +50 rests on the bottom safe edge."""
+    bottom_most = FRAME_H - EDGE - 4 - 40
+    for nudge, expected in ((0, 1290), (10, round(1290 + (bottom_most - 1290) / 5)), (50, bottom_most)):
         ass = tmp_path / "k.ass"
         subs.generate_ass_karaoke({"segments": [{"words": [{"word": "hi", "start": 0.0, "end": 0.5}]}]}, 0, 1,
                                   str(ass), preset="classic_white", position="bottom", offset_y=nudge,
@@ -182,11 +162,3 @@ def test_bounded_margin_keeps_the_block_inside_the_safe_edge(lines, fontsize, pa
         assert bounded - pad >= EDGE and bounded + height + pad <= FRAME_H - EDGE + 0.5, (margin, bounded)
         if EDGE + pad <= margin <= FRAME_H - EDGE - pad - height:
             assert bounded == margin
-
-
-def test_center_margin_is_the_bounded_centre():
-    # Center keeps its formula: the block centre at 960 + nudge, then the same clamp.
-    for n in SERIES:
-        for height, pad in ((40, 4), (260.01, 1), (720, 20)):
-            assert subs._center_margin_v(n, height, pad) == subs._bounded_margin_v(
-                FRAME_H / 2 + STEP * n - height / 2, height, pad)

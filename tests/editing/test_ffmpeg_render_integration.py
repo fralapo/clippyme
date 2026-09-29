@@ -370,8 +370,10 @@ def test_classic_center_offset_moves_the_caption(subs_module, tmp_path, size):
         assert ink and ink[1] >= 0 and ink[3] <= h, (offset, ink)
         tops[offset] = ink[1] / h
     assert tops[-50] < tops[-25] < tops[0] < tops[25] < tops[45], tops
-    # +/-25% of the height from the centre: the line moves by half the frame.
-    assert tops[25] - tops[-25] == pytest.approx(0.5, abs=0.01), tops
+    # +/-25 is half the room between the centred line and a safe edge, each way:
+    # one Auto-size line with outline 2 travels 1920 - 86.67 - 2 * 112 px in all.
+    travel = (1920 - subs_module._CLASSIC_AUTO_FONTSIZE - 2 * (110 + 2)) / 1920
+    assert tops[25] - tops[-25] == pytest.approx(travel / 2, abs=0.01), tops
     # -50 rests against the top safe edge (110 px of 1920) instead of the frame edge.
     assert 0.05 <= tops[-50] <= 0.08, tops
 
@@ -440,17 +442,17 @@ def test_center_nudge_is_centred_at_zero_and_continuous(subs_module, tmp_path, m
         centres[nudge] = (ink[1] + ink[3]) / 2 / h
     # Glyphs sit a little off their line boxes' centre (ascent vs descent).
     assert centres[0] == pytest.approx(0.5, abs=0.006), centres
-    for a, b in ((-1, 0), (0, 1), (10, 11)):
-        assert centres[b] - centres[a] == pytest.approx(0.01, abs=0.003), centres
+    # One unit is 1/50 of the room between the centred block and a safe edge
+    # (0.7-0.9% of the frame here), the same on both sides of 0.
+    steps = [centres[b] - centres[a] for a, b in ((-1, 0), (0, 1), (10, 11))]
+    assert all(0.006 <= s <= 0.0095 for s in steps) and max(steps) - min(steps) <= 0.0025, centres
 
 
 @pytest.mark.parametrize("mode, text, kwargs", _CENTER_CASES)
 def test_center_nudge_moves_monotonically(subs_module, tmp_path, mode, text, kwargs):
     nudges = (-50, -40, -30, -20, -10, -1, 0, 1, 10, 20, 30, 40, 50)
     tops = [_render_nudged(subs_module, tmp_path, mode, "1080x1920", text, n, **kwargs)[1][1] for n in nudges]
-    assert all(b >= a for a, b in zip(tops, tops[1:])), tops  # rests at the edges, never moves back
-    middle = tops[nudges.index(-20):nudges.index(20) + 1]
-    assert all(b > a for a, b in zip(middle, middle[1:])), tops
+    assert all(b > a for a, b in zip(tops, tops[1:])), tops  # every step moves, never back
 
 
 @pytest.mark.parametrize("preset", ["classic_white", "hormozi_bold", "neon_glow", "mrbeast_box",
@@ -508,9 +510,7 @@ def test_edge_nudge_moves_monotonically(subs_module, tmp_path, mode, text, kwarg
         h, ink = _render_nudged(subs_module, tmp_path, mode, "1080x1920", text, n, position, **kwargs)
         _assert_inside(h, ink, (mode, position, n))
         tops.append(ink[1])
-    assert all(b >= a for a, b in zip(tops, tops[1:])), tops  # rests at the edges, never moves back
-    middle = tops[nudges.index(-5):nudges.index(10) + 1]
-    assert all(b > a for a, b in zip(middle, middle[1:])), tops
+    assert all(b > a for a, b in zip(tops, tops[1:])), tops  # every step moves, never back
 
 
 @pytest.mark.parametrize("preset", ["classic_white", "hormozi_bold", "neon_glow", "mrbeast_box",
@@ -549,3 +549,63 @@ def test_letterbox_band_caption_nudge_stays_in_frame(subs_module, tmp_path):
         h, ink = _render_nudged(subs_module, tmp_path, "karaoke", "1080x1920", _KARAOKE_LINES, nudge,
                                 "bottom", band_top=1290)
         _assert_inside(h, ink, nudge)
+
+
+# --- The slider spans the usable range: +/-50 on the safe edges, linear -----
+
+_SAFE = 110 / 1920
+_SLIDER = (-50, -25, 0, 25, 50)
+
+
+def _assert_spans_the_range(tops, bottoms, what):
+    """Normalised ink edges at _SLIDER: every step moves down, the ends rest on
+    the safe edges (ink sits a little inside its line boxes), linear per half."""
+    assert all(b > a for a, b in zip(tops, tops[1:])), (what, tops)
+    assert _SAFE - 0.001 <= tops[0] <= _SAFE + 0.03, (what, tops)
+    assert 1 - _SAFE - 0.03 <= bottoms[-1] <= 1 - _SAFE + 0.001, (what, bottoms)
+    assert tops[1] - tops[0] == pytest.approx(tops[2] - tops[1], abs=0.003), (what, tops)
+    assert tops[4] - tops[3] == pytest.approx(tops[3] - tops[2], abs=0.003), (what, tops)
+
+
+@pytest.mark.parametrize("position", ["top", "center", "bottom"])
+@pytest.mark.parametrize("mode, text, kwargs", _EDGE_CASES)
+def test_slider_spans_the_usable_range(subs_module, tmp_path, mode, text, kwargs, position):
+    """The nudge moved 19.2 px per unit, so the clamp froze the caption over long
+    stretches of the slider (top from -8, bottom from +13, center near the ends)
+    and the other direction never reached the frame edge. Now -50 / +50 rest
+    on the safe edges, 0 is the base and +/-25 halfway, at every resolution."""
+    per_size = {}
+    for size in ("720x1280", "1080x1920", "1440x2560"):
+        tops, bottoms = [], []
+        for n in _SLIDER:
+            h, ink = _render_nudged(subs_module, tmp_path, mode, size, text, n, position, **kwargs)
+            _assert_inside(h, ink, (mode, position, size, n))
+            tops.append(ink[1] / h)
+            bottoms.append(ink[3] / h)
+        _assert_spans_the_range(tops, bottoms, (mode, position, size))
+        per_size[size] = tops
+    for size in ("720x1280", "1440x2560"):
+        assert per_size[size] == pytest.approx(per_size["1080x1920"], abs=0.003), per_size
+
+
+def test_slider_ends_put_the_classic_box_on_the_safe_edges(subs_module, tmp_path):
+    # The box fills the line boxes plus its padding: exactly the clamped block.
+    for position in ("top", "center", "bottom"):
+        h, ink = _render_nudged(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, -50, position,
+                                bg_opacity=1.0)
+        assert ink[1] == pytest.approx(110, abs=1), (position, ink)
+        h, ink = _render_nudged(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, 50, position,
+                                bg_opacity=1.0)
+        assert ink[3] == pytest.approx(1920 - 110, abs=1), (position, ink)
+
+
+def test_letterbox_band_slider_spans_the_usable_range(subs_module, tmp_path):
+    tops, bottoms = [], []
+    for n in _SLIDER:
+        h, ink = _render_nudged(subs_module, tmp_path, "karaoke", "1080x1920", _KARAOKE_LINES, n, "bottom",
+                                band_top=1290)
+        _assert_inside(h, ink, n)
+        tops.append(ink[1] / h)
+        bottoms.append(ink[3] / h)
+    assert 1290 / 1920 <= tops[2] <= 1290 / 1920 + 0.02, tops  # 0 keeps the band
+    _assert_spans_the_range(tops, bottoms, "band")

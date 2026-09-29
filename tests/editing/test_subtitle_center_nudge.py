@@ -1,10 +1,11 @@
 """Center position + vertical nudge: one continuous, bounded placement for both
 subtitle paths.
 
-The nudge is a percentage of the 1920 px frame, positive = down. At 0 the
-caption was centred by libass (middle alignment, which ignores MarginV); any
-other value re-anchored it to the top with MarginV = 960 + nudge, so 0 -> 1
-jumped by half a block and +50 put the block below the frame.
+The nudge slider runs -50..50, positive = down. At 0 the caption was centred
+by libass (middle alignment, which ignores MarginV); any other value
+re-anchored it to the top with MarginV = 960 + nudge, so 0 -> 1 jumped by half
+a block and +50 put the block below the frame. Now 0 centres the block and
+each unit moves it 1/50 of the room between the centre and a safe edge.
 
 These tests read the real karaoke ASS / classic force_style and rebuild the
 caption's line-box block in 1080x1920 frame pixels: libass stacks lines exactly
@@ -18,7 +19,6 @@ import pytest
 from clippyme.editing import subtitles as subs
 
 FRAME_H = 1920
-STEP = FRAME_H / 100  # one slider unit
 SERIES = (-50, -49, -40, -30, -25, -20, -11, -10, -2, -1, 0, 1, 2, 10, 11, 20, 25, 30, 40, 49, 50)
 
 
@@ -85,20 +85,28 @@ def _centre(block):
     return (block[0] + block[1]) / 2
 
 
+def _unit(block):
+    """One slider unit for this block: 1/50 of the room between centre and a safe edge."""
+    top, bottom, pad = block
+    return (FRAME_H - (bottom - top) - 2 * (subs._SUB_MARGIN_EDGE + pad)) / 100
+
+
 @pytest.mark.parametrize("case", _KARAOKE_CASES)
 def test_karaoke_center_nudge_zero_is_centred_and_continuous(tmp_path, case):
-    centres = {n: _centre(_karaoke_block(tmp_path, n, **case)) for n in (-1, 0, 1, 10, 11)}
+    blocks = {n: _karaoke_block(tmp_path, n, **case) for n in (-1, 0, 1, 10, 11)}
+    centres = {n: _centre(b) for n, b in blocks.items()}
     assert centres[0] == pytest.approx(FRAME_H / 2, abs=1)
     for a, b in ((-1, 0), (0, 1), (10, 11)):
-        assert centres[b] - centres[a] == pytest.approx(STEP, abs=1), centres
+        assert centres[b] - centres[a] == pytest.approx(_unit(blocks[0]), abs=1), centres
 
 
 @pytest.mark.parametrize("case", _CLASSIC_CASES)
 def test_classic_center_nudge_zero_is_centred_and_continuous(tmp_path, monkeypatch, case):
-    centres = {n: _centre(_classic_block(tmp_path, monkeypatch, n, **case)) for n in (-1, 0, 1, 10, 11)}
+    blocks = {n: _classic_block(tmp_path, monkeypatch, n, **case) for n in (-1, 0, 1, 10, 11)}
+    centres = {n: _centre(b) for n, b in blocks.items()}
     assert centres[0] == pytest.approx(FRAME_H / 2, abs=1)
     for a, b in ((-1, 0), (0, 1), (10, 11)):
-        assert centres[b] - centres[a] == pytest.approx(STEP, abs=1), centres
+        assert centres[b] - centres[a] == pytest.approx(_unit(blocks[0]), abs=1), centres
 
 
 def _assert_bounded_monotonic_series(blocks):
@@ -111,10 +119,10 @@ def _assert_bounded_monotonic_series(blocks):
         tops.append(top)
     steps = [b - a for a, b in zip(tops, tops[1:])]
     assert all(s >= 0 for s in steps), steps  # never moves backwards
-    # Every step is the nudge distance, except where the block rests at an edge.
+    # Every step is the nudge distance: -50 / +50 are the safe edges.
+    unit = _unit(blocks[0])
     for n0, n1, t0, t1 in zip(SERIES, SERIES[1:], tops, tops[1:]):
-        if all(abs(t - tops[0]) > 1 and abs(t - tops[-1]) > 1 for t in (t0, t1)):
-            assert t1 - t0 == pytest.approx((n1 - n0) * STEP, abs=1), (n0, n1, t0, t1)
+        assert t1 - t0 == pytest.approx((n1 - n0) * unit, abs=1), (n0, n1, t0, t1)
 
 
 @pytest.mark.parametrize("case", _KARAOKE_CASES)
@@ -154,8 +162,8 @@ def test_top_and_bottom_karaoke_output_is_unchanged(tmp_path, position):
                               position=position, offset_y=10)
     text = ass.read_text(encoding="utf-8")
     style = next(ln for ln in text.splitlines() if ln.startswith("Style: Viral,")).split(",")
-    expected = (8, subs._offset_margin("top", 260, 10)) if position == "top" else (
-        2, subs._offset_margin("bottom", 350, 10))
+    expected = (8, subs._nudge_margin_v("top", 260, 10, 40, 4)) if position == "top" else (
+        2, subs._nudge_margin_v("bottom", 350, 10, 40, 4))
     assert (int(style[18]), int(style[21])) == expected
     assert ",Viral,,0,0,0,," in text
 

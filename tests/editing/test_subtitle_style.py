@@ -4,7 +4,7 @@ validation, and preset-honouring uppercase.
 Pure / file-only tests for ``clippyme.editing.subtitles`` — no ffmpeg, no model
 load, host-runnable. These guard the customization flow fixes:
 
-- ``_offset_margin``: a POSITIVE offset_y moves the caption DOWN regardless of
+- ``_nudge_margin_v``: a POSITIVE offset_y moves the caption DOWN regardless of
   anchor (shared convention between the ASS karaoke and the SRT classic path).
 - ``_clamp_fontsize``: out-of-range / garbage sizes never reach ffmpeg.
 - ``generate_ass_karaoke``: invalid colours raise instead of silently going
@@ -14,7 +14,8 @@ import pytest
 
 from clippyme.editing.subtitles import (
     _clamp_fontsize,
-    _offset_margin,
+    _nudge_margin_v,
+    _SUB_MARGIN_EDGE,
     _SUB_FONTSIZE_MAX,
     _SUB_FONTSIZE_MIN,
     generate_ass_karaoke,
@@ -30,34 +31,35 @@ def _transcript(*words):
     return {"segments": [{"words": segs_words}]}
 
 
-# --- _offset_margin: positive = DOWN, both anchors -------------------------
+# --- _nudge_margin_v: positive = DOWN, both anchors ------------------------
+# A 40 px line with 4 px of outline: MarginV 114..1766 keeps it in the safe edge.
 
 def test_offset_zero_is_identity():
-    assert _offset_margin("bottom", 350, 0) == 350
-    assert _offset_margin("top", 260, 0) == 260
+    assert _nudge_margin_v("bottom", 350, 0, 40, 4) == 350
+    assert _nudge_margin_v("top", 260, 0, 40, 4) == 260
 
 
 def test_offset_positive_moves_down_bottom_anchor():
-    # bottom anchor: MarginV is gap from bottom → smaller = lower → subtract
-    assert _offset_margin("bottom", 350, 10) == 350 - int(1920 * 10 / 100)
+    # bottom anchor: MarginV is gap from bottom → smaller = lower
+    assert _nudge_margin_v("bottom", 350, 10, 40, 4) < 350
 
 
 def test_offset_positive_moves_down_top_anchor():
-    # top anchor: MarginV is gap from top → larger = lower → add
-    assert _offset_margin("top", 260, 10) == 260 + int(1920 * 10 / 100)
+    # top anchor: MarginV is gap from top → larger = lower
+    assert _nudge_margin_v("top", 260, 10, 40, 4) > 260
 
 
 def test_offset_negative_moves_up_bottom_anchor():
-    assert _offset_margin("bottom", 350, -10) == 350 + int(1920 * 10 / 100)
+    assert _nudge_margin_v("bottom", 350, -10, 40, 4) > 350
 
 
-def test_offset_never_negative_margin():
-    assert _offset_margin("bottom", 100, 50) == 0
+def test_offset_never_leaves_the_safe_edge():
+    assert _nudge_margin_v("bottom", 100, 50, 40, 4) == _SUB_MARGIN_EDGE + 4
 
 
 def test_offset_garbage_is_zero():
-    assert _offset_margin("bottom", 350, None) == 350
-    assert _offset_margin("bottom", 350, "abc") == 350
+    assert _nudge_margin_v("bottom", 350, None, 40, 4) == 350
+    assert _nudge_margin_v("bottom", 350, "abc", 40, 4) == 350
 
 
 # --- _clamp_fontsize -------------------------------------------------------
@@ -144,7 +146,8 @@ def _style_fields(ass_text):
 @pytest.mark.parametrize("offset_y", [0, 10])
 def test_center_is_top_anchored_from_the_frame_centre(tmp_path, offset_y):
     # libass ignores MarginV for \an5, so center is a top anchor (8) for every
-    # nudge, 0 included: the 40 px line centred, moved 19.2 px per unit, down.
+    # nudge, 0 included: the 40 px line centred (940), each unit moving it down
+    # 1/50 of the 826 px to the lowest safe top (1920 - 110 - 4 - 40).
     out = tmp_path / "x.ass"
     generate_ass_karaoke(
         _transcript("hi"), 0, 10, str(out), preset="classic_white",
@@ -153,7 +156,7 @@ def test_center_is_top_anchored_from_the_frame_centre(tmp_path, offset_y):
     f = _style_fields(out.read_text(encoding="utf-8"))
     align, margin_v = f[-5], f[-2]
     assert align == "8"
-    assert int(margin_v) == 960 - 40 // 2 + round(1920 * offset_y / 100)
+    assert int(margin_v) == round(940 + 826 * offset_y / 50)
 
 
 def test_extreme_fontsize_clamped_in_output(tmp_path):
