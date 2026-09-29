@@ -471,6 +471,22 @@ _SUB_MARGIN_EDGE = 110          # ~10% safe zone from a frame edge (TikTok/Reels
 _SUB_MARGIN_LEFT_RIGHT = 220    # left-align: keep the text column off the right
                                 # edge (where the social buttons sit) by wrapping
                                 # earlier with a wider right margin
+# The margins above are in the 1080x1920 frame space the karaoke script declares
+# (PlayResX/Y). An SRT gets no PlayRes of its own: ffmpeg converts it into an ASS
+# script of 384x288 and libass scales script units to the frame, so the classic
+# SRT path must convert its margins (MarginV 350 would otherwise mean 2333 px).
+_SRT_PLAYRES_X, _SRT_PLAYRES_Y = 384, 288
+
+
+def _srt_script_margins(margin_l, margin_r, margin_v):
+    """Pure: 1080x1920 frame-space margins → the SRT's 384x288 script space."""
+    return (
+        round(margin_l * _SRT_PLAYRES_X / 1080),
+        round(margin_r * _SRT_PLAYRES_X / 1080),
+        round(margin_v * _SRT_PLAYRES_Y / 1920),
+    )
+
+
 # ASS \an numpad code for the centred caption at each vertical anchor.
 _AN_CENTER_BY_VPOS = {"top": 8, "center": 5, "bottom": 2}
 
@@ -878,6 +894,8 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
 
         # Same down-for-positive convention as the karaoke path.
         srt_margin_v = _offset_margin('top' if align_lower == 'top' else 'bottom', 350, offset_y)
+        srt_margin_l, srt_margin_r, srt_margin_v = _srt_script_margins(
+            srt_margin_l, srt_margin_r, srt_margin_v)
         style_string = (
             f"Alignment={ass_alignment},"
             f"Fontname={libass_font_name(font_name)},"

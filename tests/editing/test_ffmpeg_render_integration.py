@@ -204,3 +204,51 @@ def test_srt_force_style_renders_the_chosen_bundled_font(clip, tmp_path, monkeyp
     logs = _verbose_ffmpeg(monkeypatch, subs)
     assert subs.burn_subtitles(clip, str(srt), str(tmp_path / "out.mp4"), font_name=font) is True
     assert set(_libass_picks(logs[-1])) == {font}
+
+
+def _dark_clip(path, size):
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=black:s={size}:d=1.5:r=25",
+                    "-pix_fmt", "yuv420p", path], check=True)
+
+
+def _caption_box(video, png):
+    """(frame size, bounding box of the bright caption pixels) at t=0.5 s."""
+    from PIL import Image
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", video, "-frames:v", "1", png], check=True)
+    image = Image.open(png).convert("L")
+    return image.size, image.point(lambda v: 255 if v > 60 else 0).getbbox()
+
+
+_LONG_CAPTION = "When everybody told me this would never work I kept building anyway"
+
+
+@pytest.mark.parametrize("size", ["1080x1920", "720x1280"])
+@pytest.mark.parametrize("text", ["Hello there", _LONG_CAPTION], ids=["short", "long"])
+def test_classic_and_karaoke_captions_sit_in_the_same_bottom_safe_area(tmp_path, monkeypatch, size, text):
+    """Classic captions used to render 2333 px above the bottom edge (off
+    screen): MarginV 350 is frame space, the SRT script is 384x288."""
+    from clippyme.editing import subtitles as subs
+
+    monkeypatch.setattr(subs, "USER_FONTS_DIR", str(tmp_path / "user_fonts"))
+    video = str(tmp_path / "in.mp4")
+    _dark_clip(video, size)
+    srt = tmp_path / "s.srt"
+    srt.write_text(f"1\n00:00:00,000 --> 00:00:01,500\n{text}\n", encoding="utf-8")
+    words = [{"word": w, "start": 0.0, "end": 1.5} for w in text.split()]
+    ass = str(tmp_path / "k.ass")
+    assert subs.generate_ass_karaoke({"segments": [{"words": words}]}, 0, 1.5, ass,
+                                     preset="classic_white", mode="full_line")
+    renders = {
+        "classic": subs.burn_subtitles(video, str(srt), str(tmp_path / "c.mp4"), font_name="Montserrat-Black"),
+        "karaoke": subs.burn_subtitles(video, ass, str(tmp_path / "k.mp4")),
+    }
+    assert all(ok is True for ok in renders.values())
+    for name in renders:
+        (w, h), box = _caption_box(str(tmp_path / f"{name[0]}.mp4"), str(tmp_path / f"{name}.png"))
+        assert box, f"{name} caption is not in the frame"
+        x0, y0, x1, y1 = box
+        # Side safe zone: margins of 110 px per 1080 (a little less for glyph overhang).
+        assert x0 >= 0.09 * w and w - x1 >= 0.09 * w, (name, box)
+        # Bottom gap: MarginV 350 of 1920 plus the line's descent.
+        assert 0.17 * h <= h - y1 <= 0.22 * h, (name, box)
+        assert y0 > 0, (name, box)
