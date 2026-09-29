@@ -403,14 +403,14 @@ _CENTER_CASES = [
 ]
 
 
-def _render_center(subs, tmp_path, mode, size, text, nudge, **kwargs):
-    """(frame height, ink bbox) of a center-positioned caption nudged by `nudge`."""
-    name = f"{mode}{nudge}"
+def _render_nudged(subs, tmp_path, mode, size, text, nudge, position="center", **kwargs):
+    """(frame height, ink bbox) of a caption at `position` nudged by `nudge`."""
+    name = f"{mode}{position}{nudge}"
     if mode == "karaoke":
-        (_, h), ink, _ = _render_karaoke(subs, tmp_path, size, text, name, position="center",
+        (_, h), ink, _ = _render_karaoke(subs, tmp_path, size, text, name, position=position,
                                          offset_y=nudge, **kwargs)
     else:
-        (_, h), ink, _ = _render_classic(subs, tmp_path, size, text, name, alignment="center",
+        (_, h), ink, _ = _render_classic(subs, tmp_path, size, text, name, alignment=position,
                                          offset_y=nudge, **kwargs)
     return h, ink
 
@@ -426,7 +426,7 @@ def _assert_inside(h, ink, what):
 def test_center_nudge_extremes_keep_the_caption_in_frame(subs_module, tmp_path, mode, text, kwargs, size):
     """+50 used to put the caption below the frame and -50 flush against the top."""
     for nudge in (-50, -49, 49, 50):
-        h, ink = _render_center(subs_module, tmp_path, mode, size, text, nudge, **kwargs)
+        h, ink = _render_nudged(subs_module, tmp_path, mode, size, text, nudge, **kwargs)
         _assert_inside(h, ink, (mode, size, nudge))
 
 
@@ -436,7 +436,7 @@ def test_center_nudge_is_centred_at_zero_and_continuous(subs_module, tmp_path, m
     """0 was centred by libass and +/-1 top-anchored: the caption jumped by half its height."""
     centres = {}
     for nudge in (-1, 0, 1, 10, 11):
-        h, ink = _render_center(subs_module, tmp_path, mode, size, text, nudge, **kwargs)
+        h, ink = _render_nudged(subs_module, tmp_path, mode, size, text, nudge, **kwargs)
         centres[nudge] = (ink[1] + ink[3]) / 2 / h
     # Glyphs sit a little off their line boxes' centre (ascent vs descent).
     assert centres[0] == pytest.approx(0.5, abs=0.006), centres
@@ -447,7 +447,7 @@ def test_center_nudge_is_centred_at_zero_and_continuous(subs_module, tmp_path, m
 @pytest.mark.parametrize("mode, text, kwargs", _CENTER_CASES)
 def test_center_nudge_moves_monotonically(subs_module, tmp_path, mode, text, kwargs):
     nudges = (-50, -40, -30, -20, -10, -1, 0, 1, 10, 20, 30, 40, 50)
-    tops = [_render_center(subs_module, tmp_path, mode, "1080x1920", text, n, **kwargs)[1][1] for n in nudges]
+    tops = [_render_nudged(subs_module, tmp_path, mode, "1080x1920", text, n, **kwargs)[1][1] for n in nudges]
     assert all(b >= a for a, b in zip(tops, tops[1:])), tops  # rests at the edges, never moves back
     middle = tops[nudges.index(-20):nudges.index(20) + 1]
     assert all(b > a for a, b in zip(middle, middle[1:])), tops
@@ -458,7 +458,7 @@ def test_center_nudge_moves_monotonically(subs_module, tmp_path, mode, text, kwa
 def test_center_nudge_every_karaoke_preset_stays_in_frame(subs_module, tmp_path, preset):
     for font_size in (None, 90):
         for nudge in (-50, 0, 50):
-            h, ink = _render_center(subs_module, tmp_path, "karaoke", "1080x1920", _KARAOKE_LINES, nudge,
+            h, ink = _render_nudged(subs_module, tmp_path, "karaoke", "1080x1920", _KARAOKE_LINES, nudge,
                                     preset=preset, font_size=font_size)
             _assert_inside(h, ink, (preset, font_size, nudge))
 
@@ -467,11 +467,85 @@ def test_center_nudge_every_karaoke_preset_stays_in_frame(subs_module, tmp_path,
                                   "Poppins-Black", "Poppins-Medium"])
 def test_center_nudge_every_classic_font_stays_in_frame(subs_module, tmp_path, font):
     for nudge in (-50, 0, 50):
-        h, ink = _render_center(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, nudge, font_name=font)
+        h, ink = _render_nudged(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, nudge, font_name=font)
         _assert_inside(h, ink, (font, nudge))
 
 
 def test_center_nudge_keeps_the_classic_background_box_in_frame(subs_module, tmp_path):
     for nudge in (-50, 50):
-        h, ink = _render_center(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, nudge, bg_opacity=1.0)
+        h, ink = _render_nudged(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, nudge, bg_opacity=1.0)
+        _assert_inside(h, ink, nudge)
+
+
+# --- Top / bottom position + vertical nudge: whole block inside the frame ---
+
+_EDGE_CASES = [
+    pytest.param("karaoke", "HELLO WORLD", {}, id="karaoke-1-line"),
+    pytest.param("karaoke", _KARAOKE_LINES, {}, id="karaoke-2-lines"),
+    pytest.param("karaoke", _KARAOKE_LINES, {"font_size": 90}, id="karaoke-3-lines"),
+    pytest.param("classic", "HELLO WORLD", {}, id="classic-1-line"),
+    pytest.param("classic", _MANY_LINES, {}, id="classic-4-lines"),
+]
+
+
+@pytest.mark.parametrize("size", ["720x1280", "1080x1920", "1440x2560"])
+@pytest.mark.parametrize("position", ["top", "bottom"])
+@pytest.mark.parametrize("mode, text, kwargs", _EDGE_CASES)
+def test_edge_nudge_keeps_the_caption_in_frame(subs_module, tmp_path, mode, text, kwargs, position, size):
+    """Top below about -13 drew the caption above the frame (gone at -50);
+    bottom from about +13 pushed it against the frame's bottom edge."""
+    for nudge in (-50, -25, -14, 14, 25, 50):
+        h, ink = _render_nudged(subs_module, tmp_path, mode, size, text, nudge, position, **kwargs)
+        _assert_inside(h, ink, (mode, position, size, nudge))
+
+
+@pytest.mark.parametrize("position", ["top", "bottom"])
+@pytest.mark.parametrize("mode, text, kwargs", _EDGE_CASES)
+def test_edge_nudge_moves_monotonically(subs_module, tmp_path, mode, text, kwargs, position):
+    nudges = (-50, -40, -30, -20, -10, -5, 0, 5, 10, 20, 30, 40, 50)
+    tops = []
+    for n in nudges:
+        h, ink = _render_nudged(subs_module, tmp_path, mode, "1080x1920", text, n, position, **kwargs)
+        _assert_inside(h, ink, (mode, position, n))
+        tops.append(ink[1])
+    assert all(b >= a for a, b in zip(tops, tops[1:])), tops  # rests at the edges, never moves back
+    middle = tops[nudges.index(-5):nudges.index(10) + 1]
+    assert all(b > a for a, b in zip(middle, middle[1:])), tops
+
+
+@pytest.mark.parametrize("preset", ["classic_white", "hormozi_bold", "neon_glow", "mrbeast_box",
+                                    "minimal_clean", "fire_impact"])
+def test_edge_nudge_every_karaoke_preset_stays_in_frame(subs_module, tmp_path, preset):
+    for position in ("top", "bottom"):
+        for font_size in (None, 90):
+            for nudge in (-50, 50):
+                h, ink = _render_nudged(subs_module, tmp_path, "karaoke", "1080x1920", _KARAOKE_LINES, nudge,
+                                        position, preset=preset, font_size=font_size)
+                _assert_inside(h, ink, (preset, position, font_size, nudge))
+
+
+@pytest.mark.parametrize("font", ["Montserrat-Black", "Bangers-Regular", "Anton-Regular",
+                                  "Poppins-Black", "Poppins-Medium"])
+def test_edge_nudge_every_classic_font_stays_in_frame(subs_module, tmp_path, font):
+    for position in ("top", "bottom"):
+        for nudge in (-50, 50):
+            h, ink = _render_nudged(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, nudge,
+                                    position, font_name=font)
+            _assert_inside(h, ink, (font, position, nudge))
+
+
+def test_edge_nudge_keeps_the_classic_background_box_in_frame(subs_module, tmp_path):
+    for position in ("top", "bottom"):
+        for nudge in (-50, 50):
+            h, ink = _render_nudged(subs_module, tmp_path, "classic", "1080x1920", _MANY_LINES, nudge,
+                                    position, bg_opacity=1.0)
+            _assert_inside(h, ink, (position, nudge))
+
+
+def test_letterbox_band_caption_nudge_stays_in_frame(subs_module, tmp_path):
+    """Reframe-off clips park bottom captions under the video (a top anchor at
+    the band): +50 used to push them below the frame."""
+    for nudge in (-50, 0, 50):
+        h, ink = _render_nudged(subs_module, tmp_path, "karaoke", "1080x1920", _KARAOKE_LINES, nudge,
+                                "bottom", band_top=1290)
         _assert_inside(h, ink, nudge)

@@ -93,7 +93,12 @@ def test_classic_compose_without_font_size_renders_the_auto_size(tmp_path, monke
 
     monkeypatch.setattr(subs.subprocess, "run", lambda cmd, **k: captured.update(cmd=cmd) or _Ok())
     monkeypatch.setattr(subs, "effective_fonts_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(compose, "generate_srt", lambda *a: True)
+    def _srt(transcript, start, end, path, *a):
+        with open(path, "w", encoding="utf-8") as srt:
+            srt.write("1\n00:00:00,000 --> 00:00:01,000\nHi\n")
+        return True
+
+    monkeypatch.setattr(compose, "generate_srt", _srt)
     asyncio.run(compose._apply_subtitles(
         "in.mp4", str(tmp_path), 0, {"transcript": {}}, {"start": 0, "end": 5},
         {"mode": "classic", "font": "Montserrat-Black"}, []))

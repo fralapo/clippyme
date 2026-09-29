@@ -487,24 +487,32 @@ _CLASSIC_AUTO_FONTSIZE = round(13 * _SUB_PLAYRES_Y / 288, 2)
 _FALLBACK_CHAR_WIDTH = 0.6
 
 
+def _bounded_margin_v(margin_v, block_height, pad):
+    """Clamp the MarginV of a top- or bottom-anchored caption block.
+
+    MarginV is the gap between the anchored edge and the block. The whole
+    block, outline / shadow / box ``pad`` included, stays inside the frame-edge
+    safe zone the side margins use; a MarginV that already fits is unchanged.
+    ``block_height`` is lines * Fontsize: libass stacks lines exactly Fontsize
+    apart.
+    """
+    highest = _SUB_PLAYRES_Y - _SUB_MARGIN_EDGE - pad - block_height
+    return round(max(_SUB_MARGIN_EDGE + pad, min(margin_v, highest)))
+
+
 def _center_margin_v(offset_y, block_height, pad):
     """MarginV of a TOP-anchored caption block in the 'center' position.
 
     One formula for every nudge, 0 included: the block's centre sits at the
     frame centre moved by ``offset_y`` percent of the 1920 px frame (positive =
-    down, as in _offset_margin). The whole block, outline / shadow / box
-    ``pad`` included, then stays inside the frame-edge safe zone the side
-    margins use, so +/-50 rest against the bottom/top edge instead of leaving
-    the frame. ``block_height`` is lines * Fontsize: libass stacks lines
-    exactly Fontsize apart.
+    down, as in _offset_margin), then _bounded_margin_v keeps it in frame, so
+    +/-50 rest against the bottom/top edge instead of leaving the frame.
     """
     try:
         shift = _SUB_PLAYRES_Y * float(offset_y) / 100
     except (TypeError, ValueError):
         shift = 0.0
-    desired = _SUB_PLAYRES_Y / 2 + shift - block_height / 2
-    lowest = _SUB_PLAYRES_Y - _SUB_MARGIN_EDGE - pad - block_height
-    return round(max(_SUB_MARGIN_EDGE + pad, min(desired, lowest)))
+    return _bounded_margin_v(_SUB_PLAYRES_Y / 2 + shift - block_height / 2, block_height, pad)
 
 
 def _sfnt_em_per_line(path):
@@ -663,20 +671,27 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         # to the TOP so its first line starts right under the video (MarginV is
         # measured from the top for \an7-9), instead of floating low in the black.
         vpos = "top"
-        margin_v = _offset_margin("top", int(band_top), offset_y)
+        edge_margin_v = _offset_margin("top", int(band_top), offset_y)
     elif position_norm == "top":
         vpos = "top"
-        margin_v = _offset_margin("top", 260, offset_y)
+        edge_margin_v = _offset_margin("top", 260, offset_y)
     elif position_norm == "center":
         # libass IGNORES MarginV for the centred anchor (\an5), so every nudge,
-        # 0 included, is a top anchor placed by _center_margin_v. The margin
-        # depends on how many lines the event wraps to, so each event carries
-        # its own (below); the style keeps the one-line value.
+        # 0 included, is a top anchor placed by _center_margin_v.
         vpos = "top"
-        margin_v = _center_margin_v(offset_y, style["fontsize"], pad)
+        edge_margin_v = None
     else:
         vpos = "bottom"
-        margin_v = _offset_margin("bottom", style.get("margin_v", 350), offset_y)
+        edge_margin_v = _offset_margin("bottom", style.get("margin_v", 350), offset_y)
+
+    def place(block_height):
+        # The margin depends on how many lines an event wraps to, so each event
+        # carries its own (below); the style keeps the one-line value.
+        if edge_margin_v is None:
+            return _center_margin_v(offset_y, block_height, pad)
+        return _bounded_margin_v(edge_margin_v, block_height, pad)
+
+    margin_v = place(style["fontsize"])
     # Horizontal alignment (left = ragged "a bandiera" / center) → ASS \an code +
     # left/right margins. Right is intentionally unavailable (social UI lives
     # there). margin_l/margin_r replace the old fixed 110/110.
@@ -731,9 +746,7 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         # Word group mode: small groups of N words
         groups = _group_words_by_count(words, clip_start, words_per_group)
 
-    centred = band_top is None and position_norm == "center"
-    if centred:
-        width_of = _text_width(style["font"], style["fontsize"])
+    width_of = _text_width(style["font"], style["fontsize"])
 
     for group in groups:
         event_start = max(0, group[0]['start'] - clip_start)
@@ -752,10 +765,10 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         line_text = " ".join(karaoke_parts)
         # Fix: \k tags shouldn't have space before them inside the line
         # Actually the space goes between words, which is correct
-        event_margin_v = 0  # 0 = the style's MarginV
-        if centred:
-            lines = _wrapped_line_count(" ".join(plain_words), width_of, 1080 - margin_l - margin_r)
-            event_margin_v = _center_margin_v(offset_y, lines * style["fontsize"], pad)
+        lines = _wrapped_line_count(" ".join(plain_words), width_of, 1080 - margin_l - margin_r)
+        event_margin_v = place(lines * style["fontsize"])
+        if edge_margin_v is not None and event_margin_v == margin_v:
+            event_margin_v = 0  # 0 = the style's MarginV
 
         ass_content += (
             f"Dialogue: 0,{format_ass_time(event_start)},{format_ass_time(event_end)},"
@@ -951,15 +964,15 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None
         align_lower = str(alignment).lower()
         if align_lower == 'top':
             ass_alignment = 6
-            srt_margin_v = _offset_margin('top', 350, offset_y)
+            edge_margin_v = _offset_margin('top', 350, offset_y)
         elif align_lower in ('middle', 'center'):
             # libass ignores MarginV for the middle codes (9/10/11), so every
             # nudge, 0 included, is a top anchor placed like karaoke (below).
             ass_alignment = 6
-            srt_margin_v = None
+            edge_margin_v = None
         else:  # bottom (and any unknown) → bottom-centre
             ass_alignment = 2
-            srt_margin_v = _offset_margin('bottom', 350, offset_y)
+            edge_margin_v = _offset_margin('bottom', 350, offset_y)
         h_left = normalize_h_align(h_align) == "left"
         if h_left:
             ass_alignment -= 1  # 6→5, 10→9, 2→1 (centre → left at same anchor)
@@ -983,12 +996,14 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None
 
         back_colour = hex_to_ass_color("#000000", 0.0)
 
-        if srt_margin_v is None:
-            # One MarginV serves every cue: centre the tallest (most lines) one.
-            width_of = _text_width(font_name, final_fontsize)
-            lines = max((_wrapped_line_count(cue, width_of, _SUB_PLAYRES_X - srt_margin_l - srt_margin_r)
-                         for cue in _srt_cue_texts(srt_path)), default=1)
+        # One MarginV serves every cue: place the tallest (most lines) one.
+        width_of = _text_width(font_name, final_fontsize)
+        lines = max((_wrapped_line_count(cue, width_of, _SUB_PLAYRES_X - srt_margin_l - srt_margin_r)
+                     for cue in _srt_cue_texts(srt_path)), default=1)
+        if edge_margin_v is None:
             srt_margin_v = _center_margin_v(offset_y, lines * final_fontsize, outline_w)
+        else:
+            srt_margin_v = _bounded_margin_v(edge_margin_v, lines * final_fontsize, outline_w)
 
         style_string = (
             f"PlayResX={_SUB_PLAYRES_X},"
