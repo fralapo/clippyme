@@ -61,3 +61,51 @@ def test_effective_fonts_dir_seeds_user_dir(tmp_path, monkeypatch):
     out = subs.effective_fonts_dir()
     assert out == str(user)
     assert os.path.exists(os.path.join(str(user), "Anton-Regular.ttf"))
+
+
+def test_libass_font_name_maps_bundled_stems_to_full_names(tmp_path, monkeypatch):
+    # libass cannot find a TrueType font by the file stem / PostScript name.
+    # A broken seeded copy in the user dir (older installs) is skipped.
+    import clippyme.editing.subtitles as subs
+    (tmp_path / "Montserrat-Black.ttf").write_bytes(b"\r\n\r\n<!DOCTYPE html>")
+    monkeypatch.setattr(subs, "USER_FONTS_DIR", str(tmp_path))
+    assert subs.libass_font_name("Montserrat-Black") == "Montserrat Black"
+    assert subs.libass_font_name("Montserrat-ExtraBold") == "Montserrat ExtraBold"
+    assert subs.libass_font_name("Bangers-Regular") == "Bangers Regular"
+    assert subs.libass_font_name("Poppins-Medium") == "Poppins Medium"
+    assert subs.libass_font_name("Verdana") == "Verdana"
+
+
+def test_libass_font_name_rejects_unsafe_or_unreadable_full_names(tmp_path, monkeypatch):
+    # The full name reaches an ASS style / ffmpeg filter: an uploaded font whose
+    # metadata carries filter syntax must not get through.
+    import clippyme.editing.subtitles as subs
+    user = tmp_path / "user"
+    user.mkdir()
+    (user / "Evil.ttf").write_bytes(b"\x00\x01\x00\x00")
+    monkeypatch.setattr(subs, "USER_FONTS_DIR", str(user))
+    monkeypatch.setattr(subs, "_sfnt_full_name", lambda path: "Evil',force_style='x")
+    assert subs.libass_font_name("Evil") == "Evil"
+    monkeypatch.setattr(subs, "_sfnt_full_name", lambda path: None)
+    assert subs.libass_font_name("Evil") == "Evil"
+
+
+def test_effective_fonts_dir_replaces_broken_seed_copy_but_keeps_user_fonts(tmp_path, monkeypatch):
+    # Older installs seeded data/fonts with bundled files that were HTML pages.
+    # libass reads the seeded dir, so a broken copy must not shadow the fixed
+    # bundled font; a valid font already there (an upload) is never touched.
+    import clippyme.editing.subtitles as subs
+    bundled = tmp_path / "bundled"
+    user = tmp_path / "user"
+    bundled.mkdir()
+    user.mkdir()
+    (bundled / "Montserrat-Black.ttf").write_bytes(b"\x00\x01\x00\x00bundled")
+    (bundled / "Anton-Regular.ttf").write_bytes(b"\x00\x01\x00\x00bundled")
+    (user / "Montserrat-Black.ttf").write_bytes(b"\r\n\r\n<!DOCTYPE html>")
+    (user / "Anton-Regular.ttf").write_bytes(b"\x00\x01\x00\x00uploaded")
+    monkeypatch.setattr(subs, "FONTS_DIR", str(bundled))
+    monkeypatch.setattr(subs, "USER_FONTS_DIR", str(user))
+    subs.effective_fonts_dir()
+    assert (user / "Montserrat-Black.ttf").read_bytes() == b"\x00\x01\x00\x00bundled"
+    assert (user / "Anton-Regular.ttf").read_bytes() == b"\x00\x01\x00\x00uploaded"
+    assert sorted(p.name for p in user.iterdir()) == ["Anton-Regular.ttf", "Montserrat-Black.ttf"]

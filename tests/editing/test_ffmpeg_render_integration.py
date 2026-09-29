@@ -7,6 +7,7 @@ Covers:
   #1  smartcut afade segment render (audio fades at concat boundaries)
   #4  grade.apply_grade colour pass
   #5  hooks.add_hook_to_video animated entrance (build_hook_overlay_filter)
+  libass font selection: every subtitle preset renders its bundled font
 """
 import os
 import subprocess
@@ -153,3 +154,53 @@ def test_burn_subtitles_with_grade_prevf_renders(clip, tmp_path):
     assert ok is True
     assert os.path.getsize(out) > 0
     assert "video" in _streams(out)
+
+
+def _libass_picks(stderr):
+    """Fonts libass selected, from ffmpeg's verbose `fontselect:` lines. A font
+    loaded from fontsdir shows its PostScript name; a fallback shows a path."""
+    import re
+    return [m.strip() for m in re.findall(r"fontselect: \([^)]*\) -> ([^,]+),", stderr)]
+
+
+def _verbose_ffmpeg(monkeypatch, subs):
+    logs = []
+    real_run = subprocess.run
+
+    def run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "ffmpeg":
+            cmd = ["ffmpeg", "-v", "verbose", *cmd[1:]]
+        result = real_run(cmd, *args, **kwargs)
+        logs.append(result.stderr.decode(errors="replace"))
+        return result
+
+    monkeypatch.setattr(subs.subprocess, "run", run)
+    return logs
+
+
+def test_libass_renders_every_preset_with_its_bundled_font(clip, tmp_path, monkeypatch):
+    """Presets name fonts by file stem; libass must load that file, not fall
+    back to a system font (it used to render every preset in DejaVu Sans)."""
+    from clippyme.editing import subtitles as subs
+
+    monkeypatch.setattr(subs, "USER_FONTS_DIR", str(tmp_path / "user_fonts"))
+    transcript = {"segments": [{"words": [{"word": "Hello", "start": 0.0, "end": 1.0}]}]}
+    logs = _verbose_ffmpeg(monkeypatch, subs)
+    for preset, style in subs.SUBTITLE_PRESETS.items():
+        ass = str(tmp_path / f"{preset}.ass")
+        assert subs.generate_ass_karaoke(transcript, 0, 1.5, ass, preset=preset)
+        assert subs.burn_subtitles(clip, ass, str(tmp_path / f"{preset}.mp4")) is True
+        picks = _libass_picks(logs[-1])
+        assert picks and set(picks) == {style["font"]}, (preset, picks)
+
+
+@pytest.mark.parametrize("font", ["Montserrat-Black", "Montserrat-ExtraBold", "Poppins-Black"])
+def test_srt_force_style_renders_the_chosen_bundled_font(clip, tmp_path, monkeypatch, font):
+    from clippyme.editing import subtitles as subs
+
+    monkeypatch.setattr(subs, "USER_FONTS_DIR", str(tmp_path / "user_fonts"))
+    srt = tmp_path / "s.srt"
+    srt.write_text("1\n00:00:00,000 --> 00:00:01,500\nHello\n", encoding="utf-8")
+    logs = _verbose_ffmpeg(monkeypatch, subs)
+    assert subs.burn_subtitles(clip, str(srt), str(tmp_path / "out.mp4"), font_name=font) is True
+    assert set(_libass_picks(logs[-1])) == {font}

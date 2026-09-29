@@ -175,4 +175,4 @@ def test_extreme_fontsize_clamped_in_output(tmp_path):
     # the Style line carries the clamped size, never the raw 100000
     text = out.read_text(encoding="utf-8")
     assert "100000" not in text
-    assert f"Viral,Montserrat-Black,{_SUB_FONTSIZE_MAX}," in text
+    assert f"Viral,Montserrat Black,{_SUB_FONTSIZE_MAX}," in text

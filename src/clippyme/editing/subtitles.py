@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import struct
 import subprocess
 
 from clippyme.media.encode import ffmpeg_timeout, x264_video_args
@@ -342,12 +343,65 @@ def list_available_fonts():
     return sorted(names)
 
 
+def _sfnt_full_name(path):
+    """Full font name (name ID 4) of a TTF/OTF/TTC file, or None."""
+    try:
+        with open(path, "rb") as file:
+            data = file.read()
+        base = struct.unpack(">I", data[12:16])[0] if data[:4] == b"ttcf" else 0
+        (count,) = struct.unpack(">H", data[base + 4:base + 6])
+        for i in range(count):
+            tag, _, name_off, _ = struct.unpack(">4sIII", data[base + 12 + 16 * i:base + 28 + 16 * i])
+            if tag == b"name":
+                break
+        else:
+            return None
+        _, records, strings = struct.unpack(">HHH", data[name_off:name_off + 6])
+        found = None
+        for i in range(records):
+            rec = name_off + 6 + 12 * i
+            platform, _, lang, name_id, length, off = struct.unpack(">HHHHHH", data[rec:rec + 12])
+            if name_id != 4:
+                continue
+            raw = data[name_off + strings + off:name_off + strings + off + length]
+            value = raw.decode("utf-16-be" if platform in (0, 3) else "latin-1")
+            if platform == 3 and lang == 0x409:
+                return value
+            found = found or value
+        return found
+    except (OSError, struct.error, UnicodeDecodeError):
+        return None
+
+
+def libass_font_name(font_name):
+    """The name libass needs to find a bundled or uploaded font.
+
+    Presets and the UI name a font by its file stem (`Montserrat-Black`), which
+    is its PostScript name. libass matches TrueType fonts only by family or full
+    name, so the stem alone silently falls back to a system font. This returns
+    the file's full name (`Montserrat Black`). Unknown fonts, unreadable files
+    and full names outside the filter-safe allow-list keep the given name.
+    """
+    for directory in (USER_FONTS_DIR, FONTS_DIR):
+        for ext in _FONT_EXTS:
+            full_name = _sfnt_full_name(os.path.join(directory, f"{font_name}{ext}"))
+            if full_name and _FONT_NAME_RE.match(full_name):
+                return full_name
+    return font_name
+
+
 def effective_fonts_dir():
     """Single directory libass should scan. Seeds the writable user-fonts dir
     with copies of the bundled faces so uploaded + bundled fonts coexist behind
     one `fontsdir` path. Falls back to the bundled dir if the user dir can't be
-    created/written (read-only host)."""
+    created/written (read-only host).
+
+    A copy that is not a valid font is re-seeded: older installs copied bundled
+    files that were HTML pages, and uploads are validated, so an invalid file
+    here is always a broken seed. Valid files (uploads) are never replaced."""
     import shutil
+    import tempfile
+    from clippyme.editing.hook_overlay import _is_valid_font_file
     try:
         os.makedirs(USER_FONTS_DIR, exist_ok=True)
         if os.path.isdir(FONTS_DIR) and os.path.abspath(FONTS_DIR) != os.path.abspath(USER_FONTS_DIR):
@@ -355,8 +409,13 @@ def effective_fonts_dir():
                 if not fn.lower().endswith(_FONT_EXTS):
                     continue
                 dst = os.path.join(USER_FONTS_DIR, fn)
-                if not os.path.exists(dst):
-                    shutil.copy2(os.path.join(FONTS_DIR, fn), dst)
+                if not _is_valid_font_file(dst):
+                    # temp + rename: the new directory entry also invalidates
+                    # fontconfig's per-directory cache of the old broken file.
+                    fd, tmp = tempfile.mkstemp(prefix=".font-", dir=USER_FONTS_DIR)
+                    os.close(fd)
+                    shutil.copy2(os.path.join(FONTS_DIR, fn), tmp)
+                    os.replace(tmp, dst)
         return USER_FONTS_DIR
     except OSError:
         return FONTS_DIR
@@ -558,7 +617,7 @@ def generate_ass_karaoke(transcript, clip_start, clip_end, output_path,
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Viral,{style['font']},{style['fontsize']},"
+        f"Style: Viral,{libass_font_name(style['font'])},{style['fontsize']},"
         f"{primary_colour},{secondary_colour},{outline_colour},{back_colour},"
         f"-1,0,0,0,100,100,0,0,{style['border_style']},{style['outline_width']},{style.get('shadow', 0)},"
         f"{ass_alignment},{margin_l},{margin_r},{margin_v},1\n\n"  # MarginL/R: edge safe-zone (TikTok/Reels), wider right when left-aligned
@@ -821,7 +880,7 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         srt_margin_v = _offset_margin('top' if align_lower == 'top' else 'bottom', 350, offset_y)
         style_string = (
             f"Alignment={ass_alignment},"
-            f"Fontname={font_name},"
+            f"Fontname={libass_font_name(font_name)},"
             f"Fontsize={final_fontsize},"
             f"PrimaryColour={primary_colour},"
             f"OutlineColour={outline_colour},"
