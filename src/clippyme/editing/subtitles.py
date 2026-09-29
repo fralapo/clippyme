@@ -471,20 +471,15 @@ _SUB_MARGIN_EDGE = 110          # ~10% safe zone from a frame edge (TikTok/Reels
 _SUB_MARGIN_LEFT_RIGHT = 220    # left-align: keep the text column off the right
                                 # edge (where the social buttons sit) by wrapping
                                 # earlier with a wider right margin
-# The margins above are in the 1080x1920 frame space the karaoke script declares
-# (PlayResX/Y). An SRT gets no PlayRes of its own: ffmpeg converts it into an ASS
-# script of 384x288 and libass scales script units to the frame, so the classic
-# SRT path must convert its margins (MarginV 350 would otherwise mean 2333 px).
-_SRT_PLAYRES_X, _SRT_PLAYRES_Y = 384, 288
-
-
-def _srt_script_margins(margin_l, margin_r, margin_v):
-    """Pure: 1080x1920 frame-space margins → the SRT's 384x288 script space."""
-    return (
-        round(margin_l * _SRT_PLAYRES_X / 1080),
-        round(margin_r * _SRT_PLAYRES_X / 1080),
-        round(margin_v * _SRT_PLAYRES_Y / 1920),
-    )
+# Sizes, outlines and the margins above are in the 1080x1920 script space the
+# karaoke ASS declares (PlayResX/Y). ffmpeg turns an SRT into a 384x288 script
+# instead: MarginV 350 meant 2333 px, a font size 6.7x the karaoke one, and on a
+# 9:16 frame libass scales its outline by 2.8 across and 6.7 down. The classic
+# path sets PlayResX/Y through force_style so every value means frame pixels.
+_SUB_PLAYRES_X, _SUB_PLAYRES_Y = 1080, 1920
+# Classic "Auto" size (no size chosen; the classic UI has no size control): the
+# size it always had, ffmpeg's SRT default 16 * 0.85 = 13 units of 288 lines.
+_CLASSIC_AUTO_FONTSIZE = round(13 * _SUB_PLAYRES_Y / 288, 2)
 
 
 # ASS \an numpad code for the centred caption at each vertical anchor.
@@ -823,7 +818,7 @@ _HEX_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
 _FONT_NAME_RE = re.compile(r'^[A-Za-z0-9 _\-]{1,40}$')
 
 
-def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
+def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None,
                    font_name="Verdana", font_color="#FFFFFF",
                    border_color="#000000", border_width=2,
                    bg_color="#000000", bg_opacity=0.0, offset_y=0,
@@ -861,15 +856,24 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         # bottom 1/2/3, top 5/6/7, middle 9/10/11 = left/centre/right. We only
         # offer left + centre (right is where the social UI sits). `alignment`
         # carries the vertical position; `h_align` the horizontal one.
+        # Same down-for-positive offset convention as the karaoke path.
         align_lower = str(alignment).lower()
         if align_lower == 'top':
             ass_alignment = 6
+            srt_margin_v = _offset_margin('top', 350, offset_y)
+        elif align_lower in ('middle', 'center') and offset_y:
+            # libass ignores MarginV for the middle codes, so, as in karaoke,
+            # re-anchor to the top with a margin measured from the frame centre.
+            ass_alignment = 6
+            srt_margin_v = _offset_margin('top', _SUB_PLAYRES_Y // 2, offset_y)
         elif align_lower in ('middle', 'center'):
             # 'center' is the value the frontend always sends; alias it to the
             # legacy SSA middle-centre code (it used to fall through to bottom).
             ass_alignment = 10
+            srt_margin_v = 350
         else:  # bottom (and any unknown) → bottom-centre
             ass_alignment = 2
+            srt_margin_v = _offset_margin('bottom', 350, offset_y)
         h_left = normalize_h_align(h_align) == "left"
         if h_left:
             ass_alignment -= 1  # 6→5, 10→9, 2→1 (centre → left at same anchor)
@@ -877,7 +881,8 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
         else:
             srt_margin_l, srt_margin_r = _SUB_MARGIN_EDGE, _SUB_MARGIN_EDGE
 
-        final_fontsize = _clamp_fontsize(int(fontsize * 0.85), 10)
+        # A chosen size is the shared slider value, in frame pixels like karaoke.
+        final_fontsize = _clamp_fontsize(int(fontsize * 0.85), 10) if fontsize else _CLASSIC_AUTO_FONTSIZE
 
         primary_colour = hex_to_ass_color(font_color, 1.0)
 
@@ -892,11 +897,9 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=16,
 
         back_colour = hex_to_ass_color("#000000", 0.0)
 
-        # Same down-for-positive convention as the karaoke path.
-        srt_margin_v = _offset_margin('top' if align_lower == 'top' else 'bottom', 350, offset_y)
-        srt_margin_l, srt_margin_r, srt_margin_v = _srt_script_margins(
-            srt_margin_l, srt_margin_r, srt_margin_v)
         style_string = (
+            f"PlayResX={_SUB_PLAYRES_X},"
+            f"PlayResY={_SUB_PLAYRES_Y},"
             f"Alignment={ass_alignment},"
             f"Fontname={libass_font_name(font_name)},"
             f"Fontsize={final_fontsize},"

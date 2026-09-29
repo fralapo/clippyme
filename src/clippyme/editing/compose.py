@@ -363,7 +363,7 @@ async def _apply_subtitles(
                 srt_path,
                 sub_output,
                 alignment=subtitle_params.get("position", "bottom"),
-                fontsize=subtitle_params.get("font_size", 16),
+                fontsize=subtitle_params.get("font_size"),
                 font_name=subtitle_params.get("font", "Verdana"),
                 font_color=subtitle_params.get("font_color", "#FFFFFF"),
                 border_color=subtitle_params.get("border_color", "#000000"),

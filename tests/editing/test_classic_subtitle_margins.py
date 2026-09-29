@@ -1,10 +1,12 @@
-"""Classic (SRT) subtitle margins must land where the karaoke ones do.
+"""Classic (SRT) subtitle geometry must mean what it means for karaoke.
 
-The classic path renders an SRT with `force_style`. ffmpeg turns an SRT into an
-ASS script with PlayRes 384x288 and libass scales that script to the frame, so
-a margin written in the 1080x1920 frame space the karaoke path uses (MarginV
-350) ends up 350 * 1920/288 = 2333 px from the bottom edge: off screen. These
-tests read the real force_style and map it back to frame pixels.
+The classic path renders an SRT with `force_style`. ffmpeg gives an SRT an ASS
+script of 384x288 (unless force_style sets PlayResX/Y) and libass scales that
+script to the frame: margins and font size by frame height / PlayResY (margins
+L/R by width / PlayResX), the outline by width / PlayResX horizontally and
+height / PlayResY vertically. The karaoke path writes all of these in a
+1080x1920 script. These tests read the real force_style and map it back to
+frame pixels on a 1080x1920 frame.
 """
 import re
 
@@ -13,7 +15,6 @@ import pytest
 from clippyme.editing import subtitles as subs
 
 FRAME_W, FRAME_H = 1080, 1920
-SRT_PLAYRES_X, SRT_PLAYRES_Y = 384, 288  # what ffmpeg gives an SRT (checked in Docker)
 
 
 def _classic_force_style(tmp_path, monkeypatch, **kwargs):
@@ -33,21 +34,23 @@ def _classic_force_style(tmp_path, monkeypatch, **kwargs):
     return dict(item.split("=", 1) for item in style.split(","))
 
 
-def _frame_px(style, key):
-    scale = FRAME_H / SRT_PLAYRES_Y if key == "MarginV" else FRAME_W / SRT_PLAYRES_X
-    return int(style[key]) * scale
+def _frame_px(style, key, axis="y"):
+    """A force_style value in frame pixels along `axis` (script size checked in Docker)."""
+    script_w, script_h = int(style.get("PlayResX", 384)), int(style.get("PlayResY", 288))
+    scale = FRAME_W / script_w if axis == "x" else FRAME_H / script_h
+    return float(style[key]) * scale
 
 
 @pytest.mark.parametrize("alignment", ["bottom", "top"])
 def test_classic_vertical_margin_matches_karaoke_in_frame_pixels(tmp_path, monkeypatch, alignment):
     style = _classic_force_style(tmp_path, monkeypatch, alignment=alignment)
-    assert _frame_px(style, "MarginV") == pytest.approx(350, abs=FRAME_H / SRT_PLAYRES_Y)
+    assert _frame_px(style, "MarginV") == pytest.approx(350, abs=FRAME_H / 288)
 
 
 def test_classic_offset_moves_caption_by_the_same_frame_distance_as_karaoke(tmp_path, monkeypatch):
     style = _classic_force_style(tmp_path, monkeypatch, alignment="bottom", offset_y=10)
     expected = subs._offset_margin("bottom", 350, 10)  # karaoke MarginV, frame px
-    assert _frame_px(style, "MarginV") == pytest.approx(expected, abs=FRAME_H / SRT_PLAYRES_Y)
+    assert _frame_px(style, "MarginV") == pytest.approx(expected, abs=FRAME_H / 288)
 
 
 @pytest.mark.parametrize("h_align, left, right", [
@@ -56,15 +59,94 @@ def test_classic_offset_moves_caption_by_the_same_frame_distance_as_karaoke(tmp_
 ])
 def test_classic_side_margins_match_karaoke_in_frame_pixels(tmp_path, monkeypatch, h_align, left, right):
     style = _classic_force_style(tmp_path, monkeypatch, h_align=h_align)
-    assert _frame_px(style, "MarginL") == pytest.approx(left, abs=FRAME_W / SRT_PLAYRES_X)
-    assert _frame_px(style, "MarginR") == pytest.approx(right, abs=FRAME_W / SRT_PLAYRES_X)
+    assert _frame_px(style, "MarginL", "x") == pytest.approx(left, abs=FRAME_W / 384)
+    assert _frame_px(style, "MarginR", "x") == pytest.approx(right, abs=FRAME_W / 384)
 
 
-def test_classic_font_size_and_style_fields_are_unchanged(tmp_path, monkeypatch):
-    style = _classic_force_style(tmp_path, monkeypatch, fontsize=16, border_width=2)
-    assert style["Fontsize"] == "13"  # int(16 * 0.85), as before
-    assert style["Outline"] == "2" and style["Shadow"] == "0" and style["Bold"] == "1"
-    assert style["Alignment"] == "2"
+@pytest.mark.parametrize("font_size", [20, 40, 60])
+def test_classic_font_size_is_frame_pixels_like_karaoke(tmp_path, monkeypatch, font_size):
+    # The shared slider value is a 1080x1920 font size (karaoke writes it as is);
+    # classic keeps its 0.85 factor. It used to be read in the 288-line script:
+    # 40 rendered as 34 * 1920/288 = 227 px, 6.7x the karaoke size.
+    style = _classic_force_style(tmp_path, monkeypatch, fontsize=font_size)
+    assert _frame_px(style, "Fontsize") == pytest.approx(int(font_size * 0.85), abs=0.5)
+
+
+def test_classic_auto_font_size_is_unchanged(tmp_path, monkeypatch):
+    # No size chosen (the classic UI has no size control): the size classic
+    # captions always had, ffmpeg's SRT default 16 * 0.85 = 13 script units.
+    for kwargs in ({}, {"fontsize": None}, {"fontsize": 0}):
+        style = _classic_force_style(tmp_path, monkeypatch, **kwargs)
+        assert _frame_px(style, "Fontsize") == pytest.approx(13 * FRAME_H / 288, abs=0.1)
+
+
+def test_classic_compose_without_font_size_renders_the_auto_size(tmp_path, monkeypatch):
+    import asyncio
+
+    from clippyme.editing import compose
+
+    captured = {}
+
+    class _Ok:
+        returncode = 0
+        stderr = b""
+
+    monkeypatch.setattr(subs.subprocess, "run", lambda cmd, **k: captured.update(cmd=cmd) or _Ok())
+    monkeypatch.setattr(subs, "effective_fonts_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(compose, "generate_srt", lambda *a: True)
+    asyncio.run(compose._apply_subtitles(
+        "in.mp4", str(tmp_path), 0, {"transcript": {}}, {"start": 0, "end": 5},
+        {"mode": "classic", "font": "Montserrat-Black"}, []))
+    vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
+    style = dict(i.split("=", 1) for i in re.search(r"force_style='([^']*)'", vf).group(1).split(","))
+    assert _frame_px(style, "Fontsize") == pytest.approx(13 * FRAME_H / 288, abs=0.1)
+
+
+def test_classic_tiny_font_size_is_clamped_not_zero(tmp_path, monkeypatch):
+    style = _classic_force_style(tmp_path, monkeypatch, fontsize=1)
+    assert _frame_px(style, "Fontsize") == pytest.approx(subs._SUB_FONTSIZE_MIN, abs=0.5)
+
+
+@pytest.mark.parametrize("border_width, expected", [(0, 1), (1, 1), (2, 2), (6, 6)])
+def test_classic_outline_is_frame_pixels_on_both_axes(tmp_path, monkeypatch, border_width, expected):
+    # Karaoke's outline_width is 1080x1920 pixels on both axes. In the 384x288
+    # script the default 2 rendered 5.6 px wide and 13.3 px tall. 0 keeps its
+    # 1 px floor, as before.
+    style = _classic_force_style(tmp_path, monkeypatch, border_width=border_width)
+    assert _frame_px(style, "Outline", "x") == pytest.approx(expected, abs=0.05)
+    assert _frame_px(style, "Outline", "y") == pytest.approx(expected, abs=0.05)
+
+
+def test_classic_background_box_padding_matches_karaoke_box(tmp_path, monkeypatch):
+    # BorderStyle 3 draws the box with Outline as padding; mrbeast_box uses 1.
+    style = _classic_force_style(tmp_path, monkeypatch, bg_opacity=0.6)
+    assert style["BorderStyle"] == "3"
+    assert _frame_px(style, "Outline", "x") == pytest.approx(1, abs=0.05)
+    assert _frame_px(style, "Outline", "y") == pytest.approx(1, abs=0.05)
+
+
+@pytest.mark.parametrize("offset_y", [-50, -25, 25, 45])
+def test_classic_center_offset_moves_the_caption(tmp_path, monkeypatch, offset_y):
+    # libass ignores MarginV for middle alignment (SSA 9/10/11), so the nudge was
+    # a no-op. Like karaoke, re-anchor to the top with a margin from the centre.
+    style = _classic_force_style(tmp_path, monkeypatch, alignment="center", offset_y=offset_y)
+    assert style["Alignment"] == "6"
+    assert _frame_px(style, "MarginV") == pytest.approx(
+        subs._offset_margin("top", FRAME_H // 2, offset_y), abs=FRAME_H / 288)
+    left = _classic_force_style(tmp_path, monkeypatch, alignment="center", offset_y=offset_y, h_align="left")
+    assert left["Alignment"] == "5"
+
+
+def test_classic_center_without_offset_stays_middle(tmp_path, monkeypatch):
+    assert _classic_force_style(tmp_path, monkeypatch, alignment="center")["Alignment"] == "10"
+    assert _classic_force_style(tmp_path, monkeypatch, alignment="center", h_align="left")["Alignment"] == "9"
+
+
+@pytest.mark.parametrize("alignment, code", [("bottom", "2"), ("top", "6")])
+def test_classic_style_fields_are_unchanged(tmp_path, monkeypatch, alignment, code):
+    style = _classic_force_style(tmp_path, monkeypatch, alignment=alignment, offset_y=10)
+    assert style["Alignment"] == code
+    assert style["Shadow"] == "0" and style["Bold"] == "1" and style["BorderStyle"] == "1"
 
 
 def test_karaoke_margins_stay_in_frame_space(tmp_path):

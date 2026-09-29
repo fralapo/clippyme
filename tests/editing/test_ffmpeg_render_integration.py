@@ -252,3 +252,137 @@ def test_classic_and_karaoke_captions_sit_in_the_same_bottom_safe_area(tmp_path,
         # Bottom gap: MarginV 350 of 1920 plus the line's descent.
         assert 0.17 * h <= h - y1 <= 0.22 * h, (name, box)
         assert y0 > 0, (name, box)
+
+# --- Classic caption scale: same frame-space meaning as karaoke --------------
+
+def _grey_clip(path, size):
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=0x808080:s={size}:d=1.5:r=25",
+                    "-pix_fmt", "yuv420p", path], check=True)
+
+
+def _ink_and_fill(video, png):
+    """Bounding boxes on a grey frame: text + outline, and the white fill only."""
+    from PIL import Image
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "0.5", "-i", video, "-frames:v", "1", png], check=True)
+    image = Image.open(png).convert("L")
+    ink = image.point(lambda v: 255 if abs(v - 128) > 40 else 0).getbbox()
+    fill = image.point(lambda v: 255 if v > 200 else 0).getbbox()
+    return image.size, ink, fill
+
+
+def _render_classic(subs, tmp_path, size, text, name, **kwargs):
+    video = str(tmp_path / f"grey{size}.mp4")
+    if not os.path.exists(video):
+        _grey_clip(video, size)
+    srt = tmp_path / "s.srt"
+    srt.write_text(f"1\n00:00:00,000 --> 00:00:01,500\n{text}\n", encoding="utf-8")
+    out = str(tmp_path / f"{name}.mp4")
+    assert subs.burn_subtitles(video, str(srt), out, **{"font_name": "Montserrat-Black", **kwargs}) is True
+    return _ink_and_fill(out, str(tmp_path / f"{name}.png"))
+
+
+def _render_karaoke(subs, tmp_path, size, text, name, **kwargs):
+    video = str(tmp_path / f"grey{size}.mp4")
+    if not os.path.exists(video):
+        _grey_clip(video, size)
+    words = [{"word": w, "start": 0.0, "end": 1.5} for w in text.split()]
+    ass = str(tmp_path / f"{name}.ass")
+    assert subs.generate_ass_karaoke({"segments": [{"words": words}]}, 0, 1.5, ass,
+                                     preset="classic_white", mode="full_line", **kwargs)
+    out = str(tmp_path / f"{name}.mp4")
+    assert subs.burn_subtitles(video, ass, out) is True
+    return _ink_and_fill(out, str(tmp_path / f"{name}.png"))
+
+
+def _stroke(ink, fill):
+    """Outline thickness per side, horizontal and vertical, in pixels."""
+    return ((ink[2] - ink[0]) - (fill[2] - fill[0])) / 2, ((ink[3] - ink[1]) - (fill[3] - fill[1])) / 2
+
+
+@pytest.fixture()
+def subs_module(tmp_path, monkeypatch):
+    if not _has_ffmpeg():
+        pytest.skip("ffmpeg not available")
+    from clippyme.editing import subtitles as subs
+    monkeypatch.setattr(subs, "USER_FONTS_DIR", str(tmp_path / "user_fonts"))
+    return subs
+
+
+@pytest.mark.parametrize("font", ["Montserrat-Black", "Bangers-Regular", "Anton-Regular",
+                                  "Poppins-Black", "Poppins-Medium"])
+def test_classic_font_size_renders_like_karaoke(subs_module, tmp_path, font):
+    """Slider 40 used to render classic glyphs 6.7x taller than karaoke 40.
+    Classic keeps its 0.85 factor, so it must match karaoke at int(40 * 0.85)."""
+    _, _, classic = _render_classic(subs_module, tmp_path, "1080x1920", "HELLO", "c", font_name=font, fontsize=40)
+    _, _, karaoke = _render_karaoke(subs_module, tmp_path, "1080x1920", "hello", "k", font_name=font,
+                                    font_size=int(40 * 0.85), outline_width=1)
+    assert abs((classic[3] - classic[1]) - (karaoke[3] - karaoke[1])) <= 2, (font, classic, karaoke)
+
+
+def test_classic_font_size_slider_is_monotonic_and_proportional(subs_module, tmp_path):
+    heights = []
+    for size in (20, 40, 60):
+        _, _, fill = _render_classic(subs_module, tmp_path, "1080x1920", "HI", f"fs{size}", fontsize=size)
+        heights.append(fill[3] - fill[1])
+    assert heights[0] < heights[1] < heights[2], heights
+    assert heights[2] / heights[0] == pytest.approx(int(60 * 0.85) / int(20 * 0.85), rel=0.1), heights
+
+
+@pytest.mark.parametrize("border_width", [2, 6])
+def test_classic_outline_renders_like_karaoke(subs_module, tmp_path, border_width):
+    """The classic outline was drawn in the 384x288 SRT script: 2 became 5.6 px
+    wide and 13.3 px tall on a 1080x1920 frame. It must match karaoke's stroke."""
+    _, ink, fill = _render_classic(subs_module, tmp_path, "1080x1920", "HELLO", "c",
+                                   fontsize=60, border_width=border_width)
+    _, k_ink, k_fill = _render_karaoke(subs_module, tmp_path, "1080x1920", "hello", "k",
+                                       font_size=int(60 * 0.85), outline_width=border_width)
+    (cx, cy), (kx, ky) = _stroke(ink, fill), _stroke(k_ink, k_fill)
+    assert abs(cx - kx) <= 1 and abs(cy - ky) <= 1, ((cx, cy), (kx, ky))
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"fontsize": 40, "border_width": 4}], ids=["auto", "explicit"])
+def test_classic_caption_scale_is_resolution_independent(subs_module, tmp_path, kwargs):
+    ratios = []
+    for size in ("720x1280", "1080x1920", "1440x2560"):
+        (_, h), ink, fill = _render_classic(subs_module, tmp_path, size, "HELLO", f"r{size}", **kwargs)
+        ratios.append(((fill[3] - fill[1]) / h, _stroke(ink, fill)[0] / h, _stroke(ink, fill)[1] / h))
+    for glyph, stroke_x, stroke_y in ratios[1:]:
+        assert glyph == pytest.approx(ratios[0][0], abs=0.002), ratios
+        assert stroke_x == pytest.approx(ratios[0][1], abs=0.0015), ratios
+        assert stroke_y == pytest.approx(ratios[0][2], abs=0.0015), ratios
+
+
+def test_classic_auto_font_size_is_unchanged(subs_module, tmp_path):
+    """No size chosen: glyphs keep the height they always had (~2.1% of the frame)."""
+    for size in ("720x1280", "1080x1920", "1440x2560"):
+        (_, h), _, fill = _render_classic(subs_module, tmp_path, size, "HELLO WORLD", f"a{size}")
+        assert (fill[3] - fill[1]) / h == pytest.approx(0.0207, abs=0.001), (size, fill)
+
+
+@pytest.mark.parametrize("size", ["720x1280", "1080x1920", "1440x2560"])
+def test_classic_center_offset_moves_the_caption(subs_module, tmp_path, size):
+    """libass ignores MarginV for middle alignment: every nudge rendered at the
+    exact centre. Like karaoke, the caption now moves (positive = down)."""
+    tops = {}
+    for offset in (-50, -25, 0, 25, 45):
+        (_, h), ink, _ = _render_classic(subs_module, tmp_path, size, "HELLO WORLD", f"o{offset}",
+                                         alignment="center", offset_y=offset)
+        assert ink and ink[1] >= 0 and ink[3] <= h, (offset, ink)
+        tops[offset] = ink[1] / h
+    assert tops[-50] < tops[-25] < tops[0] < tops[25] < tops[45], tops
+    # Top-anchored at the centre +/- 25% of the height: the line moves by half the frame.
+    assert tops[25] - tops[-25] == pytest.approx(0.5, abs=0.01), tops
+    assert tops[-50] < 0.03, tops
+
+
+@pytest.mark.parametrize("size", ["720x1280", "1080x1920", "1440x2560"])
+@pytest.mark.parametrize("kwargs", [{}, {"fontsize": 60}], ids=["auto", "slider60"])
+def test_classic_long_caption_wraps_inside_the_safe_area(subs_module, tmp_path, size, kwargs):
+    for vpos in ("bottom", "top"):
+        (w, h), ink, _ = _render_classic(subs_module, tmp_path, size, _LONG_CAPTION, vpos, alignment=vpos, **kwargs)
+        x0, y0, x1, y1 = ink
+        assert x0 >= 0.09 * w and w - x1 >= 0.09 * w, (vpos, ink)
+        if vpos == "bottom":
+            assert 0.17 * h <= h - y1 <= 0.22 * h, (vpos, ink)
+        else:
+            assert 0.17 * h <= y0 <= 0.2 * h, (vpos, ink)
