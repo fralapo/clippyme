@@ -20,7 +20,7 @@ proxying `/api`, `/videos`, `/thumbnails` and `/fonts` to the backend).
 
 ```bash
 npm ci
-npm run lint    # ESLint (entrypoint eslint.a11y.config.js)
+npm run lint    # ESLint (eslint.config.js)
 npm test        # Vitest + jsdom, including an Axe accessibility test
 npm run build
 ```

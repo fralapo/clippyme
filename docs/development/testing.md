@@ -48,8 +48,7 @@ npm test
 npm run build
 ```
 
-`npm run lint` uses `eslint.a11y.config.js`, the lint entrypoint, which
-re-exports the base `eslint.config.js`. Accessibility is tested on rendered
+`npm run lint` uses `eslint.config.js`. Accessibility is tested on rendered
 DOM with Axe in `src/app/accessibility.test.jsx`.
 
 ## Expected skips

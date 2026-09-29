@@ -1,7 +1,6 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
-import path from 'path'
 
 // Content-Security-Policy injected into the PRODUCTION build only. It blocks
 // inline/eval'd scripts and foreign script origins, which is the practical
@@ -40,11 +39,6 @@ const cspPlugin = () => ({
 
 export default defineConfig({
   plugins: [tailwindcss(), react(), cspPlugin()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
-  },
   server: {
     host: '0.0.0.0',
     port: 5175,

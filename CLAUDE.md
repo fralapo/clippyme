@@ -104,8 +104,8 @@ CV-dependent pipeline code, the Dockerfile or dependency files.
 - **Defaults duplicated across stacks** (hook style in `dashboard/src/lib/uiOptions.js` and
   `editing/hook_overlay.py`, grade/logo presets) are pinned by
   `tests/editing/test_frontend_backend_parity.py`; change both sides and the test.
-- **Lint config**: extend rules in `dashboard/eslint.a11y.config.js`, which
-  composes the base `eslint.config.js`.
+- **Lint config**: `dashboard/eslint.config.js`. Accessibility is checked by
+  the Axe test (`src/app/accessibility.test.jsx`), not by lint rules.
 - **New setting**: document it in `docs/reference/configuration.md` (and
   `.env.example` if operators will set it). `tests/repository/test_docs.py` fails when a
   setting read by the code is missing from the reference.
