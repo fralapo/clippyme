@@ -34,6 +34,7 @@ host-tests = [
     "json-repair>=0.30",
     "psutil==7.0.0",
     "tqdm==4.67.3",
+    "tzdata>=2026.1; sys_platform == 'win32'",  # zoneinfo data; Windows has no system tz database
 ]
 
 [tool.pytest.ini_options]

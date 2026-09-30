@@ -51,6 +51,12 @@ json-repair>=0.30
 # pinned above). Also enables yt-dlp's curl_cffi impersonation (auto-detected
 # when installed — defense-in-depth against YouTube bot detection).
 curl-cffi>=0.15,<1.0
+# IANA time zones for zoneinfo (Zernio scheduling, API timezone validation).
+# Linux and macOS read the system database; Windows has none, so zoneinfo
+# needs this package there. The Linux lock and the Docker image skip it. The
+# floor is the first release with 2026 rules, the ones future posts fall under;
+# no cap because new rule changes only reach Windows through new releases.
+tzdata>=2026.1; sys_platform == "win32"
 # Optional: speaker diarization via pyannote.audio. main.py:_diarize_with_pyannote
 # imports it lazily and skips with a soft warning if absent, so it is intentionally
 # NOT installed by default (it pulls torchaudio + a gated HF model download).
