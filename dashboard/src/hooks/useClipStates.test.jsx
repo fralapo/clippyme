@@ -19,6 +19,19 @@ test('processing flag is cleared when state loads from storage', async () => {
   expect(result.current.getClipState(1).publishedAt).toBe(42);
 });
 
+test('a stored karaoke font override is dropped on load, a classic font is kept', async () => {
+  // Older builds saved `font: 'Montserrat-Black'` with every karaoke edit;
+  // karaoke never had a font picker, so the preset font must win.
+  localStorage.setItem(KEY, JSON.stringify({
+    0: { subtitleParams: { mode: 'karaoke', preset: 'hormozi_bold', font: 'Montserrat-Black' } },
+    1: { subtitleParams: { mode: 'classic', font: 'Bangers-Regular' } },
+  }));
+  const { result } = renderHook(() => useClipStates(JOB));
+  await waitFor(() => expect(result.current.getClipState(0).subtitleParams?.preset).toBe('hormozi_bold'));
+  expect('font' in result.current.getClipState(0).subtitleParams).toBe(false);
+  expect(result.current.getClipState(1).subtitleParams.font).toBe('Bangers-Regular');
+});
+
 test('updateClip merges a patch and persists it', async () => {
   const { result } = renderHook(() => useClipStates(JOB));
   act(() => result.current.updateClip(3, { publishedAt: 99 }));

@@ -75,7 +75,6 @@ export function seedSubtitleParams(preselections) {
         mode: subs?.mode || 'karaoke',
         display_mode: 'word_group',
         highlight_color: null,
-        font: subs?.font || 'Montserrat-Black',
         offset_y: subs?.offset_y ?? 0,
         font_color: subs?.font_color || '#FFFFFF',
         position: subs?.position || 'bottom',
@@ -90,6 +89,9 @@ export function seedSubtitleParams(preselections) {
         bg_color: subs?.bg_color || '#000000',
         bg_opacity: subs?.bg_opacity ?? 0,
     };
+    // Font only for classic, the one mode with a font picker. Karaoke takes its
+    // font from the preset, and compose treats a `font` key as an override.
+    if (out.mode === 'classic') out.font = subs?.font || 'Montserrat-Black';
     // uppercase: only forward an EXPLICIT choice. Omitted → the backend honours
     // the preset's own casing (mrbeast_box / minimal_clean are lower-case
     // presets that a hard-coded `true` used to silently force uppercase).

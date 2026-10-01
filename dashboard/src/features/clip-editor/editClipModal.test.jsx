@@ -144,6 +144,73 @@ test('a legacy classic edit with a font_size re-applies at Auto and shows it in 
   expect(sizeSlider()).toHaveValue('40');
 });
 
+// --- karaoke preset fonts ----------------------------------------------------------
+// Karaoke has no font picker: the font comes from the backend preset
+// (subtitles.py SUBTITLE_PRESETS), and compose passes a `font` key as an
+// override that replaces it. A karaoke apply must therefore carry no `font`.
+
+const presetBtn = (label) => screen.getByRole('button', { name: new RegExp(`^WORD UP\\s*${label}$`) });
+
+function karaokeApply(over, ...labels) {
+  const { onApply } = mount(over);
+  fireEvent.click(tab('Captions'));
+  if (!screen.queryByRole('button', { name: 'Karaoke' })) fireEvent.click(screen.getByRole('switch'));
+  for (const l of labels) fireEvent.click(presetBtn(l));
+  fireEvent.click(applyBtn());
+  return onApply.mock.calls[0][0].subtitleParams;
+}
+
+test.each([
+  ['Classic', 'classic_white'], ['Hormozi', 'hormozi_bold'], ['Neon', 'neon_glow'],
+  ['MrBeast', 'mrbeast_box'], ['Minimal', 'minimal_clean'], ['Fire', 'fire_impact'],
+])('karaoke %s apply sends preset %s and no font override', (label, id) => {
+  const sp = karaokeApply({}, label);
+  expect(sp.mode).toBe('karaoke');
+  expect(sp.preset).toBe(id);
+  expect(sp.font).toBeUndefined();
+});
+
+test('preset switch hormozi → minimal → fire sends only the final preset', () => {
+  const sp = karaokeApply({ preselections: { subtitles: { mode: 'karaoke', preset: 'hormozi_bold' } } },
+    'Minimal', 'Fire');
+  expect(sp.preset).toBe('fire_impact');
+  expect(sp.font).toBeUndefined();
+});
+
+test('a classic pre-selection font does not reach a karaoke apply', () => {
+  const { onApply } = mount({ preselections: { subtitles: { mode: 'classic', font: 'Bangers-Regular' } } });
+  fireEvent.click(tab('Captions'));
+  fireEvent.click(screen.getByRole('button', { name: 'Karaoke' }));
+  fireEvent.click(presetBtn('Minimal'));
+  fireEvent.click(applyBtn());
+  const sp = onApply.mock.calls[0][0].subtitleParams;
+  expect(sp.preset).toBe('minimal_clean');
+  expect(sp.font).toBeUndefined();
+});
+
+test('karaoke → classic → karaoke: classic keeps its font, karaoke its preset', () => {
+  const pre = { preselections: { subtitles: { mode: 'karaoke', preset: 'fire_impact' } } };
+  const first = mount(pre);
+  fireEvent.click(tab('Captions'));
+  fireEvent.click(screen.getByRole('button', { name: 'Classic' }));
+  fireEvent.click(applyBtn());
+  expect(first.onApply.mock.calls[0][0].subtitleParams).toMatchObject({ mode: 'classic', font: 'Montserrat-Black' });
+  fireEvent.click(screen.getByRole('button', { name: 'Karaoke' }));
+  fireEvent.click(applyBtn());
+  const sp = first.onApply.mock.calls[1][0].subtitleParams;
+  expect(sp.preset).toBe('fire_impact');
+  expect(sp.font).toBeUndefined();
+});
+
+test('a legacy karaoke edit saved with a font re-applies with the preset font', () => {
+  const sp = karaokeApply({
+    initial: { toggles: { subtitles: true },
+               subtitleParams: { mode: 'karaoke', preset: 'hormozi_bold', font: 'Montserrat-Black' } },
+  });
+  expect(sp.preset).toBe('hormozi_bold');
+  expect(sp.font).toBeUndefined();
+});
+
 // --- classic background box ------------------------------------------------------
 
 test('classic Background box on → bg_opacity 0.6 with the hardcoded black panel', () => {

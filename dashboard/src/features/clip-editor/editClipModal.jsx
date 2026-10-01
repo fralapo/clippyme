@@ -151,7 +151,9 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
       mode: subs.mode, preset: subs.preset, position: subs.position, align: subs.align,
       offset_y: subs.offset_y,
       ...(subs.mode === 'karaoke'
-        ? { font_size: subs.font_size > 0 ? subs.font_size : undefined,
+        // No font in karaoke: the preset's font applies (the seed may carry a
+        // classic pre-selection's font).
+        ? { font: undefined, font_size: subs.font_size > 0 ? subs.font_size : undefined,
             font_color: subs.font_color, outline_color: subs.outline_color }
         // Classic has no size control, so it always renders at Auto: drop the
         // pre-selection's karaoke font_size. subs.font_size stays the karaoke

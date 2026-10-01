@@ -11,7 +11,15 @@ function normalize(value) {
   const next = {};
   for (const [key, state] of Object.entries(value)) {
     if (!/^\d+$/.test(key) || !state || typeof state !== 'object') continue;
-    next[key] = state.processing ? { ...state, processing: false } : state;
+    let clean = state.processing ? { ...state, processing: false } : state;
+    // Older builds saved a `font` with every karaoke edit although karaoke has
+    // no font picker; dropping it lets the preset's font apply again.
+    const sp = clean.subtitleParams;
+    if (sp && sp.mode !== 'classic' && 'font' in sp) {
+      const { font: _legacy, ...rest } = sp;
+      clean = { ...clean, subtitleParams: rest };
+    }
+    next[key] = clean;
   }
   return next;
 }

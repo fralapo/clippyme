@@ -94,6 +94,15 @@ test('seedSubtitleParams only forwards explicit overrides', () => {
   assert.equal(set.words_per_group, 4);
 });
 
+test('seedSubtitleParams sends a font only for classic', () => {
+  // Karaoke has no font picker; a `font` key would override the preset font.
+  assert.equal('font' in seedSubtitleParams(undefined), false);
+  assert.equal('font' in seedSubtitleParams({ subtitles: { mode: 'karaoke', preset: 'hormozi_bold' } }), false);
+  assert.equal('font' in seedSubtitleParams({ subtitles: { mode: 'karaoke', font: 'Montserrat-Black' } }), false);
+  assert.equal(seedSubtitleParams({ subtitles: { mode: 'classic' } }).font, 'Montserrat-Black');
+  assert.equal(seedSubtitleParams({ subtitles: { mode: 'classic', font: 'Bangers-Regular' } }).font, 'Bangers-Regular');
+});
+
 test('seedSubtitleParams uses canonical snake_case font_size (not fontSize)', () => {
   const out = seedSubtitleParams({ subtitles: { font_size: 40 } });
   assert.equal(out.font_size, 40);
