@@ -5,7 +5,7 @@
 //   3. no-change apply shows "Save changes" (no-op branch)
 //   7. bulk mode hides the Trim tab + hook text, dropRanges always empty
 import { test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { EditClipModal } from './editClipModal.jsx';
 
 vi.mock('../../api/client', () => ({
@@ -81,6 +81,67 @@ test('stale karaoke font_size from a prior edit does NOT leak into a classic app
   expect(subtitleParams.border_width).toBe(2);
   expect(subtitleParams.bg_opacity).toBe(0);
   expect(subtitleParams.font_size).toBeUndefined();       // the stale 60 must not ride along
+});
+
+// --- karaoke ↔ classic font size -------------------------------------------------
+// The font size slider only exists in karaoke, so `subs.font_size` is the
+// karaoke size and classic always renders at Auto: a classic apply must never
+// carry a font_size the classic controls do not show.
+
+const KARAOKE_56 = { subtitles: { mode: 'karaoke', preset: 'neon_glow', font_size: 56 } };
+const sizeSlider = () => screen.queryByRole('slider', { name: 'Subtitle font size' });
+
+test('a pre-selected karaoke font_size does not reach a classic apply', () => {
+  const { onApply } = mount({ preselections: KARAOKE_56 });
+  fireEvent.click(tab('Captions'));
+  fireEvent.click(screen.getByRole('button', { name: 'Classic' }));
+  expect(sizeSlider()).toBeNull();                        // classic shows no size control
+  fireEvent.click(applyBtn());
+  const { subtitleParams } = onApply.mock.calls[0][0];
+  expect(subtitleParams.mode).toBe('classic');
+  expect(subtitleParams.font_size).toBeUndefined();
+});
+
+test('karaoke size survives karaoke → classic → karaoke without saving', () => {
+  const { onApply } = mount({ preselections: KARAOKE_56 });
+  fireEvent.click(tab('Captions'));
+  fireEvent.change(sizeSlider(), { target: { value: '60' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Classic' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Karaoke' }));
+  expect(sizeSlider()).toHaveValue('60');
+  fireEvent.click(applyBtn());
+  expect(onApply.mock.calls[0][0].subtitleParams.font_size).toBe(60);
+});
+
+test('a saved classic edit reopens and re-applies at Auto', () => {
+  const first = mount({ preselections: KARAOKE_56 });
+  fireEvent.click(tab('Captions'));
+  fireEvent.click(screen.getByRole('button', { name: 'Classic' }));
+  fireEvent.click(applyBtn());
+  // clipStates persist through JSON (localStorage).
+  const saved = JSON.parse(JSON.stringify(first.onApply.mock.calls[0][0]));
+  expect('font_size' in saved.subtitleParams).toBe(false);
+  cleanup();
+
+  const again = mount({ preselections: KARAOKE_56, initial: saved });
+  fireEvent.click(tab('Captions'));
+  expect(sizeSlider()).toBeNull();                        // reopens in classic
+  fireEvent.click(applyBtn());
+  expect(again.onApply.mock.calls[0][0].subtitleParams.font_size).toBeUndefined();
+  fireEvent.click(screen.getByRole('button', { name: 'Karaoke' }));
+  expect(sizeSlider()).toHaveValue('56');                 // karaoke falls back to the pre-selection
+});
+
+test('a legacy classic edit with a font_size re-applies at Auto and shows it in karaoke', () => {
+  const { onApply } = mount({
+    initial: { toggles: { subtitles: true },
+               subtitleParams: { mode: 'classic', font: 'Montserrat-Black', font_size: 40 } },
+  });
+  fireEvent.click(tab('Captions'));
+  fireEvent.click(applyBtn());
+  expect(onApply.mock.calls[0][0].subtitleParams.font_size).toBeUndefined();
+  fireEvent.click(screen.getByRole('button', { name: 'Karaoke' }));
+  expect(sizeSlider()).toHaveValue('40');
 });
 
 // --- classic background box ------------------------------------------------------

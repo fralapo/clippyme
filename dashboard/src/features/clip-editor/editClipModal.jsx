@@ -153,7 +153,10 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
       ...(subs.mode === 'karaoke'
         ? { font_size: subs.font_size > 0 ? subs.font_size : undefined,
             font_color: subs.font_color, outline_color: subs.outline_color }
-        : { font: subs.font, font_color: subs.font_color, border_width: subs.border_width,
+        // Classic has no size control, so it always renders at Auto: drop the
+        // pre-selection's karaoke font_size. subs.font_size stays the karaoke
+        // size for a switch back.
+        : { font_size: undefined, font: subs.font, font_color: subs.font_color, border_width: subs.border_width,
             bg_opacity: subs.bg ? 0.6 : 0, bg_color: '#000000' }) };
     const hookParams = { ...seedHookParams(clip, preselections), ...(initial?.hookParams || {}), ...hookStyle, text: hookText };
     const logoParams = { position: logo.position, size: logo.size };
