@@ -311,11 +311,11 @@ def subs_module(tmp_path, monkeypatch):
 @pytest.mark.parametrize("font", ["Montserrat-Black", "Bangers-Regular", "Anton-Regular",
                                   "Poppins-Black", "Poppins-Medium"])
 def test_classic_font_size_renders_like_karaoke(subs_module, tmp_path, font):
-    """Slider 40 used to render classic glyphs 6.7x taller than karaoke 40.
-    Classic keeps its 0.85 factor, so it must match karaoke at int(40 * 0.85)."""
+    """Slider 40 used to render classic glyphs 6.7x taller than karaoke 40, then
+    0.85x as tall. The same size must now draw the same glyphs in both modes."""
     _, _, classic = _render_classic(subs_module, tmp_path, "1080x1920", "HELLO", "c", font_name=font, fontsize=40)
     _, _, karaoke = _render_karaoke(subs_module, tmp_path, "1080x1920", "hello", "k", font_name=font,
-                                    font_size=int(40 * 0.85), outline_width=1)
+                                    font_size=40, outline_width=1)
     assert abs((classic[3] - classic[1]) - (karaoke[3] - karaoke[1])) <= 2, (font, classic, karaoke)
 
 
@@ -325,7 +325,7 @@ def test_classic_font_size_slider_is_monotonic_and_proportional(subs_module, tmp
         _, _, fill = _render_classic(subs_module, tmp_path, "1080x1920", "HI", f"fs{size}", fontsize=size)
         heights.append(fill[3] - fill[1])
     assert heights[0] < heights[1] < heights[2], heights
-    assert heights[2] / heights[0] == pytest.approx(int(60 * 0.85) / int(20 * 0.85), rel=0.1), heights
+    assert heights[2] / heights[0] == pytest.approx(60 / 20, rel=0.1), heights
 
 
 @pytest.mark.parametrize("border_width", [2, 6])
@@ -335,7 +335,7 @@ def test_classic_outline_renders_like_karaoke(subs_module, tmp_path, border_widt
     _, ink, fill = _render_classic(subs_module, tmp_path, "1080x1920", "HELLO", "c",
                                    fontsize=60, border_width=border_width)
     _, k_ink, k_fill = _render_karaoke(subs_module, tmp_path, "1080x1920", "hello", "k",
-                                       font_size=int(60 * 0.85), outline_width=border_width)
+                                       font_size=60, outline_width=border_width)
     (cx, cy), (kx, ky) = _stroke(ink, fill), _stroke(k_ink, k_fill)
     assert abs(cx - kx) <= 1 and abs(cy - ky) <= 1, ((cx, cy), (kx, ky))
 

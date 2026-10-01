@@ -145,8 +145,8 @@ def test_letterbox_band_caption_is_bounded(tmp_path):
     for nudge, expected in ((0, 1290), (10, round(1290 + (bottom_most - 1290) / 5)), (50, bottom_most)):
         ass = tmp_path / "k.ass"
         subs.generate_ass_karaoke({"segments": [{"words": [{"word": "hi", "start": 0.0, "end": 0.5}]}]}, 0, 1,
-                                  str(ass), preset="classic_white", position="bottom", offset_y=nudge,
-                                  band_top=1290)
+                                  str(ass), preset="classic_white", font_size=40, position="bottom",
+                                  offset_y=nudge, band_top=1290)
         style = next(ln for ln in ass.read_text(encoding="utf-8").splitlines() if ln.startswith("Style:"))
         assert int(style.split(",")[21]) == expected, (nudge, style)
 

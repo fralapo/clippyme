@@ -145,9 +145,9 @@ def test_center_nudge_extremes_mirror_each_other(tmp_path, monkeypatch):
 
 
 def test_karaoke_and_classic_share_the_nudge_function(tmp_path, monkeypatch):
-    # Same line height -> same block for every nudge (karaoke 40 == classic slider int(48 * 0.85)).
+    # Same line height -> same block for every nudge (the same size in both modes).
     for n in SERIES:
-        k = _karaoke_block(tmp_path, n, preset="classic_white", outline_width=2)
+        k = _karaoke_block(tmp_path, n, preset="classic_white", font_size=48, outline_width=2)
         c = _classic_block(tmp_path, monkeypatch, n, fontsize=48, border_width=2)
         assert c[1] - c[0] == k[1] - k[0]
         assert c[0] == pytest.approx(k[0], abs=1), (n, k, c)
@@ -159,7 +159,7 @@ def test_top_and_bottom_karaoke_output_is_unchanged(tmp_path, position):
     ass = tmp_path / "k.ass"
     words = [{"word": "hi", "start": 0.0, "end": 0.5}]
     subs.generate_ass_karaoke({"segments": [{"words": words}]}, 0, 1, str(ass), preset="classic_white",
-                              position=position, offset_y=10)
+                              font_size=40, position=position, offset_y=10)
     text = ass.read_text(encoding="utf-8")
     style = next(ln for ln in text.splitlines() if ln.startswith("Style: Viral,")).split(",")
     expected = (8, subs._nudge_margin_v("top", 260, 10, 40, 4)) if position == "top" else (

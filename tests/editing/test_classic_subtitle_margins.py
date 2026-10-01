@@ -66,11 +66,11 @@ def test_classic_side_margins_match_karaoke_in_frame_pixels(tmp_path, monkeypatc
 
 @pytest.mark.parametrize("font_size", [20, 40, 60])
 def test_classic_font_size_is_frame_pixels_like_karaoke(tmp_path, monkeypatch, font_size):
-    # The shared slider value is a 1080x1920 font size (karaoke writes it as is);
-    # classic keeps its 0.85 factor. It used to be read in the 288-line script:
-    # 40 rendered as 34 * 1920/288 = 227 px, 6.7x the karaoke size.
+    # The shared slider value is a 1080x1920 font size and both modes use it as
+    # is. It used to be read in the 288-line script (40 rendered as 227 px, 6.7x
+    # the karaoke size), then scaled by a 0.85 left over from that script.
     style = _classic_force_style(tmp_path, monkeypatch, fontsize=font_size)
-    assert _frame_px(style, "Fontsize") == pytest.approx(int(font_size * 0.85), abs=0.5)
+    assert _frame_px(style, "Fontsize") == pytest.approx(font_size, abs=0.5)
 
 
 def test_classic_auto_font_size_is_unchanged(tmp_path, monkeypatch):

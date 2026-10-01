@@ -237,7 +237,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 40,
+        "fontsize": 52,
     },
     "hormozi_bold": {
         "font": "Bangers-Regular",
@@ -249,7 +249,7 @@ SUBTITLE_PRESETS = {
         "shadow": 2,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 43,
+        "fontsize": 56,
     },
     "neon_glow": {
         "font": "Montserrat-Black",
@@ -261,7 +261,7 @@ SUBTITLE_PRESETS = {
         "shadow": 3,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 40,
+        "fontsize": 52,
     },
     "mrbeast_box": {
         "font": "Poppins-Black",
@@ -273,7 +273,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": False,
-        "fontsize": 38,
+        "fontsize": 49,
     },
     "minimal_clean": {
         "font": "Poppins-Medium",
@@ -285,7 +285,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": False,
-        "fontsize": 35,
+        "fontsize": 46,
     },
     "fire_impact": {
         "font": "Anton-Regular",
@@ -297,7 +297,7 @@ SUBTITLE_PRESETS = {
         "shadow": 0,
         "margin_v": 350,
         "uppercase": True,
-        "fontsize": 43,
+        "fontsize": 56,
     },
 }
 
@@ -424,8 +424,8 @@ def effective_fonts_dir():
 
 
 # --- Shared subtitle-style helpers (pure, host-tested) --------------------
-# Fontsize bounds shared by both subtitle paths. The karaoke ASS resolution is
-# 1080x1920 (preset sizes ~35-43); the SRT path scales by 0.85 afterwards. The
+# Fontsize bounds shared by both subtitle paths, in the 1080x1920 script space
+# both use (preset sizes 46-56). The
 # cap stops an out-of-range API value (validated up to 100000 by the generic
 # overlay validator) from reaching ffmpeg.
 _SUB_FONTSIZE_MIN = 10
@@ -979,8 +979,9 @@ def burn_subtitles(video_path, srt_path, output_path, alignment=2, fontsize=None
         else:
             srt_margin_l, srt_margin_r = _SUB_MARGIN_EDGE, _SUB_MARGIN_EDGE
 
-        # A chosen size is the shared slider value, in frame pixels like karaoke.
-        final_fontsize = _clamp_fontsize(int(fontsize * 0.85), 10) if fontsize else _CLASSIC_AUTO_FONTSIZE
+        # A chosen size is the shared slider value, in frame pixels like karaoke:
+        # the same size renders the same glyphs in both modes.
+        final_fontsize = _clamp_fontsize(fontsize, 10) if fontsize else _CLASSIC_AUTO_FONTSIZE
 
         primary_colour = hex_to_ass_color(font_color, 1.0)
 

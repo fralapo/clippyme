@@ -13,11 +13,14 @@ load, host-runnable. These guard the customization flow fixes:
 import pytest
 
 from clippyme.editing.subtitles import (
+    SUBTITLE_PRESETS,
     _clamp_fontsize,
     _nudge_margin_v,
     _SUB_MARGIN_EDGE,
     _SUB_FONTSIZE_MAX,
     _SUB_FONTSIZE_MIN,
+    _text_width,
+    _wrapped_line_count,
     generate_ass_karaoke,
 )
 
@@ -150,7 +153,7 @@ def test_center_is_top_anchored_from_the_frame_centre(tmp_path, offset_y):
     # 1/50 of the 826 px to the lowest safe top (1920 - 110 - 4 - 40).
     out = tmp_path / "x.ass"
     generate_ass_karaoke(
-        _transcript("hi"), 0, 10, str(out), preset="classic_white",
+        _transcript("hi"), 0, 10, str(out), preset="classic_white", font_size=40,
         position="center", offset_y=offset_y,
     )
     f = _style_fields(out.read_text(encoding="utf-8"))
@@ -169,3 +172,13 @@ def test_extreme_fontsize_clamped_in_output(tmp_path):
     text = out.read_text(encoding="utf-8")
     assert "100000" not in text
     assert f"Viral,Montserrat Black,{_SUB_FONTSIZE_MAX}," in text
+
+
+@pytest.mark.parametrize("preset", sorted(SUBTITLE_PRESETS))
+def test_preset_size_keeps_a_long_three_word_group_on_one_line(preset):
+    # Karaoke shows three words at a time: a preset size must not wrap them.
+    style = SUBTITLE_PRESETS[preset]
+    text = "Questa è probabilmente"
+    width_of = _text_width(style["font"], style["fontsize"])
+    line = text.upper() if style["uppercase"] else text
+    assert _wrapped_line_count(line, width_of, 1080 - 2 * _SUB_MARGIN_EDGE) == 1

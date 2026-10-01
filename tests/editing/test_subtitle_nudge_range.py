@@ -125,7 +125,7 @@ def test_nudge_zero_keeps_the_base_positions(tmp_path, monkeypatch):
     # The 01fdd29 placement: top 260 karaoke / 350 classic, bottom 350, the
     # block centred, karaoke one-line events on the style margin (MarginV 0).
     for position, style_margin in (("top", 260), ("bottom", 350), ("center", 940)):
-        margin, [(top, bottom, _)] = _karaoke(tmp_path, position, 0)
+        margin, [(top, bottom, _)] = _karaoke(tmp_path, position, 0, font_size=40)
         assert margin == style_margin, position
         ass = (tmp_path / "k.ass").read_text(encoding="utf-8")
         assert ",Viral,,0,0,0,," in ass if position != "center" else ",Viral,,0,0,940,," in ass
