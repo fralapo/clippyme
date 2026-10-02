@@ -70,14 +70,36 @@ export const GRADE_PRESETS = [
   { id: 'vivid_pop', label: 'Vivid' },
 ];
 
+// Karaoke preset preview faces. Keys are the bundled TTF basenames the backend
+// burns with (subtitles.py SUBTITLE_PRESETS `font`); values are each file's real
+// weight. styles/app.css declares one @font-face per key, family
+// "ClippyMe Preview <key>", loading the same file from the backend's /fonts
+// mount (pinned by lib/subtitlePreviewFonts.test.js). The preview-only family
+// name keeps these clear of the UI's Google "Anton" and of any other family.
+const PREVIEW_FONT_WEIGHTS = {
+  'Montserrat-Black': 900,
+  'Bangers-Regular': 400,
+  'Poppins-Black': 900,
+  'Poppins-Medium': 500,
+  'Anton-Regular': 400,
+};
+
+// Karaoke preset picker. `font` must equal the backend preset font
+// (tests/editing/test_subtitle_preset_parity.py); it only drives the preview —
+// karaoke payloads never send a font, the backend resolves it from the preset.
 export const SUBTITLE_PRESETS = [
-  { id: 'classic_white', label: 'Classic', hi: '#FFFF00', style: { color: '#fff', fontFamily: 'Verdana, sans-serif', textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000' } },
-  { id: 'hormozi_bold', label: 'Hormozi', hi: '#00FF00', style: { color: '#fff', fontFamily: "Impact,'Arial Black',sans-serif", textShadow: '-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000', letterSpacing: '.02em' } },
-  { id: 'neon_glow', label: 'Neon', hi: '#00FFFF', style: { color: '#fff', fontFamily: "'Helvetica Neue',sans-serif", textShadow: '0 0 4px #0ff,0 0 8px #0ff' } },
-  { id: 'mrbeast_box', label: 'MrBeast', hi: '#FFFF00', style: { color: '#fff', fontFamily: "'Arial Black',sans-serif", background: '#000', padding: '2px 6px', borderRadius: '3px' } },
-  { id: 'minimal_clean', label: 'Minimal', hi: '#FFFFFF', style: { color: '#fff', fontFamily: "'Helvetica Neue',sans-serif", fontWeight: 500 } },
-  { id: 'fire_impact', label: 'Fire', hi: '#FF4444', style: { color: '#fff', fontFamily: 'Impact,sans-serif', textShadow: '0 0 3px #f44,-1px -1px 0 #000,1px 1px 0 #000', letterSpacing: '.03em' } },
-];
+  { id: 'classic_white', label: 'Classic', hi: '#FFFF00', font: 'Montserrat-Black', style: { color: '#fff', textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000' } },
+  { id: 'hormozi_bold', label: 'Hormozi', hi: '#00FF00', font: 'Bangers-Regular', style: { color: '#fff', textShadow: '-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000', letterSpacing: '.02em' } },
+  { id: 'neon_glow', label: 'Neon', hi: '#00FFFF', font: 'Montserrat-Black', style: { color: '#fff', textShadow: '0 0 4px #0ff,0 0 8px #0ff' } },
+  { id: 'mrbeast_box', label: 'MrBeast', hi: '#FFFF00', font: 'Poppins-Black', style: { color: '#fff', background: '#000', padding: '2px 6px', borderRadius: '3px' } },
+  { id: 'minimal_clean', label: 'Minimal', hi: '#FFFFFF', font: 'Poppins-Medium', style: { color: '#fff' } },
+  { id: 'fire_impact', label: 'Fire', hi: '#FF4444', font: 'Anton-Regular', style: { color: '#fff', textShadow: '0 0 3px #f44,-1px -1px 0 #000,1px 1px 0 #000', letterSpacing: '.03em' } },
+].map((p) => ({
+  ...p,
+  // Explicit real weight: .subpre .prev sets 800, which would faux-bold the
+  // 400-only faces (Bangers, Anton) and mis-weight Poppins Medium.
+  style: { ...p.style, fontFamily: `"ClippyMe Preview ${p.font}", sans-serif`, fontWeight: PREVIEW_FONT_WEIGHTS[p.font] },
+}));
 
 // Instagram-Stories-style hook text defaults. Keys match the backend
 // create_hook_image `style` dict (editing/hook_overlay.py:HOOK_STYLE_DEFAULTS).

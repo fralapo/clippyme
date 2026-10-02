@@ -84,3 +84,41 @@ test.each(['create', 'edit'])('variant %s renders its own chrome (D1/D2)', (vari
   const box = screen.getByText('Background box').closest(variant === 'create' ? '.opt' : '.edit-opt');
   expect(box).not.toBeNull();
 });
+
+// Goal 24: each karaoke preset card previews with the SAME bundled face the
+// renderer burns (subtitles.py SUBTITLE_PRESETS `font`), at that face's real
+// weight — not a system stand-in. Unit-level only: jsdom checks the declared
+// inline style; real loading is proven by the CSS/asset test in
+// lib/subtitlePreviewFonts.test.js plus a browser smoke.
+const PREVIEW_FONTS = [
+  ['classic_white', 'Classic', 'Montserrat-Black', '900'],
+  ['hormozi_bold', 'Hormozi', 'Bangers-Regular', '400'],
+  ['neon_glow', 'Neon', 'Montserrat-Black', '900'],
+  ['mrbeast_box', 'MrBeast', 'Poppins-Black', '900'],
+  ['minimal_clean', 'Minimal', 'Poppins-Medium', '500'],
+  ['fire_impact', 'Fire', 'Anton-Regular', '400'],
+];
+// By card label, not role: the mode toggle also has a "Classic" button.
+const card = (label) => [...document.querySelectorAll('.subpre')].find((b) => b.querySelector('.nm').textContent === label);
+const previewSpan = (label) => card(label).querySelector('.prev > span');
+
+test.each(PREVIEW_FONTS)('preset %s (%s) previews with bundled %s at weight %s', (_id, label, font, weight) => {
+  mount();
+  const span = previewSpan(label);
+  expect(span.style.fontFamily).toBe(`"ClippyMe Preview ${font}", sans-serif`);
+  expect(span.style.fontWeight).toBe(weight);
+});
+
+test('switching preset moves the selection; each card keeps only its own font', () => {
+  const onChange = vi.fn();
+  const { rerender } = render(<SubtitleControls value={KARAOKE} onChange={onChange} />);
+  for (const [id, label, font, weight] of PREVIEW_FONTS) {
+    rerender(<SubtitleControls value={{ ...KARAOKE, preset: id }} onChange={onChange} />);
+    const on = document.querySelectorAll('.subpre.on');
+    expect(on).toHaveLength(1);
+    expect(on[0]).toBe(card(label));
+    const span = on[0].querySelector('.prev > span');
+    expect(span.style.fontFamily).toBe(`"ClippyMe Preview ${font}", sans-serif`);
+    expect(span.style.fontWeight).toBe(weight);
+  }
+});
