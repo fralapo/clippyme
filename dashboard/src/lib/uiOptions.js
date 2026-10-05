@@ -107,6 +107,14 @@ export const HOOK_UNSUPPORTED_FONTS = new Set(
   SUB_FONTS.map(([v]) => v).filter((v) => !bundledPreviewFont(v)),
 );
 
+// Hook font selector curation. Offered: every font the hook renderer loads,
+// except unsupported ones (above) and HOOK_BACKEND_DEFAULT_FONT, which the
+// live font list carries but "Default (serif)" ('') already renders. A saved
+// explicit 'NotoSerif-Bold' stays a distinct value and keeps rendering Noto.
+export function isHookFontSelectable(fontId) {
+  return fontId !== HOOK_BACKEND_DEFAULT_FONT && !HOOK_UNSUPPORTED_FONTS.has(fontId);
+}
+
 // Karaoke preset picker. `font` must equal the backend preset font
 // (tests/editing/test_subtitle_preset_parity.py); it only drives the preview —
 // karaoke payloads never send a font, the backend resolves it from the preset.

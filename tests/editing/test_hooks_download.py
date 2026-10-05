@@ -118,6 +118,22 @@ def test_verdana_has_no_hook_font_file_and_falls_back_to_noto_serif(monkeypatch,
     assert os.path.basename(hook_overlay.FONT_PATH) == "NotoSerif-Bold.ttf"
 
 
+
+def test_explicit_noto_serif_and_empty_font_resolve_to_the_same_hook_font(monkeypatch, tmp_path):
+    # Goal 32: the dashboard hides the explicit NotoSerif-Bold hook choice as a
+    # duplicate of "Default (serif)" ('') but keeps a saved explicit value, since
+    # both resolve to the bundled FONT_PATH file.
+    from clippyme.editing import subtitles
+
+    monkeypatch.setattr(subtitles, "USER_FONTS_DIR", str(tmp_path))
+    monkeypatch.setattr(hook_overlay, "download_font_if_needed", lambda: None)
+
+    explicit = hook_overlay._resolve_hook_font_path("NotoSerif-Bold")
+    default = hook_overlay._resolve_hook_font_path("")
+    assert os.path.isfile(explicit)
+    assert os.path.samefile(explicit, default)
+    assert os.path.samefile(default, hook_overlay.FONT_PATH)
+
 def test_overlong_word_is_wrapped_to_target_width(monkeypatch, tmp_path):
     monkeypatch.setattr(hook_overlay, "_resolve_hook_font_path", lambda name: str(tmp_path / "missing.ttf"))
     output = tmp_path / "hook.png"

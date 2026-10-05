@@ -4,7 +4,7 @@
 // merges updates. A live WYSIWYG preview sits on top so the user sees the
 // banner / colours / outline before reprocessing.
 import { Segmented, Switch } from '../primitives';
-import { SUB_COLORS, HOOK_OUTLINE, HOOK_BACKEND_DEFAULT_FONT, HOOK_UNSUPPORTED_FONTS, bundledPreviewFont } from '../../lib/uiOptions';
+import { SUB_COLORS, HOOK_OUTLINE, HOOK_BACKEND_DEFAULT_FONT, HOOK_UNSUPPORTED_FONTS, bundledPreviewFont, isHookFontSelectable } from '../../lib/uiOptions';
 
 function Swatches({ value, onPick, label }) {
   return (
@@ -70,8 +70,9 @@ function hexA(hex, a) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-// `fonts` is the parent's useFontCatalog().fonts ([value, label] pairs); fonts
-// the hook renderer cannot load are not offered.
+// `fonts` is the parent's useFontCatalog().fonts ([value, label] pairs); only
+// isHookFontSelectable() entries are offered (no unsupported font, no duplicate
+// of "Default (serif)").
 export function HookStyleControls({ style, set, fonts }) {
   const s = style || {};
   const ow = String(s.outline_width ?? 0);
@@ -106,7 +107,7 @@ export function HookStyleControls({ style, set, fonts }) {
         <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
         <select className="sel" style={{ width: '100%' }} value={s.font || ''} onChange={(e) => set({ font: e.target.value })}>
           <option value="">Default (serif)</option>
-          {fonts.filter(([v]) => !HOOK_UNSUPPORTED_FONTS.has(v)).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          {fonts.filter(([v]) => isHookFontSelectable(v)).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
       </div>
     </>

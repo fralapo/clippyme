@@ -2,8 +2,9 @@
 // Pins: karaoke vs classic control sets, the onChange partial for every
 // control, and that both variants mount with their divergent chrome.
 import { test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SubtitleControls } from './subtitleControls.jsx';
+import { listFonts } from '../../api/client';
 
 vi.mock('../../api/client', () => ({
   listFonts: vi.fn(async () => ({ fonts: [] })),
@@ -45,6 +46,13 @@ test('classic subtitles still offer Verdana (Goal 31 removed it from hooks only)
   mount({ mode: 'classic', font: 'Verdana' });
   expect(screen.getByRole('option', { name: 'Verdana' })).toBeInTheDocument();
   expect(screen.getByRole('combobox').value).toBe('Verdana');
+});
+
+test('classic subtitles keep the live NotoSerif-Bold entry (Goal 32 hid it from hooks only)', async () => {
+  vi.mocked(listFonts).mockImplementationOnce(async () => ({ fonts: ['Anton-Regular', 'NotoSerif-Bold'] }));
+  mount({ mode: 'classic' });
+  await waitFor(() => expect(screen.getByRole('option', { name: 'NotoSerif Bold' })).toBeInTheDocument());
+  expect(screen.getByRole('option', { name: 'Verdana' })).toBeInTheDocument();
 });
 
 test('every karaoke control emits the right partial', () => {

@@ -118,3 +118,20 @@ test('hook drawer: Verdana is not offered and a saved Verdana previews Noto Seri
   expect(hookText().fontWeight).toBe('700');
   expect(set).not.toHaveBeenCalled();
 });
+
+test('hook drawer: NotoSerif-Bold is not offered next to Default (serif); a saved one keeps its value', async () => {
+  // Goal 32: '' already renders fonts/NotoSerif-Bold.ttf, so the live-list
+  // entry is a duplicate choice. A saved explicit value is left as is.
+  vi.mocked(listFonts).mockImplementationOnce(async () => ({ fonts: ['Anton-Regular', 'Montserrat-ExtraBold', 'NotoSerif-Bold', 'MyBrand-Bold'] }));
+  const set = mount({ hooks: true, hookPos: 'top', hookSize: 'M',
+    hookStyle: { ...HOOK_STYLE_DEFAULT, font: 'NotoSerif-Bold' } });
+  openDrawer('Text hooks');
+  const hookText = () => screen.getByText('Your hook text').style;
+  await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
+  expect(screen.queryByRole('option', { name: 'NotoSerif Bold' })).toBeNull();
+  expect(screen.getByRole('option', { name: 'Montserrat ExtraBold' })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'Default (serif)' })).toBeInTheDocument();
+  expect(hookText().fontFamily).toBe('"ClippyMe Preview NotoSerif-Bold", sans-serif');
+  expect(hookText().fontWeight).toBe('700');
+  expect(set).not.toHaveBeenCalled();
+});

@@ -201,3 +201,51 @@ test.each([
     hookStyle: { ...HOOK_STYLE_DEFAULT, font: 'Verdana' } });
   expect(hook.font).toBe('Verdana');
 });
+
+// Goal 32: the live font list carries every file in fonts/, including
+// NotoSerif-Bold, the backend default face. "Default (serif)" ('') already
+// renders exactly that file (hook_overlay FONT_PATH), so the explicit entry is
+// a duplicate and is not offered. A saved explicit 'NotoSerif-Bold' is a
+// distinct value that stays readable and unchanged (no migration to '').
+test('default and explicit NotoSerif-Bold preview the same Noto Serif face', () => {
+  const { rerender } = render(<HookPreview text="YOUR HOOK TEXT" style={{ font: '' }} />);
+  const asDefault = { family: preview().fontFamily, weight: preview().fontWeight };
+  rerender(<HookPreview text="YOUR HOOK TEXT" style={{ font: 'NotoSerif-Bold' }} />);
+  expect({ family: preview().fontFamily, weight: preview().fontWeight }).toEqual(asDefault);
+  expect(asDefault).toEqual({ family: NOTO, weight: '700' });
+});
+
+test('the hook font selector offers Default (serif) but not a duplicate NotoSerif-Bold', async () => {
+  liveList([...BUNDLED, 'MyBrand-Bold']);
+  render(<Hook />);
+  await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
+  const options = screen.getAllByRole('option').map((o) => o.value);
+  expect(options).not.toContain('NotoSerif-Bold');
+  expect(options).not.toContain('Verdana');
+  expect(options.filter((v) => v === '')).toHaveLength(1);
+  expect(screen.getByRole('option', { name: 'Default (serif)' }).value).toBe('');
+  expect(options).toEqual(['', 'Montserrat-Black', 'Anton-Regular', 'Bangers-Regular', 'Poppins-Black',
+    'Poppins-Medium', 'Montserrat-ExtraBold', 'MyBrand-Bold']);
+});
+
+test.each([
+  ['before the live font list loads', () => vi.mocked(listFonts).mockImplementationOnce(() => new Promise(() => {}))],
+  ['after the live font list loads', () => liveList([...BUNDLED, 'MyBrand-Bold'])],
+  ['when the font list request fails', () => vi.mocked(listFonts).mockImplementationOnce(async () => { throw new Error('offline'); })],
+])('a saved explicit NotoSerif-Bold hook font previews Noto Serif %s, state and payload untouched', async (_, arrange) => {
+  arrange();
+  const onStyle = vi.fn();
+  render(<EditorHookTab font="NotoSerif-Bold" onStyle={onStyle} />);
+  await waitFor(() => expect(listFonts).toHaveBeenCalled());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(tabPreview().fontFamily).toBe(NOTO);
+  expect(tabPreview().fontWeight).toBe('700');
+  expect(screen.queryByRole('option', { name: 'NotoSerif Bold' })).toBeNull();
+  // Not among the options, so the select shows "Default (serif)" (same face).
+  expect(screen.getByRole('combobox').value).toBe('');
+  expect(onStyle).not.toHaveBeenCalled();
+  const { hook } = optsToPreselections({ hooks: true, hookPos: 'top', hookSize: 'M',
+    hookStyle: { ...HOOK_STYLE_DEFAULT, font: 'NotoSerif-Bold' } });
+  expect(hook.font).toBe('NotoSerif-Bold');
+});
+
