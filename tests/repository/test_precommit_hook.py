@@ -83,6 +83,30 @@ def test_hook_is_tracked_as_executable():
     assert result.stdout.startswith("100755 "), result.stdout
 
 
+def test_hook_never_recommends_bypassing_itself():
+    """CLAUDE.md forbids --no-verify; the hook must not suggest it either.
+
+    A line may still name the flag to forbid it, so only lines that mention
+    it without a negation count as a recommendation.
+    """
+    text = HOOK.read_text(encoding="utf-8")
+    assert "re-run with --no-verify" not in text
+    assert "Bypass a single commit" not in text
+    negations = ("never", "do not", "don't", "not ")
+    for line in text.splitlines():
+        if "--no-verify" in line:
+            assert any(n in line.lower() for n in negations), line
+
+
+def test_blocked_commit_explains_remediation_without_bypass(repo):
+    _stage(repo, "config.txt", f"leak = {SECRETS['openai']}\n")
+    result = _run_hook(repo)
+    assert result.returncode == 1
+    assert "--no-verify" not in result.stderr
+    assert "remove or redact" in result.stderr
+    assert "Do not bypass this hook" in result.stderr
+
+
 def test_clean_commit_passes_without_scanner_errors(repo):
     _stage(repo, "src/app.py", "print('hello')\nvalue = 'sk-short'\n")
     result = _run_hook(repo)

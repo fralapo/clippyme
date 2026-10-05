@@ -6,9 +6,9 @@
 #
 #     git config core.hooksPath .githooks
 #
-# Bypass a single commit only when you are certain (e.g. a false positive):
-#
-#     git commit --no-verify
+# Never bypass it. On a match, remove or redact the secret; for a false
+# positive, change the staged content so it no longer looks like a secret
+# (tests build fake keys at runtime, see SECURITY.md).
 #
 # Exit 0 = clean; 1 = secret found; 2 = the scan itself failed. Any non-zero
 # aborts the commit — a scanner error never reads as "clean".
@@ -93,7 +93,9 @@ scan_file
 
 if [ "$fail" -ne 0 ]; then
   echo "" >&2
-  echo "Commit blocked: remove the secret(s) above, or re-run with --no-verify if it is a confirmed false positive." >&2
+  echo "Commit blocked. Review the staged file(s) above: if a match is real, remove or redact it." >&2
+  echo "For a false positive, change the staged content so it no longer matches (tests build fake keys at runtime, see SECURITY.md)." >&2
+  echo "Do not bypass this hook." >&2
   exit 1
 fi
 exit 0
