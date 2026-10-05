@@ -4,7 +4,7 @@
 // merges updates. A live WYSIWYG preview sits on top so the user sees the
 // banner / colours / outline before reprocessing.
 import { Segmented, Switch } from '../primitives';
-import { SUB_COLORS, HOOK_OUTLINE } from '../../lib/uiOptions';
+import { SUB_COLORS, HOOK_OUTLINE, bundledPreviewFont } from '../../lib/uiOptions';
 import { useFontList } from '../../hooks/useFontList';
 
 function Swatches({ value, onPick, label }) {
@@ -34,13 +34,18 @@ export function HookPreview({ text, style }) {
   const bg = s.bg_enabled
     ? hexA(s.bg_color || '#FFFFFF', s.bg_opacity ?? 0.94)
     : 'transparent';
+  // Bundled fonts preview with the same TTF the backend burns, at its real
+  // weight (a generic 800 would faux-bold 400-only Anton/Bangers).
+  const face = bundledPreviewFont(s.font) || {
+    fontFamily: s.font ? `"${s.font}", sans-serif` : 'var(--font-display)',
+    fontWeight: 800,
+  };
   return (
     <div style={{ padding: '18px 12px', background: '#0c0c11', borderRadius: 'var(--r-sm)', textAlign: 'center', display: 'flex', justifyContent: 'center' }}>
       <span style={{
         display: 'inline-block', padding: s.bg_enabled ? '8px 16px' : '4px 6px',
         borderRadius: 12, background: bg, color: s.text_color || '#fff',
-        fontFamily: s.font ? `"${s.font}", sans-serif` : 'var(--font-display)',
-        fontWeight: 800, fontSize: 17, lineHeight: 1.15, textShadow: stroke, maxWidth: '100%',
+        ...face, fontSize: 17, lineHeight: 1.15, textShadow: stroke, maxWidth: '100%',
       }}>{text || 'Your hook text'}</span>
     </div>
   );

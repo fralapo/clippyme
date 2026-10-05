@@ -84,6 +84,14 @@ const PREVIEW_FONT_WEIGHTS = {
   'Anton-Regular': 400,
 };
 
+// Renderer font ID → bundled preview face ({ fontFamily, fontWeight }), or null
+// when no preview face exists (system Verdana, uploaded fonts). Font IDs are
+// TTF basenames, not CSS families: "Anton-Regular" alone falls back.
+export function bundledPreviewFont(fontId) {
+  if (!Object.hasOwn(PREVIEW_FONT_WEIGHTS, fontId)) return null;
+  return { fontFamily: `"ClippyMe Preview ${fontId}", sans-serif`, fontWeight: PREVIEW_FONT_WEIGHTS[fontId] };
+}
+
 // Karaoke preset picker. `font` must equal the backend preset font
 // (tests/editing/test_subtitle_preset_parity.py); it only drives the preview —
 // karaoke payloads never send a font, the backend resolves it from the preset.
