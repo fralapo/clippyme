@@ -242,7 +242,9 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .subpre{position:relative;border:1px solid var(--line-1);background:var(--bg-3);border-radius:var(--r-sm);overflow:hidden;cursor:pointer;transition:border-color .15s}
 .subpre:hover{border-color:var(--line-2)}
 .subpre.on{border-color:var(--brand-blue);box-shadow:inset 0 0 0 1px var(--brand-blue)}
-.subpre .prev{height:48px;display:flex;align-items:center;justify-content:center;background:var(--bg-1);font-size:var(--text-2xs);font-weight:800}
+/* preset preview: libass burns the TTF's default glyphs, so opt out of the
+   body's UI features (ss01 swaps Montserrat W/U…, tnum digits) */
+.subpre .prev{height:48px;display:flex;align-items:center;justify-content:center;background:var(--bg-1);font-size:var(--text-2xs);font-weight:800;font-feature-settings:normal}
 .subpre .nm{padding:5px 8px;font-family:var(--font-mono);font-size:var(--text-4xs);letter-spacing:.1em;text-transform:uppercase;color:var(--fg-3);border-top:1px solid var(--line-1);display:flex;align-items:center;gap:5px}
 .subpre.on .nm{color:var(--blue-300)}
 .subpre.on .nm::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--brand-blue)}

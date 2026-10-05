@@ -2,6 +2,9 @@
 // Pins: karaoke vs classic control sets, the onChange partial for every
 // control, and that both variants mount with their divergent chrome.
 import { test, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { cwd } from 'node:process';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SubtitleControls } from './subtitleControls.jsx';
 import { listFonts } from '../../api/client';
@@ -134,5 +137,30 @@ test('switching preset moves the selection; each card keeps only its own font', 
     const span = on[0].querySelector('.prev > span');
     expect(span.style.fontFamily).toBe(`"ClippyMe Preview ${font}", sans-serif`);
     expect(span.style.fontWeight).toBe(weight);
+  }
+});
+
+// Goal 35: body sets the dashboard's OpenType features ("ss01", "cv11",
+// "tnum"). Inherited by the preset preview they swap Montserrat's W/U (and
+// y/a/t/l… ss01, tabular digits) and Poppins' punctuation, while libass burns
+// the TTF's default glyphs. The preview box opts out; the card label keeps
+// the body's features. The real app.css is loaded so the cascade/inheritance
+// is exercised on the rendered preview text.
+test.each(PREVIEW_FONTS)('preset %s (%s) preview text does not inherit the UI font-feature-settings', (_id, label, font, weight) => {
+  const sheet = document.createElement('style');
+  sheet.textContent = readFileSync(resolve(cwd(), 'src', 'styles', 'app.css'), 'utf8');
+  document.head.appendChild(sheet);
+  try {
+    mount();
+    const span = previewSpan(label);
+    expect(getComputedStyle(document.body).fontFeatureSettings).toContain('ss01');
+    expect(getComputedStyle(span).fontFeatureSettings).toBe('normal');
+    expect(getComputedStyle(span.querySelector('span')).fontFeatureSettings).toBe('normal');
+    expect(getComputedStyle(span).fontFamily).toBe(`"ClippyMe Preview ${font}", sans-serif`);
+    expect(getComputedStyle(span).fontWeight).toBe(weight);
+    expect(getComputedStyle(card(label).querySelector('.nm')).fontFeatureSettings)
+      .toBe(getComputedStyle(document.body).fontFeatureSettings);
+  } finally {
+    sheet.remove();
   }
 });
