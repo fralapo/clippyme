@@ -82,7 +82,14 @@ const PREVIEW_FONT_WEIGHTS = {
   'Poppins-Black': 900,
   'Poppins-Medium': 500,
   'Anton-Regular': 400,
+  // Hook-only: the backend default face (see HOOK_BACKEND_DEFAULT_FONT).
+  'NotoSerif-Bold': 700,
 };
+
+// Font the hook renderer burns when the hook font is empty ("Default (serif)"):
+// editing/hook_overlay.py FONT_PATH. Preview-only — the payload keeps '' so the
+// backend still picks its own default.
+export const HOOK_BACKEND_DEFAULT_FONT = 'NotoSerif-Bold';
 
 // Renderer font ID → bundled preview face ({ fontFamily, fontWeight }), or null
 // when no preview face exists (system Verdana, uploaded fonts). Font IDs are

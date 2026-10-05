@@ -4,17 +4,24 @@
 // at the file's real weight (no faux bold). System/uploaded fonts keep their
 // name as the family. Exercised through the font <select> → preview span path.
 import { test, expect, vi } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { cwd } from 'node:process';
 import { useState } from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { HookPreview, HookStyleControls } from './hookStyle.jsx';
 import { HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
+import { optsToPreselections } from '../../api/client';
 
-vi.mock('../../api/client', () => ({
+vi.mock('../../api/client', async (importOriginal) => ({
+  ...(await importOriginal()),
   listFonts: vi.fn(async () => ({ fonts: ['Anton-Regular', 'MyBrand-Bold'] })),
 }));
 
+let latestStyle;
 function Hook() {
   const [style, setStyle] = useState({ ...HOOK_STYLE_DEFAULT });
+  latestStyle = style;
   return (
     <>
       <HookPreview text="YOUR HOOK TEXT" style={style} />
@@ -59,8 +66,32 @@ test('an uploaded font keeps its name as the family (no preview face exists)', a
   expect(preview().fontFamily).toBe('"MyBrand-Bold", sans-serif');
 });
 
-test('empty font keeps the display-font fallback', () => {
+// Goal 29: the empty "Default (serif)" option means "backend default", which
+// hook_overlay resolves to fonts/NotoSerif-Bold.ttf. The preview models that
+// default with its bundled face (weight 700); the value itself stays empty.
+test('empty font previews the backend default Noto Serif Bold face', () => {
   render(<Hook />);
   pick('');
-  expect(preview().fontFamily).toBe('var(--font-display)');
+  expect(preview().fontFamily).toBe('"ClippyMe Preview NotoSerif-Bold", sans-serif');
+  expect(preview().fontWeight).toBe('700');
+});
+
+test('empty font stays empty in state and in the job payload', () => {
+  render(<Hook />);
+  pick('');
+  expect(screen.getByRole('combobox').value).toBe('');
+  expect(latestStyle.font).toBe('');
+  const { hook } = optsToPreselections({ hooks: true, hookPos: 'top', hookSize: 'M', hookStyle: latestStyle });
+  expect(hook.font).toBe('');
+});
+
+test('the Noto Serif preview face loads the bundled backend default file at 700', () => {
+  // Read from disk: vitest stubs CSS imports. Runs from dashboard/ (npm test).
+  const css = readFileSync(resolve(cwd(), 'src', 'styles', 'app.css'), 'utf8');
+  const face = [...css.matchAll(/@font-face\s*\{([^}]*)\}/g)].map(([, b]) => b)
+    .filter((b) => b.includes('font-family:"ClippyMe Preview NotoSerif-Bold"'));
+  expect(face).toHaveLength(1);
+  expect(face[0]).toContain('src:url("/fonts/NotoSerif-Bold.ttf") format("truetype")');
+  expect(face[0]).toContain('font-weight:700');
+  expect(existsSync(resolve(cwd(), '..', 'fonts', 'NotoSerif-Bold.ttf'))).toBe(true);
 });

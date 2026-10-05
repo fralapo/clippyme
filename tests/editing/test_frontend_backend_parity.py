@@ -17,6 +17,7 @@ import re
 
 from clippyme.editing.compose import _LOGO_SIZE_MAP
 from clippyme.editing.grade import GRADE_PRESETS as BACKEND_GRADES
+from clippyme.editing.hook_overlay import FONT_PATH as HOOK_DEFAULT_FONT_PATH
 from clippyme.editing.hook_overlay import HOOK_STYLE_DEFAULTS
 from clippyme.editing.logo import _POSITIONS as BACKEND_LOGO_POSITIONS
 
@@ -104,3 +105,14 @@ def test_hook_style_defaults_match_backend():
             f"backend={HOOK_STYLE_DEFAULTS[key]!r} — change BOTH sides together "
             f"(uiOptions.js + hook_overlay.py) or the WYSIWYG preview diverges from the render"
         )
+
+
+def test_hook_empty_font_preview_matches_backend_default():
+    """An empty hook font renders with hook_overlay FONT_PATH; the preview of
+    "Default (serif)" loads HOOK_BACKEND_DEFAULT_FONT, so the two must agree."""
+    m = re.search(r"export const HOOK_BACKEND_DEFAULT_FONT = '([^']+)';", _js_source())
+    assert m, "could not locate HOOK_BACKEND_DEFAULT_FONT in uiOptions.js"
+    backend = os.path.splitext(os.path.basename(HOOK_DEFAULT_FONT_PATH))[0]
+    assert m.group(1) == backend, (
+        f"hook default font drift — backend={backend!r} uiOptions.js={m.group(1)!r}"
+    )

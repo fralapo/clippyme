@@ -229,7 +229,7 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 
 /* subtitle preset grid */
 .subgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-/* Karaoke preset preview faces: the same bundled TTFs the renderer burns
+/* Karaoke preset (and hook default) preview faces: the same bundled TTFs the renderer burns
    (fonts/, served same-origin by the backend /fonts mount; Vite dev proxies it).
    Families and real weights mirror PREVIEW_FONT_WEIGHTS in lib/uiOptions.js. */
 @font-face{font-family:"ClippyMe Preview Montserrat-Black";src:url("/fonts/Montserrat-Black.ttf") format("truetype");font-weight:900;font-style:normal;font-display:swap}
@@ -237,6 +237,7 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 @font-face{font-family:"ClippyMe Preview Poppins-Black";src:url("/fonts/Poppins-Black.ttf") format("truetype");font-weight:900;font-style:normal;font-display:swap}
 @font-face{font-family:"ClippyMe Preview Poppins-Medium";src:url("/fonts/Poppins-Medium.ttf") format("truetype");font-weight:500;font-style:normal;font-display:swap}
 @font-face{font-family:"ClippyMe Preview Anton-Regular";src:url("/fonts/Anton-Regular.ttf") format("truetype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"ClippyMe Preview NotoSerif-Bold";src:url("/fonts/NotoSerif-Bold.ttf") format("truetype");font-weight:700;font-style:normal;font-display:swap}
 .subpre{position:relative;border:1px solid var(--line-1);background:var(--bg-3);border-radius:var(--r-sm);overflow:hidden;cursor:pointer;transition:border-color .15s}
 .subpre:hover{border-color:var(--line-2)}
 .subpre.on{border-color:var(--brand-blue);box-shadow:inset 0 0 0 1px var(--brand-blue)}

@@ -4,7 +4,7 @@
 // merges updates. A live WYSIWYG preview sits on top so the user sees the
 // banner / colours / outline before reprocessing.
 import { Segmented, Switch } from '../primitives';
-import { SUB_COLORS, HOOK_OUTLINE, bundledPreviewFont } from '../../lib/uiOptions';
+import { SUB_COLORS, HOOK_OUTLINE, HOOK_BACKEND_DEFAULT_FONT, bundledPreviewFont } from '../../lib/uiOptions';
 import { useFontList } from '../../hooks/useFontList';
 
 function Swatches({ value, onPick, label }) {
@@ -35,9 +35,10 @@ export function HookPreview({ text, style }) {
     ? hexA(s.bg_color || '#FFFFFF', s.bg_opacity ?? 0.94)
     : 'transparent';
   // Bundled fonts preview with the same TTF the backend burns, at its real
-  // weight (a generic 800 would faux-bold 400-only Anton/Bangers).
-  const face = bundledPreviewFont(s.font) || {
-    fontFamily: s.font ? `"${s.font}", sans-serif` : 'var(--font-display)',
+  // weight (a generic 800 would faux-bold 400-only Anton/Bangers). An empty
+  // font previews the backend default face; s.font itself stays ''.
+  const face = bundledPreviewFont(s.font || HOOK_BACKEND_DEFAULT_FONT) || {
+    fontFamily: `"${s.font}", sans-serif`,
     fontWeight: 800,
   };
   return (
