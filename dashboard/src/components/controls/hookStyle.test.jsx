@@ -340,3 +340,41 @@ test.each(['Montserrat-ExtraBold', 'Montserrat-Black', ''])(
       removeSheet();
     }
   });
+
+// Goal 36: body also sets the UI tracking (letter-spacing: -.005em). Pillow
+// draws the hook with no tracking, and in Chromium any non-zero letter-spacing
+// disables the fi/fl/ff ligatures that Pillow (RAQM) applies with Noto Serif,
+// Anton and Montserrat. The preview text opts out of the inherited tracking;
+// the rest of the UI keeps it.
+test.each(['', 'Anton-Regular', 'Montserrat-Black', 'Montserrat-ExtraBold', 'Poppins-Black', 'Bangers-Regular'])(
+  'hook preview text in %j does not inherit the UI letter-spacing', async (font) => {
+    const removeSheet = withAppStylesheet();
+    try {
+      liveList([...BUNDLED]);
+      render(<Hook />);
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Montserrat ExtraBold' })).toBeInTheDocument());
+      pick(font);
+      const text = screen.getByText('YOUR HOOK TEXT');
+      expect(getComputedStyle(document.body).letterSpacing).toBe('-0.005em');
+      expect(getComputedStyle(text).letterSpacing).toBe('normal');
+      expect(getComputedStyle(text).fontFeatureSettings).toBe('normal');
+      expect(getComputedStyle(screen.getByText('Banner behind text')).letterSpacing)
+        .toBe(getComputedStyle(document.body).letterSpacing);
+    } finally {
+      removeSheet();
+    }
+  });
+
+test.each(['', 'Anton-Regular', 'Montserrat-Black'])(
+  'editor hook tab preview in %j does not inherit the UI letter-spacing', async (font) => {
+    const removeSheet = withAppStylesheet();
+    try {
+      liveList([...BUNDLED]);
+      render(<EditorHookTab font={font} />);
+      await waitFor(() => expect(listFonts).toHaveBeenCalled());
+      const text = screen.getByText('YOUR HOOK TEXT', { selector: 'span' });
+      expect(getComputedStyle(text).letterSpacing).toBe('normal');
+    } finally {
+      removeSheet();
+    }
+  });

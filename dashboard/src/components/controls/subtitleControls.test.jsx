@@ -164,3 +164,41 @@ test.each(PREVIEW_FONTS)('preset %s (%s) preview text does not inherit the UI fo
     sheet.remove();
   }
 });
+
+// Goal 36: body also sets the UI tracking (letter-spacing: -.005em); libass
+// burns every karaoke preset with Spacing=0. The preview box opts out of the
+// inherited tracking. Hormozi/Fire keep their explicit preview letterSpacing
+// (SUBTITLE_PRESETS style; report-only in Goal 36), and the card label keeps
+// its own .nm tracking. The preview sits inside a <button>: Tailwind's real
+// preflight (loaded by index.css) makes buttons inherit letter-spacing, so it
+// is loaded before app.css to reproduce the app's cascade. jsdom drops a rule
+// whose selector list contains ::file-selector-button, so only that selector
+// is stripped.
+const PREVIEW_TRACKING = [
+  ['classic_white', 'Classic', 'normal'],
+  ['hormozi_bold', 'Hormozi', '0.02em'],
+  ['neon_glow', 'Neon', 'normal'],
+  ['mrbeast_box', 'MrBeast', 'normal'],
+  ['minimal_clean', 'Minimal', 'normal'],
+  ['fire_impact', 'Fire', '0.03em'],
+];
+test.each(PREVIEW_TRACKING)('preset %s (%s) preview text letter-spacing is %s, not the UI tracking', (_id, label, tracking) => {
+  const sheet = document.createElement('style');
+  sheet.textContent = readFileSync(resolve(cwd(), 'node_modules', 'tailwindcss', 'preflight.css'), 'utf8')
+    .replace(/,\s*::file-selector-button/g, '')
+    + readFileSync(resolve(cwd(), 'src', 'styles', 'app.css'), 'utf8');
+  document.head.appendChild(sheet);
+  try {
+    mount();
+    const span = previewSpan(label);
+    expect(getComputedStyle(document.body).letterSpacing).toBe('-0.005em');
+    expect(getComputedStyle(card(label)).letterSpacing).toBe('-0.005em');
+    expect(getComputedStyle(card(label).querySelector('.prev')).letterSpacing).toBe('normal');
+    expect(getComputedStyle(span).letterSpacing).toBe(tracking);
+    expect(getComputedStyle(span.querySelector('span')).letterSpacing).toBe(tracking);
+    expect(getComputedStyle(span).fontFeatureSettings).toBe('normal');
+    expect(getComputedStyle(card(label).querySelector('.nm')).letterSpacing).toBe('0.1em');
+  } finally {
+    sheet.remove();
+  }
+});
