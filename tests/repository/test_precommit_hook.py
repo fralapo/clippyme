@@ -73,6 +73,16 @@ def _run_hook(repo, env=None):
                           text=True, env=env)
 
 
+def test_hook_is_tracked_as_executable():
+    """Git silently skips a 100644 hook on Linux/macOS ("hook was ignored")."""
+    result = subprocess.run(
+        ["git", "-C", str(HOOK.parent), "ls-files", "--stage", "--", HOOK.name],
+        capture_output=True, text=True)
+    if result.returncode != 0:
+        pytest.skip("not a git checkout")
+    assert result.stdout.startswith("100755 "), result.stdout
+
+
 def test_clean_commit_passes_without_scanner_errors(repo):
     _stage(repo, "src/app.py", "print('hello')\nvalue = 'sk-short'\n")
     result = _run_hook(repo)
