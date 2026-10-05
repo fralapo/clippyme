@@ -167,20 +167,20 @@ test.each(PREVIEW_FONTS)('preset %s (%s) preview text does not inherit the UI fo
 
 // Goal 36: body also sets the UI tracking (letter-spacing: -.005em); libass
 // burns every karaoke preset with Spacing=0. The preview box opts out of the
-// inherited tracking. Hormozi/Fire keep their explicit preview letterSpacing
-// (SUBTITLE_PRESETS style; report-only in Goal 36), and the card label keeps
-// its own .nm tracking. The preview sits inside a <button>: Tailwind's real
+// inherited tracking. Goal 37: Hormozi/Fire no longer carry their own preview
+// letterSpacing (.02em/.03em, left over from the Impact placeholder), so every
+// preset previews natural advances; the card label keeps its own .nm tracking. The preview sits inside a <button>: Tailwind's real
 // preflight (loaded by index.css) makes buttons inherit letter-spacing, so it
 // is loaded before app.css to reproduce the app's cascade. jsdom drops a rule
 // whose selector list contains ::file-selector-button, so only that selector
 // is stripped.
 const PREVIEW_TRACKING = [
   ['classic_white', 'Classic', 'normal'],
-  ['hormozi_bold', 'Hormozi', '0.02em'],
+  ['hormozi_bold', 'Hormozi', 'normal'],
   ['neon_glow', 'Neon', 'normal'],
   ['mrbeast_box', 'MrBeast', 'normal'],
   ['minimal_clean', 'Minimal', 'normal'],
-  ['fire_impact', 'Fire', '0.03em'],
+  ['fire_impact', 'Fire', 'normal'],
 ];
 test.each(PREVIEW_TRACKING)('preset %s (%s) preview text letter-spacing is %s, not the UI tracking', (_id, label, tracking) => {
   const sheet = document.createElement('style');
@@ -191,6 +191,7 @@ test.each(PREVIEW_TRACKING)('preset %s (%s) preview text letter-spacing is %s, n
   try {
     mount();
     const span = previewSpan(label);
+    expect(span.style.letterSpacing).toBe('');
     expect(getComputedStyle(document.body).letterSpacing).toBe('-0.005em');
     expect(getComputedStyle(card(label)).letterSpacing).toBe('-0.005em');
     expect(getComputedStyle(card(label).querySelector('.prev')).letterSpacing).toBe('normal');
@@ -201,4 +202,30 @@ test.each(PREVIEW_TRACKING)('preset %s (%s) preview text letter-spacing is %s, n
   } finally {
     sheet.remove();
   }
+});
+
+// Goal 37 removed only the tracking: every other preview style of each card
+// (colour, highlight, outline/glow, box, font, weight) is pinned as rendered.
+const PREVIEW_STYLE = [
+  ['Classic', '#FFFF00', { color: 'rgb(255, 255, 255)', textShadow: '-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000' }],
+  ['Hormozi', '#00FF00', { color: 'rgb(255, 255, 255)', textShadow: '-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000' }],
+  ['Neon', '#00FFFF', { color: 'rgb(255, 255, 255)', textShadow: '0 0 4px #0ff,0 0 8px #0ff' }],
+  ['MrBeast', '#FFFF00', { color: 'rgb(255, 255, 255)', background: 'rgb(0, 0, 0)', padding: '2px 6px', borderRadius: '3px' }],
+  ['Minimal', '#FFFFFF', { color: 'rgb(255, 255, 255)' }],
+  ['Fire', '#FF4444', { color: 'rgb(255, 255, 255)', textShadow: '0 0 3px #f44,-1px -1px 0 #000,1px 1px 0 #000' }],
+];
+test.each(PREVIEW_STYLE)('preset %s keeps its preview styling apart from tracking', (label, hi, style) => {
+  mount();
+  const span = previewSpan(label);
+  const font = PREVIEW_FONTS.find(([, l]) => l === label);
+  const expected = document.createElement('span');
+  Object.assign(expected.style, style, { fontFamily: span.style.fontFamily, fontWeight: span.style.fontWeight });
+  expect([...span.style].sort()).toEqual([...expected.style].sort());
+  for (const [k, v] of Object.entries(style)) expect(span.style[k]).toBe(v);
+  expect(span.style.fontFamily).toBe(`"ClippyMe Preview ${font[2]}", sans-serif`);
+  expect(span.style.fontWeight).toBe(font[3]);
+  expect(span.querySelector('span').style.color).toBe(
+    `rgb(${[1, 3, 5].map((i) => parseInt(hi.slice(i, i + 2), 16)).join(', ')})`,
+  );
+  expect(span.textContent).toBe('WORD UP');
 });

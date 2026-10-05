@@ -69,3 +69,18 @@ def test_preview_fonts_match_backend():
             f"{pid}: font backend={bp['font']} preview={preview[pid]} — "
             f"update uiOptions.js SUBTITLE_PRESETS `font` to match subtitles.py"
         )
+
+
+def test_karaoke_presets_burn_without_tracking(tmp_path):
+    """The preview shows natural advances (no letter-spacing, Goal 37), which
+    is only honest while every karaoke style burns with ASS Spacing=0."""
+    from clippyme.editing.subtitles import generate_ass_karaoke
+
+    words = [{"word": w, "start": 0.0, "end": 0.5} for w in ("WORD", "UP")]
+    for pid in BACKEND:
+        ass = tmp_path / f"{pid}.ass"
+        assert generate_ass_karaoke({"segments": [{"words": words}]}, 0, 1, str(ass), preset=pid)
+        lines = ass.read_text(encoding="utf-8").splitlines()
+        fields = next(ln for ln in lines if ln.startswith("Format: Name,")).split(": ", 1)[1].split(", ")
+        style = next(ln for ln in lines if ln.startswith("Style: Viral,")).split(": ", 1)[1].split(",")
+        assert dict(zip(fields, style))["Spacing"] == "0", pid
