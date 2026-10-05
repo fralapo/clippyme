@@ -3,8 +3,10 @@
 // App persists and later maps to backend keys, so the shared-controls
 // refactor must keep emitting them byte-identically.
 import { test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { CreateView } from './create.jsx';
+import { listFonts } from '../../api/client';
+import { HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
 
 vi.mock('../../api/client', () => ({
   listFonts: vi.fn(async () => ({ fonts: [] })),
@@ -88,4 +90,17 @@ test('grade row: preset segments (with the extra Off entry) patch gradePreset', 
   expect(set).toHaveBeenLastCalledWith({ gradePreset: 'warm_cinematic' });
   fireEvent.click(row.getByRole('button', { name: 'Off' }));
   expect(set).toHaveBeenLastCalledWith({ gradePreset: 'none' });
+});
+
+test('hook drawer: a stale preset font previews the backend Noto Serif fallback, opts untouched', async () => {
+  // Goal 30: an uploaded font deleted after a preset saved it is not in the
+  // live font list; hook_overlay renders it with NotoSerif-Bold.
+  vi.mocked(listFonts).mockImplementationOnce(async () => ({ fonts: ['Anton-Regular', 'NotoSerif-Bold'] }));
+  const set = mount({ hooks: true, hookPos: 'top', hookSize: 'M',
+    hookStyle: { ...HOOK_STYLE_DEFAULT, font: 'MyDeleted-Font' } });
+  openDrawer('Text hooks');
+  const hookText = () => screen.getByText('Your hook text').style;
+  await waitFor(() => expect(hookText().fontFamily).toBe('"ClippyMe Preview NotoSerif-Bold", sans-serif'));
+  expect(hookText().fontWeight).toBe('700');
+  expect(set).not.toHaveBeenCalled();
 });

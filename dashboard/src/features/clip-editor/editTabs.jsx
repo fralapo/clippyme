@@ -4,6 +4,7 @@
 // these render it and report edits up. Markup moved verbatim from the modal.
 import { Icon, Btn, Segmented, Switch } from '../../components/primitives';
 import { HookStyleControls, HookPreview } from '../../components/controls/hookStyle';
+import { useFontCatalog } from '../../hooks/useFontList';
 import { SubtitleControls } from '../../components/controls/subtitleControls';
 import { LogoControls, GradeControls } from '../../components/controls/layerControls';
 import { BannerControls } from '../../components/controls/bannerControls';
@@ -105,6 +106,7 @@ export function CaptionsTab({ on, onToggle, subs, onSubsChange }) {
 }
 
 export function HookTab({ on, onToggle, bulk, text, onText, style, onStyle }) {
+  const fontCatalog = useFontCatalog();
   return (
     <>
       <div className="edit-opt">
@@ -125,8 +127,8 @@ export function HookTab({ on, onToggle, bulk, text, onText, style, onStyle }) {
                 onChange={(e) => onText(e.target.value)}></textarea>
             </div>
           )}
-          <div style={{ marginTop: bulk ? 0 : 10 }}><HookPreview text={bulk ? 'Your hook text' : text} style={style} /></div>
-          <HookStyleControls style={style} set={onStyle} />
+          <div style={{ marginTop: bulk ? 0 : 10 }}><HookPreview text={bulk ? 'Your hook text' : text} style={style} fontCatalog={fontCatalog} /></div>
+          <HookStyleControls style={style} set={onStyle} fonts={fontCatalog.fonts} />
         </div>
       )}
     </>

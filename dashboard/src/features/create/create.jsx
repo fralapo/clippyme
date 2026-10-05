@@ -4,6 +4,7 @@ import { Icon, Btn, Panel, Segmented, Switch, Stepper } from '../../components/p
 import { Hero } from '../../components/headers';
 import { LANGUAGES, GEMINI_MODELS, HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
 import { HookStyleControls, HookPreview } from '../../components/controls/hookStyle';
+import { useFontCatalog } from '../../hooks/useFontList';
 import { SubtitleControls } from '../../components/controls/subtitleControls';
 import { LogoControls, GradeControls } from '../../components/controls/layerControls';
 import { BannerControls } from '../../components/controls/bannerControls';
@@ -213,9 +214,10 @@ function SubConfig({ opts, set }) {
 function HookConfig({ opts, set }) {
   const hs = opts.hookStyle || HOOK_STYLE_DEFAULT;
   const setStyle = (partial) => set({ hookStyle: { ...HOOK_STYLE_DEFAULT, ...hs, ...partial } });
+  const fontCatalog = useFontCatalog();
   return (
     <div className="cfg-drawer fade-in">
-      <HookPreview text="Your hook text" style={hs} />
+      <HookPreview text="Your hook text" style={hs} fontCatalog={fontCatalog} />
       <div className="cf-row" style={{ marginTop: 12 }}>
         <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Position</span>
         <Segmented full value={opts.hookPos} onChange={(id) => set({ hookPos: id })}
@@ -226,7 +228,7 @@ function HookConfig({ opts, set }) {
         <Segmented full value={opts.hookSize} onChange={(id) => set({ hookSize: id })}
           options={[{ id: 'S', label: 'Small' }, { id: 'M', label: 'Medium' }, { id: 'L', label: 'Large' }]} />
       </div>
-      <HookStyleControls style={hs} set={setStyle} />
+      <HookStyleControls style={hs} set={setStyle} fonts={fontCatalog.fonts} />
     </div>
   );
 }

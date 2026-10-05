@@ -11,7 +11,9 @@ import { useState } from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { HookPreview, HookStyleControls } from './hookStyle.jsx';
 import { HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
-import { optsToPreselections } from '../../api/client';
+import { optsToPreselections, listFonts } from '../../api/client';
+import { HookTab } from '../../features/clip-editor/editTabs.jsx';
+import { useFontCatalog } from '../../hooks/useFontList';
 
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -21,11 +23,12 @@ vi.mock('../../api/client', async (importOriginal) => ({
 let latestStyle;
 function Hook() {
   const [style, setStyle] = useState({ ...HOOK_STYLE_DEFAULT });
+  const fontCatalog = useFontCatalog();
   latestStyle = style;
   return (
     <>
-      <HookPreview text="YOUR HOOK TEXT" style={style} />
-      <HookStyleControls style={style} set={(p) => setStyle((s) => ({ ...s, ...p }))} />
+      <HookPreview text="YOUR HOOK TEXT" style={style} fontCatalog={fontCatalog} />
+      <HookStyleControls style={style} set={(p) => setStyle((s) => ({ ...s, ...p }))} fonts={fontCatalog.fonts} />
     </>
   );
 }
@@ -94,4 +97,71 @@ test('the Noto Serif preview face loads the bundled backend default file at 700'
   expect(face[0]).toContain('src:url("/fonts/NotoSerif-Bold.ttf") format("truetype")');
   expect(face[0]).toContain('font-weight:700');
   expect(existsSync(resolve(cwd(), '..', 'fonts', 'NotoSerif-Bold.ttf'))).toBe(true);
+});
+
+// Goal 30: a hook font that is no longer available (an uploaded font deleted
+// in Settings, still named by a saved preset / job pre-selection / clip edit)
+// is rendered by hook_overlay with its FONT_PATH fallback, NotoSerif-Bold. The
+// preview follows once the live font list has loaded and does not contain the
+// name; the stale value itself is never rewritten. Exercised through the real
+// editor Hook tab (preview + controls share one font list there, as in Create).
+const BUNDLED = ['Anton-Regular', 'Bangers-Regular', 'Montserrat-Black', 'Montserrat-ExtraBold',
+  'NotoSerif-Bold', 'Poppins-Black', 'Poppins-Medium'];
+const liveList = (fonts) => vi.mocked(listFonts).mockImplementationOnce(async () => ({ fonts }));
+const NOTO = '"ClippyMe Preview NotoSerif-Bold", sans-serif';
+const tabPreview = () => screen.getByText('YOUR HOOK TEXT', { selector: 'span' }).style;
+
+function EditorHookTab({ font, onStyle = () => {} }) {
+  return <HookTab on onToggle={() => {}} text="YOUR HOOK TEXT" onText={() => {}}
+    style={{ ...HOOK_STYLE_DEFAULT, font }} onStyle={onStyle} />;
+}
+
+test('a deleted custom font previews the backend Noto Serif fallback, state untouched', async () => {
+  liveList([...BUNDLED, 'MyBrand-Bold']);
+  const onStyle = vi.fn();
+  render(<EditorHookTab font="MyDeleted-Font" onStyle={onStyle} />);
+  await waitFor(() => expect(tabPreview().fontFamily).toBe(NOTO));
+  expect(tabPreview().fontWeight).toBe('700');
+  expect(onStyle).not.toHaveBeenCalled();
+  const { hook } = optsToPreselections({ hooks: true, hookPos: 'top', hookSize: 'M',
+    hookStyle: { ...HOOK_STYLE_DEFAULT, font: 'MyDeleted-Font' } });
+  expect(hook.font).toBe('MyDeleted-Font');
+});
+
+test('any other name outside the app font list also previews the Noto Serif fallback', async () => {
+  liveList([...BUNDLED]);
+  render(<EditorHookTab font="Arial" />);
+  await waitFor(() => expect(tabPreview().fontFamily).toBe(NOTO));
+  expect(tabPreview().fontWeight).toBe('700');
+});
+
+test('a custom font still in the live list keeps its name as the family', async () => {
+  liveList([...BUNDLED, 'MyBrand-Bold']);
+  render(<EditorHookTab font="MyBrand-Bold" />);
+  await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
+  expect(tabPreview().fontFamily).toBe('"MyBrand-Bold", sans-serif');
+  expect(tabPreview().fontWeight).toBe('800');
+});
+
+test.each([
+  ['the font list request fails', () => vi.mocked(listFonts).mockImplementationOnce(async () => { throw new Error('offline'); })],
+  ['the font list is unavailable (empty)', () => liveList([])],
+])('a custom font is not treated as missing when %s', async (_, arrange) => {
+  arrange();
+  render(<EditorHookTab font="MyBrand-Bold" />);
+  await waitFor(() => expect(listFonts).toHaveBeenCalled());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(tabPreview().fontFamily).toBe('"MyBrand-Bold", sans-serif');
+});
+
+test.each([
+  ['Verdana', '"Verdana", sans-serif', '800'],
+  ['Anton-Regular', '"ClippyMe Preview Anton-Regular", sans-serif', '400'],
+  ['', NOTO, '700'],
+])('with the live list loaded, %j keeps its Goal 28/29 preview', async (font, family, weight) => {
+  liveList([...BUNDLED, 'MyBrand-Bold']);
+  render(<EditorHookTab font={font} />);
+  await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
+  expect(tabPreview().fontFamily).toBe(family);
+  expect(tabPreview().fontWeight).toBe(weight);
 });

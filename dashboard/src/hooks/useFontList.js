@@ -6,21 +6,30 @@ import { useEffect, useState } from 'react';
 import { SUB_FONTS } from '../lib/uiOptions';
 import { listFonts } from '../api/client';
 
-export function useFontList() {
-  const [fonts, setFonts] = useState(SUB_FONTS);
+// { fonts, live }: `live` turns true once the backend list has loaded. It then
+// names every face the renderer can resolve (bundled + uploaded), so a font
+// absent from `fonts` is no longer available (e.g. deleted in Settings). A
+// failed or empty response (listFonts' error value; a real list always carries
+// the bundled faces) leaves `live` false: availability unknown.
+export function useFontCatalog() {
+  const [catalog, setCatalog] = useState({ fonts: SUB_FONTS, live: false });
   useEffect(() => {
     let alive = true;
     listFonts()
       .then(({ fonts: live }) => {
-        if (!alive || !Array.isArray(live)) return;
+        if (!alive || !Array.isArray(live) || !live.length) return;
         const known = new Set(SUB_FONTS.map(([v]) => v));
         const extra = live
           .filter((n) => n && !known.has(n))
           .map((n) => [n, n.replace(/-/g, ' ')]);
-        if (extra.length) setFonts([...SUB_FONTS, ...extra]);
+        setCatalog({ fonts: extra.length ? [...SUB_FONTS, ...extra] : SUB_FONTS, live: true });
       })
       .catch(() => {});
     return () => { alive = false; };
   }, []);
-  return fonts;
+  return catalog;
+}
+
+export function useFontList() {
+  return useFontCatalog().fonts;
 }

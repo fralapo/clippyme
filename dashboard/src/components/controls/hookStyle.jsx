@@ -5,7 +5,6 @@
 // banner / colours / outline before reprocessing.
 import { Segmented, Switch } from '../primitives';
 import { SUB_COLORS, HOOK_OUTLINE, HOOK_BACKEND_DEFAULT_FONT, bundledPreviewFont } from '../../lib/uiOptions';
-import { useFontList } from '../../hooks/useFontList';
 
 function Swatches({ value, onPick, label }) {
   return (
@@ -22,7 +21,18 @@ function Swatches({ value, onPick, label }) {
   );
 }
 
-export function HookPreview({ text, style }) {
+// Font ID the preview draws. '' and a name the live font list no longer
+// carries (an uploaded font deleted after a preset or clip saved it) both
+// render with the backend default (hook_overlay FONT_PATH). Until the list has
+// loaded, availability is unknown and the name is kept. Preview-only.
+function previewFontId(font, fontCatalog) {
+  if (!font) return HOOK_BACKEND_DEFAULT_FONT;
+  if (fontCatalog?.live && !fontCatalog.fonts.some(([v]) => v === font)) return HOOK_BACKEND_DEFAULT_FONT;
+  return font;
+}
+
+// `fontCatalog` is the parent's useFontCatalog(), shared with HookStyleControls.
+export function HookPreview({ text, style, fontCatalog }) {
   const s = style || {};
   const ow = parseInt(s.outline_width || 0, 10);
   const oc = s.outline_color || '#000';
@@ -35,10 +45,11 @@ export function HookPreview({ text, style }) {
     ? hexA(s.bg_color || '#FFFFFF', s.bg_opacity ?? 0.94)
     : 'transparent';
   // Bundled fonts preview with the same TTF the backend burns, at its real
-  // weight (a generic 800 would faux-bold 400-only Anton/Bangers). An empty
-  // font previews the backend default face; s.font itself stays ''.
-  const face = bundledPreviewFont(s.font || HOOK_BACKEND_DEFAULT_FONT) || {
-    fontFamily: `"${s.font}", sans-serif`,
+  // weight (a generic 800 would faux-bold 400-only Anton/Bangers). An empty or
+  // unavailable font previews the backend default face; s.font is unchanged.
+  const fontId = previewFontId(s.font, fontCatalog);
+  const face = bundledPreviewFont(fontId) || {
+    fontFamily: `"${fontId}", sans-serif`,
     fontWeight: 800,
   };
   return (
@@ -58,9 +69,9 @@ function hexA(hex, a) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-export function HookStyleControls({ style, set }) {
+// `fonts` is the parent's useFontCatalog().fonts ([value, label] pairs).
+export function HookStyleControls({ style, set, fonts }) {
   const s = style || {};
-  const fonts = useFontList();
   const ow = String(s.outline_width ?? 0);
   return (
     <>

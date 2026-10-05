@@ -83,6 +83,28 @@ def test_font_name_cannot_escape_font_directories(monkeypatch, tmp_path):
     assert hook_overlay._resolve_hook_font_path(str(outside.with_suffix(""))) == str(fallback)
 
 
+def test_deleted_uploaded_font_falls_back_to_default_font(monkeypatch, tmp_path):
+    # Goal 30: the dashboard previews a hook font missing from the live font
+    # list with HOOK_BACKEND_DEFAULT_FONT, because this resolver falls back to
+    # FONT_PATH for a valid name that no longer exists in either directory.
+    from clippyme.editing import subtitles
+
+    fallback = tmp_path / "NotoSerif-Bold.ttf"
+    fallback.write_bytes(b"fallback")
+    user_dir = tmp_path / "user_fonts"
+    user_dir.mkdir()
+    uploaded = user_dir / "MyBrand-Bold.ttf"
+    uploaded.write_bytes(b"uploaded")
+    monkeypatch.setattr(hook_overlay, "FONT_DIR", str(tmp_path / "fonts"))
+    monkeypatch.setattr(hook_overlay, "FONT_PATH", str(fallback))
+    monkeypatch.setattr(hook_overlay, "download_font_if_needed", lambda: None)
+    monkeypatch.setattr(subtitles, "USER_FONTS_DIR", str(user_dir))
+
+    assert hook_overlay._resolve_hook_font_path("MyBrand-Bold") == str(uploaded)
+    uploaded.unlink()
+    assert hook_overlay._resolve_hook_font_path("MyBrand-Bold") == str(fallback)
+
+
 def test_overlong_word_is_wrapped_to_target_width(monkeypatch, tmp_path):
     monkeypatch.setattr(hook_overlay, "_resolve_hook_font_path", lambda name: str(tmp_path / "missing.ttf"))
     output = tmp_path / "hook.png"
