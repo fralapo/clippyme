@@ -105,6 +105,19 @@ def test_deleted_uploaded_font_falls_back_to_default_font(monkeypatch, tmp_path)
     assert hook_overlay._resolve_hook_font_path("MyBrand-Bold") == str(fallback)
 
 
+def test_verdana_has_no_hook_font_file_and_falls_back_to_noto_serif(monkeypatch, tmp_path):
+    # Goal 31: the dashboard no longer offers Verdana for hooks and previews a
+    # saved one with HOOK_BACKEND_DEFAULT_FONT, because no bundled or uploaded
+    # Verdana file exists and this resolver never searches system fonts.
+    from clippyme.editing import subtitles
+
+    monkeypatch.setattr(subtitles, "USER_FONTS_DIR", str(tmp_path))
+    monkeypatch.setattr(hook_overlay, "download_font_if_needed", lambda: None)
+
+    assert hook_overlay._resolve_hook_font_path("Verdana") == hook_overlay.FONT_PATH
+    assert os.path.basename(hook_overlay.FONT_PATH) == "NotoSerif-Bold.ttf"
+
+
 def test_overlong_word_is_wrapped_to_target_width(monkeypatch, tmp_path):
     monkeypatch.setattr(hook_overlay, "_resolve_hook_font_path", lambda name: str(tmp_path / "missing.ttf"))
     output = tmp_path / "hook.png"

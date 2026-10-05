@@ -99,6 +99,14 @@ export function bundledPreviewFont(fontId) {
   return { fontFamily: `"ClippyMe Preview ${fontId}", sans-serif`, fontWeight: PREVIEW_FONT_WEIGHTS[fontId] };
 }
 
+// Curated subtitle fonts the hook renderer cannot load: hook_overlay only opens
+// files in fonts/ and the user fonts dir, so a font with no bundled file (system
+// Verdana, which only libass/fontconfig resolves) burns as NotoSerif-Bold. Not
+// offered for hooks; a saved one stays in state and previews the backend default.
+export const HOOK_UNSUPPORTED_FONTS = new Set(
+  SUB_FONTS.map(([v]) => v).filter((v) => !bundledPreviewFont(v)),
+);
+
 // Karaoke preset picker. `font` must equal the backend preset font
 // (tests/editing/test_subtitle_preset_parity.py); it only drives the preview —
 // karaoke payloads never send a font, the backend resolves it from the preset.

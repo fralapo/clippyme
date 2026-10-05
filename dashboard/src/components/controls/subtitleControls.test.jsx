@@ -41,6 +41,12 @@ test('classic shows font/swatches/outline/bg; karaoke controls absent', () => {
   expect(screen.queryByLabelText('Subtitle stroke color')).toBeNull();
 });
 
+test('classic subtitles still offer Verdana (Goal 31 removed it from hooks only)', () => {
+  mount({ mode: 'classic', font: 'Verdana' });
+  expect(screen.getByRole('option', { name: 'Verdana' })).toBeInTheDocument();
+  expect(screen.getByRole('combobox').value).toBe('Verdana');
+});
+
 test('every karaoke control emits the right partial', () => {
   const onChange = mount();
   fireEvent.click(screen.getByRole('button', { name: 'Classic' }));

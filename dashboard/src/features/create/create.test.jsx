@@ -104,3 +104,17 @@ test('hook drawer: a stale preset font previews the backend Noto Serif fallback,
   expect(hookText().fontWeight).toBe('700');
   expect(set).not.toHaveBeenCalled();
 });
+
+test('hook drawer: Verdana is not offered and a saved Verdana previews Noto Serif, opts untouched', async () => {
+  // Goal 31: hook_overlay has no Verdana file and renders it with NotoSerif-Bold.
+  vi.mocked(listFonts).mockImplementationOnce(async () => ({ fonts: ['Anton-Regular', 'NotoSerif-Bold', 'MyBrand-Bold'] }));
+  const set = mount({ hooks: true, hookPos: 'top', hookSize: 'M',
+    hookStyle: { ...HOOK_STYLE_DEFAULT, font: 'Verdana' } });
+  openDrawer('Text hooks');
+  const hookText = () => screen.getByText('Your hook text').style;
+  await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
+  expect(screen.queryByRole('option', { name: 'Verdana' })).toBeNull();
+  expect(hookText().fontFamily).toBe('"ClippyMe Preview NotoSerif-Bold", sans-serif');
+  expect(hookText().fontWeight).toBe('700');
+  expect(set).not.toHaveBeenCalled();
+});

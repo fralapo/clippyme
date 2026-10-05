@@ -4,7 +4,7 @@
 // merges updates. A live WYSIWYG preview sits on top so the user sees the
 // banner / colours / outline before reprocessing.
 import { Segmented, Switch } from '../primitives';
-import { SUB_COLORS, HOOK_OUTLINE, HOOK_BACKEND_DEFAULT_FONT, bundledPreviewFont } from '../../lib/uiOptions';
+import { SUB_COLORS, HOOK_OUTLINE, HOOK_BACKEND_DEFAULT_FONT, HOOK_UNSUPPORTED_FONTS, bundledPreviewFont } from '../../lib/uiOptions';
 
 function Swatches({ value, onPick, label }) {
   return (
@@ -21,12 +21,13 @@ function Swatches({ value, onPick, label }) {
   );
 }
 
-// Font ID the preview draws. '' and a name the live font list no longer
-// carries (an uploaded font deleted after a preset or clip saved it) both
-// render with the backend default (hook_overlay FONT_PATH). Until the list has
-// loaded, availability is unknown and the name is kept. Preview-only.
+// Font ID the preview draws. '', a font the hook renderer never loads (Verdana)
+// and a name the live font list no longer carries (an uploaded font deleted
+// after a preset or clip saved it) all render with the backend default
+// (hook_overlay FONT_PATH). Until the list has loaded, an uploaded font's
+// availability is unknown and the name is kept. Preview-only.
 function previewFontId(font, fontCatalog) {
-  if (!font) return HOOK_BACKEND_DEFAULT_FONT;
+  if (!font || HOOK_UNSUPPORTED_FONTS.has(font)) return HOOK_BACKEND_DEFAULT_FONT;
   if (fontCatalog?.live && !fontCatalog.fonts.some(([v]) => v === font)) return HOOK_BACKEND_DEFAULT_FONT;
   return font;
 }
@@ -69,7 +70,8 @@ function hexA(hex, a) {
   return `rgba(${r},${g},${b},${a})`;
 }
 
-// `fonts` is the parent's useFontCatalog().fonts ([value, label] pairs).
+// `fonts` is the parent's useFontCatalog().fonts ([value, label] pairs); fonts
+// the hook renderer cannot load are not offered.
 export function HookStyleControls({ style, set, fonts }) {
   const s = style || {};
   const ow = String(s.outline_width ?? 0);
@@ -104,7 +106,7 @@ export function HookStyleControls({ style, set, fonts }) {
         <span className="field-label" style={{ marginBottom: 9, display: 'flex' }}>Font</span>
         <select className="sel" style={{ width: '100%' }} value={s.font || ''} onChange={(e) => set({ font: e.target.value })}>
           <option value="">Default (serif)</option>
-          {fonts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          {fonts.filter(([v]) => !HOOK_UNSUPPORTED_FONTS.has(v)).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </select>
       </div>
     </>

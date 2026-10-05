@@ -1,7 +1,7 @@
 // Goal 28: the hook preview must draw the bundled face the backend renders
 // with. Renderer font IDs ("Anton-Regular") are TTF basenames, not CSS
 // families; bundled ones map to the Goal 24 "ClippyMe Preview <id>" @font-face
-// at the file's real weight (no faux bold). System/uploaded fonts keep their
+// at the file's real weight (no faux bold). Uploaded fonts keep their
 // name as the family. Exercised through the font <select> → preview span path.
 import { test, expect, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
@@ -55,11 +55,23 @@ test.each([
   expect(preview().fontWeight).toBe(weight);
 });
 
-test('system Verdana keeps its own family name with the sans-serif fallback', () => {
+// Goal 31: hook_overlay only loads font files from fonts/ and the user fonts
+// dir. Verdana (a curated classic-subtitle font resolved by fontconfig) has no
+// file there, so the hook renderer burns it as NotoSerif-Bold: not offered.
+test('the hook font selector does not offer Verdana', async () => {
   render(<Hook />);
-  pick('Verdana');
-  expect(preview().fontFamily).toBe('"Verdana", sans-serif');
-  expect(preview().fontWeight).toBe('800');
+  await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
+  const options = screen.getAllByRole('option').map((o) => o.value);
+  expect(options).not.toContain('Verdana');
+  expect(options).toEqual(expect.arrayContaining(['', 'Montserrat-Black', 'Anton-Regular',
+    'Bangers-Regular', 'Poppins-Black', 'Poppins-Medium', 'MyBrand-Bold']));
+});
+
+test('every curated hook font choice is a bundled file the hook renderer loads', () => {
+  render(<Hook />);
+  const curated = screen.getAllByRole('option').map((o) => o.value).filter(Boolean);
+  expect(curated.length).toBeGreaterThan(0);
+  for (const font of curated) expect(existsSync(resolve(cwd(), '..', 'fonts', `${font}.ttf`)), font).toBe(true);
 });
 
 test('an uploaded font keeps its name as the family (no preview face exists)', async () => {
@@ -155,7 +167,7 @@ test.each([
 });
 
 test.each([
-  ['Verdana', '"Verdana", sans-serif', '800'],
+  ['Verdana', NOTO, '700'],
   ['Anton-Regular', '"ClippyMe Preview Anton-Regular", sans-serif', '400'],
   ['', NOTO, '700'],
 ])('with the live list loaded, %j keeps its Goal 28/29 preview', async (font, family, weight) => {
@@ -164,4 +176,28 @@ test.each([
   await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
   expect(tabPreview().fontFamily).toBe(family);
   expect(tabPreview().fontWeight).toBe(weight);
+});
+
+// Goal 31: a saved Verdana hook font (preset, job pre-selection, clip edit)
+// stays readable and unchanged, and previews the Noto Serif face the backend
+// burns. Verdana is unsupported by design, so this holds before the live font
+// list loads too (no flash of a system Verdana).
+test.each([
+  ['before the live font list loads', () => vi.mocked(listFonts).mockImplementationOnce(() => new Promise(() => {}))],
+  ['after the live font list loads', () => liveList([...BUNDLED, 'MyBrand-Bold'])],
+  ['when the font list request fails', () => vi.mocked(listFonts).mockImplementationOnce(async () => { throw new Error('offline'); })],
+])('a saved Verdana hook font previews Noto Serif %s, state and payload untouched', async (_, arrange) => {
+  arrange();
+  const onStyle = vi.fn();
+  render(<EditorHookTab font="Verdana" onStyle={onStyle} />);
+  expect(tabPreview().fontFamily).toBe(NOTO);
+  expect(tabPreview().fontWeight).toBe('700');
+  await waitFor(() => expect(listFonts).toHaveBeenCalled());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(tabPreview().fontFamily).toBe(NOTO);
+  expect(screen.queryByRole('option', { name: 'Verdana' })).toBeNull();
+  expect(onStyle).not.toHaveBeenCalled();
+  const { hook } = optsToPreselections({ hooks: true, hookPos: 'top', hookSize: 'M',
+    hookStyle: { ...HOOK_STYLE_DEFAULT, font: 'Verdana' } });
+  expect(hook.font).toBe('Verdana');
 });
