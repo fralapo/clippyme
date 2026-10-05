@@ -53,12 +53,14 @@ export function HookPreview({ text, style, fontCatalog }) {
     fontFamily: `"${fontId}", sans-serif`,
     fontWeight: 800,
   };
+  // The renderer draws the TTF's default glyphs: don't inherit the dashboard's
+  // body font-feature-settings (ss01 swaps Montserrat's y/a/t/W…, tnum digits).
   return (
     <div style={{ padding: '18px 12px', background: '#0c0c11', borderRadius: 'var(--r-sm)', textAlign: 'center', display: 'flex', justifyContent: 'center' }}>
       <span style={{
         display: 'inline-block', padding: s.bg_enabled ? '8px 16px' : '4px 6px',
         borderRadius: 12, background: bg, color: s.text_color || '#fff',
-        ...face, fontSize: 17, lineHeight: 1.15, textShadow: stroke, maxWidth: '100%',
+        ...face, fontFeatureSettings: 'normal', fontSize: 17, lineHeight: 1.15, textShadow: stroke, maxWidth: '100%',
       }}>{text || 'Your hook text'}</span>
     </div>
   );

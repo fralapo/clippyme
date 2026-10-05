@@ -295,3 +295,48 @@ test('Montserrat-ExtraBold and Montserrat-Black stay distinct options with disti
   expect(black).toEqual({ family: '"ClippyMe Preview Montserrat-Black", sans-serif', weight: '900' });
   expect(extraBold).toEqual({ family: EXTRABOLD, weight: '800' });
 });
+
+// Goal 34: body sets the dashboard's OpenType features ("ss01", "cv11",
+// "tnum"). Inherited by the hook preview they swap Montserrat's W/y/a/t/l/w
+// (ss01), Poppins' punctuation (ss01) and digit widths (tnum), while the hook
+// renderer (Pillow) draws the TTF's default glyphs. The preview text opts out;
+// the rest of the UI keeps the body's features. The real app.css is loaded so
+// the cascade/inheritance is exercised on the rendered preview element.
+function withAppStylesheet() {
+  const sheet = document.createElement('style');
+  sheet.textContent = readFileSync(resolve(cwd(), 'src', 'styles', 'app.css'), 'utf8');
+  document.head.appendChild(sheet);
+  return () => sheet.remove();
+}
+
+test.each(['Montserrat-ExtraBold', 'Montserrat-Black', '', 'Poppins-Black'])(
+  'hook preview text in %j does not inherit the UI font-feature-settings', async (font) => {
+    const removeSheet = withAppStylesheet();
+    try {
+      liveList([...BUNDLED]);
+      render(<Hook />);
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Montserrat ExtraBold' })).toBeInTheDocument());
+      pick(font);
+      const text = screen.getByText('YOUR HOOK TEXT');
+      expect(getComputedStyle(document.body).fontFeatureSettings).toContain('ss01');
+      expect(getComputedStyle(text).fontFeatureSettings).toBe('normal');
+      expect(getComputedStyle(screen.getByRole('combobox')).fontFeatureSettings)
+        .toBe(getComputedStyle(document.body).fontFeatureSettings);
+    } finally {
+      removeSheet();
+    }
+  });
+
+test.each(['Montserrat-ExtraBold', 'Montserrat-Black', ''])(
+  'editor hook tab preview in %j does not inherit the UI font-feature-settings', async (font) => {
+    const removeSheet = withAppStylesheet();
+    try {
+      liveList([...BUNDLED]);
+      render(<EditorHookTab font={font} />);
+      await waitFor(() => expect(listFonts).toHaveBeenCalled());
+      const text = screen.getByText('YOUR HOOK TEXT', { selector: 'span' });
+      expect(getComputedStyle(text).fontFeatureSettings).toBe('normal');
+    } finally {
+      removeSheet();
+    }
+  });
