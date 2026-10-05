@@ -249,3 +249,49 @@ test.each([
   expect(hook.font).toBe('NotoSerif-Bold');
 });
 
+// Goal 33: Montserrat-ExtraBold is a real bundled file (fonts/, usWeightClass
+// 800) that hook_overlay renders, offered through the live font list. Its
+// preview must load that same file at 800, not fall back to a system sans
+// under the bare file-name family. The value and payload stay the file stem.
+const EXTRABOLD = '"ClippyMe Preview Montserrat-ExtraBold", sans-serif';
+
+test('selecting Montserrat-ExtraBold previews its bundled face at 800, state and payload untouched', async () => {
+  liveList([...BUNDLED, 'MyBrand-Bold']);
+  render(<Hook />);
+  await waitFor(() => expect(screen.getByRole('option', { name: 'Montserrat ExtraBold' })).toBeInTheDocument());
+  expect(screen.getByRole('option', { name: 'Montserrat ExtraBold' }).value).toBe('Montserrat-ExtraBold');
+  pick('Montserrat-ExtraBold');
+  expect(preview().fontFamily).toBe(EXTRABOLD);
+  expect(preview().fontWeight).toBe('800');
+  expect(screen.getByRole('combobox').value).toBe('Montserrat-ExtraBold');
+  expect(latestStyle.font).toBe('Montserrat-ExtraBold');
+  const { hook } = optsToPreselections({ hooks: true, hookPos: 'top', hookSize: 'M', hookStyle: latestStyle });
+  expect(hook.font).toBe('Montserrat-ExtraBold');
+});
+
+test.each([
+  ['before the live font list loads', () => vi.mocked(listFonts).mockImplementationOnce(() => new Promise(() => {}))],
+  ['after the live font list loads', () => liveList([...BUNDLED, 'MyBrand-Bold'])],
+])('a saved Montserrat-ExtraBold hook font previews its bundled face %s', async (_, arrange) => {
+  arrange();
+  const onStyle = vi.fn();
+  render(<EditorHookTab font="Montserrat-ExtraBold" onStyle={onStyle} />);
+  await waitFor(() => expect(listFonts).toHaveBeenCalled());
+  await new Promise((r) => setTimeout(r, 0));
+  expect(tabPreview().fontFamily).toBe(EXTRABOLD);
+  expect(tabPreview().fontWeight).toBe('800');
+  expect(onStyle).not.toHaveBeenCalled();
+});
+
+test('Montserrat-ExtraBold and Montserrat-Black stay distinct options with distinct preview faces', async () => {
+  liveList([...BUNDLED, 'MyBrand-Bold']);
+  render(<Hook />);
+  await waitFor(() => expect(screen.getByRole('option', { name: 'Montserrat ExtraBold' })).toBeInTheDocument());
+  expect(screen.getByRole('option', { name: 'Montserrat Black' }).value).toBe('Montserrat-Black');
+  pick('Montserrat-Black');
+  const black = { family: preview().fontFamily, weight: preview().fontWeight };
+  pick('Montserrat-ExtraBold');
+  const extraBold = { family: preview().fontFamily, weight: preview().fontWeight };
+  expect(black).toEqual({ family: '"ClippyMe Preview Montserrat-Black", sans-serif', weight: '900' });
+  expect(extraBold).toEqual({ family: EXTRABOLD, weight: '800' });
+});

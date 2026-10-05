@@ -168,3 +168,19 @@ def test_concurrent_hook_renders_use_distinct_temp_files(monkeypatch, tmp_path):
     assert len(seen) == 2
     assert seen[0] != seen[1]
     assert all(not os.path.exists(path) for path in seen)
+
+
+def test_montserrat_extrabold_resolves_to_its_own_bundled_hook_font(monkeypatch, tmp_path):
+    # Goal 33: the dashboard previews the Montserrat-ExtraBold hook choice with
+    # fonts/Montserrat-ExtraBold.ttf, so the renderer must burn that same file,
+    # not the FONT_PATH fallback and not the Montserrat-Black file.
+    from clippyme.editing import subtitles
+
+    monkeypatch.setattr(subtitles, "USER_FONTS_DIR", str(tmp_path))
+    monkeypatch.setattr(hook_overlay, "download_font_if_needed", lambda: None)
+
+    extra_bold = hook_overlay._resolve_hook_font_path("Montserrat-ExtraBold")
+    assert os.path.basename(extra_bold) == "Montserrat-ExtraBold.ttf"
+    assert os.path.samefile(os.path.dirname(extra_bold), hook_overlay.FONT_DIR)
+    assert not os.path.samefile(extra_bold, hook_overlay.FONT_PATH)
+    assert not os.path.samefile(extra_bold, hook_overlay._resolve_hook_font_path("Montserrat-Black"))

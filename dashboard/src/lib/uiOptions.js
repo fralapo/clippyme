@@ -84,6 +84,8 @@ const PREVIEW_FONT_WEIGHTS = {
   'Anton-Regular': 400,
   // Hook-only: the backend default face (see HOOK_BACKEND_DEFAULT_FONT).
   'NotoSerif-Bold': 700,
+  // Hook-only: bundled file offered through the live font list.
+  'Montserrat-ExtraBold': 800,
 };
 
 // Font the hook renderer burns when the hook font is empty ("Default (serif)"):
