@@ -32,6 +32,7 @@ const ClipCard = memo(function ClipCard({ clip, index, jobId, state, preselectio
   const mode = state?.reframeMode || clip.reframe_mode || 'auto';
   const title = clip.video_title_for_youtube_short || `Clip ${index + 1}`;
   const processing = !!state?.processing;
+  const publicationStatus = acceptedPublicationStatus(clip, state);
   const selectionProps = selectMode ? {
     role: 'checkbox',
     tabIndex: 0,
@@ -85,8 +86,8 @@ const ClipCard = memo(function ClipCard({ clip, index, jobId, state, preselectio
             : <span className="rf-badge" title={`Reframe: ${REFRAME_LABEL[mode] || mode}`}><Icon n={REFRAME_ICON[mode] || 'crop'} />{REFRAME_LABEL[mode] || 'Auto'}</span>}
         </div>
         <div className="clip-bottom" style={{ padding: 10 }}>
-          {state?.publishedAt && <span className="clip-pub"><Icon n="check" />{state.publicationStatus === 'scheduled' ? 'scheduled' : state.publicationStatus === 'submitted' ? 'submitted' : 'published'}</span>}
-          <span className="dur" style={{ marginLeft: state?.publishedAt ? 8 : 0 }}>{fmtDuration(clip.start, clip.end)}</span>
+          {publicationStatus && <span className="clip-pub"><Icon n="check" />{publicationStatus}</span>}
+          <span className="dur" style={{ marginLeft: publicationStatus ? 8 : 0 }}>{fmtDuration(clip.start, clip.end)}</span>
         </div>
         {processing && <div className="clip-busy" role="status"><Icon n="loader" /><span>Reprocessing…</span></div>}
       </div>
