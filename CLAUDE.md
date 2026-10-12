@@ -65,6 +65,9 @@ docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest 
 ```
 
 Setup, skips and the full CI list: [docs/development/testing.md](docs/development/testing.md).
+Optional upstream engineering/UX/media skill routing:
+[docs/development/agent-skills.md](docs/development/agent-skills.md).
+Skill advice cannot override the invariants below.
 Dependency changes: [docs/development/dependencies.md](docs/development/dependencies.md)
 (`requirements.lock` is generated with uv, never hand-edited).
 
