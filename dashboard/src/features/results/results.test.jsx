@@ -89,6 +89,21 @@ test('bulk export with already-raw clips reports them as raw instead of composed
   expect(window.confirm).not.toHaveBeenCalled();
 });
 
+test('a scheduled clip keeps a scheduled badge rather than claiming it is published', () => {
+  mount(clips.slice(0, 1), { 0: { publishedAt: 123, publicationStatus: 'scheduled' } });
+  expect(screen.getByText('scheduled')).toBeInTheDocument();
+  expect(screen.queryByText('published')).toBeNull();
+});
+
+test('immediate accepted requests show submitted while persisted legacy entries remain compatible', () => {
+  mount(clips, {
+    0: { publishedAt: 123, publicationStatus: 'submitted' },
+    1: { publishedAt: 456 },
+  });
+  expect(screen.getByText('submitted')).toBeInTheDocument();
+  expect(screen.getByText('published')).toBeInTheDocument();
+});
+
 test('Publish all excludes clips still reprocessing and identifies the ready count', () => {
   const onPublishAll = vi.fn();
   mount(clips, { 0: { processing: true } }, onPublishAll);
