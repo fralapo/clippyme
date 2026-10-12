@@ -19,6 +19,7 @@ TestClient is used WITHOUT its context manager so the FastAPI lifespan
 bodies.
 """
 import base64
+import os
 import struct
 
 import pytest
@@ -147,6 +148,39 @@ def test_font_upload_and_delete(client):
     assert "Stratos" in body["fonts"]
 
     assert client.request("DELETE", "/api/config/fonts/Stratos").status_code == 200
+
+
+def test_uploaded_font_preview_requires_trust_and_token(client, tmp_path, monkeypatch):
+    folder = tmp_path / "private-fonts"
+    monkeypatch.setattr(config_module, "_USER_FONTS_DIR", str(folder))
+    response = client.post("/api/config/fonts", files={"font_file": ("MyFace.otf", TTF_MAGIC)})
+    assert response.status_code == 200
+    preview = client.get("/api/config/fonts/MyFace/preview")
+    assert preview.status_code == 200
+    assert preview.content == TTF_MAGIC
+    assert preview.headers["cache-control"] == "no-store"
+    assert client.get("/api/config/fonts/MyFace/preview", headers={
+        "Origin": "https://untrusted.example",
+    }).status_code == 403
+    monkeypatch.setenv("CLIPPYME_API_TOKEN", "test-font-access-token")
+    assert client.get("/api/config/fonts/MyFace/preview").status_code == 401
+    assert client.get("/api/config/fonts/MyFace/preview", headers={
+        "X-API-Token": "test-font-access-token",
+    }).status_code == 200
+
+
+def test_uploaded_font_preview_rejects_other_files_and_symlinks(client, tmp_path, monkeypatch):
+    folder = tmp_path / "private-fonts"
+    folder.mkdir()
+    monkeypatch.setattr(config_module, "_USER_FONTS_DIR", str(folder))
+    assert client.get("/api/config/fonts/DoesNotExist/preview").status_code == 404
+    assert client.get("/api/config/fonts/BadName%20%2Fpass/preview").status_code in (400, 404)
+    (folder / "Unrelated.txt").write_text("private")
+    assert client.get("/api/config/fonts/Unrelated/preview").status_code == 404
+    outside = tmp_path / "secret.txt"
+    outside.write_text("private material")
+    os.symlink(outside, folder / "Escape.ttf")
+    assert client.get("/api/config/fonts/Escape/preview").status_code == 404
 
 
 def test_font_reject_bad_extension(client):

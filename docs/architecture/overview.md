@@ -54,6 +54,7 @@ Subsystem pages:
   in modules that do not (`reframe_ops.py`, `reframe_track.py`, `cut_ops.py`,
   `run_ops.py`, `gemini_request.py`, `smartcut_ops.py`, …) so it can be tested
   on any machine. See [testing](../development/testing.md).
+- **Uploaded font previews:** licensed fonts remain in private `data/fonts/`, never the public `/fonts` mount. Trusted/config-token-protected `GET /api/config/fonts/{name}/preview` serves only uploaded font bytes; the browser loads these into `FontFace` using its authenticated API client. Failed previews visibly warn rather than pretending the fallback font is the uploaded face.
 - **Frontend ↔ backend.** The dashboard holds editing choices (compose
   toggles, trims) as UI state and sends them with each compose, download or
   publish request. The backend does not store a draft of the edit; it renders
