@@ -24,11 +24,13 @@ Scheduling modes:
 | `manual` | At the ISO 8601 `scheduled_for` time |
 | `auto` | `SmartScheduler` picks a slot: a free prime-time window for that weekday (Italian time by default, `ZERNIO_DEFAULT_TZ`), else a 15-minute scan between 07:00 and 23:00, else a fallback; posts keep `ZERNIO_MIN_GAP_SECONDS` (90 min) apart |
 
-The dashboard's publish dialog sends the selected clips concurrently, as `now`
-or `auto`; in `auto` mode each clip starts its slot search one day later than
-the previous one (today, tomorrow, …) to stay under per-platform daily limits.
-`manual` is available through the API only. Zernio error bodies are passed through unchanged, so
-the dashboard can show a platform's daily-limit 429 on the clip it affects.
+The dashboard's publish dialog supports `now`, `auto`, and (for a single clip)
+`manual`. For an exact manual time, the browser converts the local date/time
+selected by the user to an explicit UTC ISO 8601 instant before submission;
+past dates and invalid local times are rejected. Batch publishing supports `now`
+and `auto` only: in `auto` mode each clip starts its slot search one day later
+than the previous one to reduce daily-limit collisions. Zernio error bodies are
+passed through so the dashboard can show a platform's daily-limit 429.
 
 Manual publish answers 409 while the job is still running, or while a live
 monitor owns the clip.

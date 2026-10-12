@@ -94,3 +94,34 @@ test('a failed publish never shows success and keeps the Zernio error visible', 
   expect(screen.queryByText('Clip published')).toBeNull();
   expect(onPublished).not.toHaveBeenCalled();
 });
+
+function futureLocalTime() {
+  const date = new Date(Date.now() + 72 * 3600 * 1000);
+  const pad = (x) => String(x).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+test('single clip can schedule an exact browser-local time through the existing API', async () => {
+  mount();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Choose exact publication time' }));
+  const submit = screen.getByRole('button', { name: 'Schedule exact time' });
+  expect(submit).toBeDisabled();
+  const local = futureLocalTime();
+  fireEvent.change(screen.getByLabelText(/Publication date and time/), { target: { value: local } });
+  expect(submit).toBeEnabled();
+  fireEvent.click(submit);
+  await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(1));
+  const body = vi.mocked(publishClip).mock.calls[0][2];
+  expect(body.schedule_mode).toBe('manual');
+  expect(body.scheduled_for).toBe(new Date(local).toISOString());
+  expect(body).not.toHaveProperty('start_date');
+  await waitFor(() => expect(screen.getByText('Clip scheduled')).toBeInTheDocument());
+  expect(screen.getByText(/your selected date and time/)).toBeInTheDocument();
+});
+
+test('exact scheduling is unavailable for a multi-clip publish to avoid same-time collisions', async () => {
+  mount(clips);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+  expect(screen.queryByRole('checkbox', { name: 'Choose exact publication time' })).toBeNull();
+});
