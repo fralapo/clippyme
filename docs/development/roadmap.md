@@ -22,12 +22,16 @@ authoritative (see [CLAUDE.md](../../CLAUDE.md)).
 
 ## Next gates — verify before marking complete
 
-- [ ] [#40](https://github.com/fralapo/clippyme/pull/40):
-  when scheduling is off, one **Publish now** action; never label immediate
-  posting as **Queue**.
-- [ ] [#41](https://github.com/fralapo/clippyme/pull/41):
-  explicitly disabled edits must publish raw pixels, not a stale composed
-  artifact; omitted API toggles retain legacy behavior.
+- [x] [#40](https://github.com/fralapo/clippyme/pull/40):
+  when scheduling is off, one **Publish now** action; no misleading **Queue**.
+- [x] [#41](https://github.com/fralapo/clippyme/pull/41):
+  explicitly disabled edits publish raw pixels; omitted API toggles retain
+  legacy behavior.
+- [x] [#43](https://github.com/fralapo/clippyme/pull/43):
+  reject ambiguous autumn DST times instead of silently selecting an instant.
+- [ ] [#45](https://github.com/fralapo/clippyme/pull/45):
+  status is **scheduled** or **submitted** after Zernio acceptance, not
+  incorrectly **live**; supersedes conflicting [#44](https://github.com/fralapo/clippyme/pull/44).
 - [ ] Recheck the combined `main` CI (all four jobs) after merging the
   above, rather than relying solely on isolated pull-request runs.
 
@@ -39,10 +43,11 @@ user-visible gap. One independently testable change per PR.
 
 ### P1 — publishing correctness and recovery
 
-- [ ] Investigate manual `datetime-local` selection during the autumn
-  DST fallback (ambiguous local hour), user-device timezone versus the
-  configured Zernio timezone, and truthful display of the selected instant.
-  Only change behavior with precise timezone regression tests.
+- [x] Reject ambiguous `datetime-local` wall-clock values at autumn DST
+  fallback ([#43](https://github.com/fralapo/clippyme/pull/43)).
+- [ ] Independently review user-device-local scheduling versus the configured
+  Zernio timezone and confirm the selected instant in the UX (separate from
+  DST ambiguity already fixed).
 - [ ] Audit the Publish modal's close/escape behavior while a request is
   in progress: after submission, closing the dialog must not suggest a post
   was cancelled. Verify idempotent retry and durable status visibility.
