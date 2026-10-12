@@ -81,13 +81,29 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
 
   useEffect(() => { getZernio().then(setZernio).catch(() => setZernio({ configured: false })); }, []);
 
-  // Accessibility: focus trap + Escape-to-close + focus restore.
-  const panelRef = useModalA11y(onClose);
+  // Once a post starts, hiding the modal discards observable progress but
+  // cannot cancel the server-side Zernio operation. Keep it open until all
+  // outstanding requests settle; only "Cancel" in setup aborts the workflow.
+  const inFlightRef = useRef(false);
+  const guardedClose = () => {
+    if (!inFlightRef.current) onClose();
+  };
+  // Accessibility: focus trap + Escape uses the same guarded close.
+  const panelRef = useModalA11y(guardedClose);
 
   // Guard the post-publish setTimeout so it never calls setState after the
   // modal has been unmounted (e.g. parent closes it while the delay is in flight).
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    const warnOnUnload = (event) => {
+      if (!inFlightRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnOnUnload);
+    return () => window.removeEventListener('beforeunload', warnOnUnload);
+  }, []);
 
   const accounts = zernio?.accounts || {};
   const toggle = (k) => setPlats((p) => ({ ...p, [k]: !p[k] }));
@@ -131,11 +147,13 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   };
 
   const run = async (mode) => {
+    if (inFlightRef.current) return;
     const scheduledFor = mode === 'manual' ? manualScheduleIso(publishTime) : null;
     if (mode === 'manual' && (!scheduledFor || all)) {
       pushToast?.('warn', mode === 'manual' && !all ? manualScheduleProblem(publishTime) : 'Exact scheduling is available for one clip.');
       return;
     }
+    inFlightRef.current = true;
     setSubmittedMode(mode);
     setStage('uploading');
     const init = {};
@@ -153,26 +171,26 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
         const clip = clips[batchPos];
         setProgress((current) => ({ ...current, [clip._idx]: { state: 'uploading' } }));
 
-      const idx = clip._idx;
-      // Resolve to the backend's ABSOLUTE `shorts` position for the actual
-      // publish call — `idx` (array position) stays the key into local
-      // clipStates/progress, which are unaffected by a manual-publish gap.
-      const apiIdx = clip._apiIdx ?? idx;
-      try {
-        // Same intent for every retry of this Publish; a new one only after
-        // the server confirmed it (then publishing again is a re-publish).
-        const intent_id = publishIntent(jobId, apiIdx);
-        await publishClip(jobId, apiIdx, { ...buildBody(clip, idx, batchPos, mode, scheduledFor), intent_id });
-        clearPublishIntent(jobId, apiIdx);
-        setProgress((p) => ({ ...p, [idx]: { state: 'done' } }));
-        onPublished?.(idx, mode);
-        accepted[batchPos] = true;
-      } catch (e) {
-        // Surface the real reason (e.g. a Zernio daily-limit 429) instead of a
-        // bare "failed", so the user knows to retry that platform tomorrow.
-        setProgress((p) => ({ ...p, [idx]: { state: 'error', error: e?.message || 'Publish failed' } }));
-      }
+        const idx = clip._idx;
+        // Resolve to the backend's ABSOLUTE `shorts` position for the actual
+        // publish call — `idx` (array position) stays the key into local
+        // clipStates/progress, which are unaffected by a manual-publish gap.
+        const apiIdx = clip._apiIdx ?? idx;
+        try {
+          // Same intent for every retry of this Publish; a new one only after
+          // the server confirmed it (then publishing again is a re-publish).
+          const intent_id = publishIntent(jobId, apiIdx);
+          await publishClip(jobId, apiIdx, { ...buildBody(clip, idx, batchPos, mode, scheduledFor), intent_id });
+          clearPublishIntent(jobId, apiIdx);
+          setProgress((p) => ({ ...p, [idx]: { state: 'done' } }));
+          onPublished?.(idx, mode);
+          accepted[batchPos] = true;
+        } catch (e) {
+          // Surface the real reason (e.g. a Zernio daily-limit 429) instead of a
+          // bare "failed", so the user knows to retry that platform tomorrow.
+          setProgress((p) => ({ ...p, [idx]: { state: 'error', error: e?.message || 'Publish failed' } }));
         }
+      }
     };
     await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL_PUBLISHES, clips.length) }, () => worker()));
     const ok = accepted.filter(Boolean).length;
@@ -180,6 +198,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     setOutcome({ ok, fail });
     setTimeout(() => {
       if (!mountedRef.current) return;
+      inFlightRef.current = false;
       setStage('done');
       pushToast?.(fail === 0 ? 'success' : 'warn', `${mode === 'now' ? 'Submitted' : 'Scheduled'} ${ok}/${clips.length}${fail ? `, ${fail} failed` : ''}`);
     }, 500);
@@ -193,15 +212,15 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   return (
     // Backdrop click is a mouse-only convenience; keyboard users close via
     // Esc (useModalA11y). currentTarget guard replaces stopPropagation.
-    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) guardedClose(); }}>
       <div className={'modal' + (all ? ' wide' : '')} ref={panelRef}
         role="dialog" aria-modal="true" aria-labelledby="publish-modal-title">
         <div className="modal-head">
           <div>
             <h3 id="publish-modal-title">{title}</h3>
-            {stage === 'uploading' && <div className="mh-sub">uploading concurrently · daily-limit checks server-side</div>}
+            {stage === 'uploading' && <div className="mh-sub">Publishing up to two at a time · remaining clips queued</div>}
           </div>
-          <button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button>
+          <button type="button" className="x" onClick={guardedClose} disabled={stage === 'uploading'} aria-label="Close"><Icon n="x" /></button>
         </div>
 
         {stage === 'setup' && (
@@ -269,7 +288,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
               )}
             </div>
             <div className="modal-foot">
-              <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+              <Btn variant="ghost" onClick={guardedClose}>Cancel</Btn>
               <div className="mf-right">
                 {schedule && <Btn variant="secondary" icon="send" disabled={!ready} onClick={() => run('now')}>Publish now</Btn>}
                 <Btn variant="grad" icon={schedule ? 'calendar-clock' : 'send'} disabled={!ready || !manualReady} onClick={() => run(schedule ? (exactSchedule ? 'manual' : 'auto') : 'now')}>{schedule ? (exactSchedule ? 'Schedule exact time' : 'Schedule') : 'Publish now'}</Btn>
@@ -280,6 +299,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
 
         {stage === 'uploading' && (
           <div className="modal-body">
+            <p role="status" className="cm-small">Please keep this dialog open while publishing completes. Closing the page will not cancel requests already accepted by Zernio.</p>
             <div className="pubgrid">
               {clips.map((c) => <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} mode={submittedMode} />)}
             </div>
@@ -299,7 +319,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
               {clips.filter((c) => progress[c._idx]?.state === 'error').map((c) =>
                 <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} mode={submittedMode} />)}
             </div>}
-            <div style={{ marginTop: 22 }}><Btn variant="secondary" onClick={onClose}>Done</Btn></div>
+            <div style={{ marginTop: 22 }}><Btn variant="secondary" onClick={guardedClose}>Done</Btn></div>
           </div>
         )}
       </div>
