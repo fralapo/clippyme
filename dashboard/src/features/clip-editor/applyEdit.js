@@ -13,7 +13,11 @@ export async function runApplyEdit({ jobId, idx, apiIdx = idx, params, api, upda
   // Persist the user's choices + flip the card into its processing state up
   // front (so the badge/preview already reflect the new reframe mode).
   updateClipState(idx, { reframeMode, toggles, subtitleParams, hookParams, logoParams, gradeParams, bannerParams, dropRanges,
-    processing: reframeChanged || anyCompose });
+    processing: reframeChanged || anyCompose,
+    // All layers off means publish/download the raw clip. Clear the old
+    // composed preview too, or the card keeps showing disabled subtitles/hook.
+    ...(!reframeChanged && !anyCompose ? { previewUrl: undefined } : {}),
+  });
 
   if (!reframeChanged && !anyCompose) {
     pushToast('success', `Clip ${idx + 1} updated`);
