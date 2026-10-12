@@ -67,6 +67,12 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   // Snapshot the mode the user actually submitted; React state updates are async.
   const [submittedMode, setSubmittedMode] = useState(null);
   const [caption, setCaption] = useState(clips[0]?.tiktok_caption || clips[0]?.video_title_for_youtube_short || '');
+  const [useSharedCaption, setUseSharedCaption] = useState(false);
+  const [captionsByIndex, setCaptionsByIndex] = useState(() =>
+    Object.fromEntries(clips.map((clip) => [
+      clip._idx, clip.tiktok_caption || clip.video_title_for_youtube_short || '',
+    ])),
+  );
   const [stage, setStage] = useState('setup'); // setup | uploading | done
   const [progress, setProgress] = useState({});
   const [outcome, setOutcome] = useState(null); // actual confirmed/failed requests
@@ -105,7 +111,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     const title = (clip.video_title_for_youtube_short || `Clip ${idx + 1}`).slice(0, 100);
     return {
       title,
-      caption: (caption && caption.trim()) || title,
+      caption: ((all && !useSharedCaption ? captionsByIndex[idx] : caption) || '').trim() || title,
       platforms: targets,
       // Always send the operator's edit intent. All-off must select the raw
       // clip even if an earlier composed artifact remains on disk.
@@ -206,8 +212,27 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
                     </div>
                   </div>
                   <div className="field">
-                    <span className="field-label">Caption</span>
-                    <textarea className="ta" rows="3" value={caption} onChange={(e) => setCaption(e.target.value)}></textarea>
+                    {all && <label className="field-label">
+                      <input type="checkbox" checked={useSharedCaption}
+                        onChange={(e) => setUseSharedCaption(e.target.checked)} /> Use the same caption for all clips
+                    </label>}
+                    {all && !useSharedCaption ? (
+                      <div role="group" aria-label="Individual captions">
+                        {clips.map((clip, position) => {
+                          const name = clip.video_title_for_youtube_short || `Clip ${position + 1}`;
+                          return <div className="field" key={clip._idx}>
+                            <label className="field-label" htmlFor={`publish-caption-${clip._idx}`}>{`Caption for ${name}`}</label>
+                            <textarea id={`publish-caption-${clip._idx}`} className="ta" rows="2"
+                              value={captionsByIndex[clip._idx] ?? ''}
+                              onChange={(e) => setCaptionsByIndex((prev) => ({ ...prev, [clip._idx]: e.target.value }))} />
+                          </div>;
+                        })}
+                      </div>
+                    ) : <>
+                      <label className="field-label" htmlFor="publish-shared-caption">{all ? 'Shared caption' : 'Caption'}</label>
+                      <textarea id="publish-shared-caption" className="ta" rows="3" value={caption}
+                        onChange={(e) => setCaption(e.target.value)} />
+                    </>}
                   </div>
                   <div className="opt" style={{ borderBottom: 0 }}>
                     <div className="oico"><Icon n="calendar-clock" /></div>
