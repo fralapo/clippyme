@@ -1,7 +1,7 @@
 // ClippyMe — PublishModal: real concurrent publish to Zernio.
 // Every selected clip is published in parallel (Promise.allSettled) — the fix
-// for the old sequential stall — each row showing live queued→uploading→
-// live/error status. Per-clip compose_first honours the clip's toggles.
+// for the old sequential stall — each row showing queued→uploading→
+// submitted/scheduled/error, never falsely claiming posts are already live. Per-clip compose_first honours the clip's toggles.
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from '../../components/primitives';
 import { LazyVideo } from '../../components/LazyVideo';
