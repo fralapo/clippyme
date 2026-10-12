@@ -11,13 +11,14 @@ import { useState } from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { HookPreview, HookStyleControls } from './hookStyle.jsx';
 import { HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
-import { optsToPreselections, listFonts } from '../../api/client';
+import { optsToPreselections, listFonts, fetchUploadedFont } from '../../api/client';
 import { HookTab } from '../../features/clip-editor/editTabs.jsx';
 import { useFontCatalog } from '../../hooks/useFontList';
 
 vi.mock('../../api/client', async (importOriginal) => ({
   ...(await importOriginal()),
   listFonts: vi.fn(async () => ({ fonts: ['Anton-Regular', 'MyBrand-Bold'] })),
+  fetchUploadedFont: vi.fn(async () => { throw new Error('Font preview unavailable'); }),
 }));
 
 let latestStyle;
@@ -74,11 +75,13 @@ test('every curated hook font choice is a bundled file the hook renderer loads',
   for (const font of curated) expect(existsSync(resolve(cwd(), '..', 'fonts', `${font}.ttf`)), font).toBe(true);
 });
 
-test('an uploaded font keeps its name as the family (no preview face exists)', async () => {
+test('an uploaded font is never falsely rendered as an OS fallback', async () => {
   render(<Hook />);
   await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
   pick('MyBrand-Bold');
-  expect(preview().fontFamily).toBe('"MyBrand-Bold", sans-serif');
+  await waitFor(() => expect(screen.getByText(/Custom font preview unavailable/)).toBeInTheDocument());
+  expect(fetchUploadedFont).toHaveBeenCalledWith('MyBrand-Bold');
+  expect(preview().fontFamily).toBe('"ClippyMe Preview NotoSerif-Bold", sans-serif');
 });
 
 // Goal 29: the empty "Default (serif)" option means "backend default", which
@@ -147,12 +150,13 @@ test('any other name outside the app font list also previews the Noto Serif fall
   expect(tabPreview().fontWeight).toBe('700');
 });
 
-test('a custom font still in the live list keeps its name as the family', async () => {
+test('a custom font in the catalog attempts the authenticated preview', async () => {
   liveList([...BUNDLED, 'MyBrand-Bold']);
   render(<EditorHookTab font="MyBrand-Bold" />);
   await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
-  expect(tabPreview().fontFamily).toBe('"MyBrand-Bold", sans-serif');
-  expect(tabPreview().fontWeight).toBe('800');
+  await waitFor(() => expect(fetchUploadedFont).toHaveBeenCalledWith('MyBrand-Bold'));
+  expect(tabPreview().fontFamily).toBe(NOTO);
+  expect(tabPreview().fontWeight).toBe('700');
 });
 
 test.each([
@@ -163,7 +167,7 @@ test.each([
   render(<EditorHookTab font="MyBrand-Bold" />);
   await waitFor(() => expect(listFonts).toHaveBeenCalled());
   await new Promise((r) => setTimeout(r, 0));
-  expect(tabPreview().fontFamily).toBe('"MyBrand-Bold", sans-serif');
+  expect(tabPreview().fontFamily).toBe(NOTO);
 });
 
 test.each([
@@ -378,3 +382,35 @@ test.each(['', 'Anton-Regular', 'Montserrat-Black'])(
       removeSheet();
     }
   });
+
+test('successful custom font bytes render a registered FontFace and clean up on unmount', async () => {
+  const OldFontFace = globalThis.FontFace;
+  const oldDescriptor = Object.getOwnPropertyDescriptor(document, 'fonts');
+  const add = vi.fn();
+  const remove = vi.fn();
+  globalThis.FontFace = class {
+    constructor(family, bytes, options) {
+      this.family = family;
+      this.bytes = bytes;
+      this.options = options;
+    }
+    async load() { return this; }
+  };
+  Object.defineProperty(document, 'fonts', { configurable: true, value: { add, delete: remove } });
+  vi.mocked(fetchUploadedFont).mockResolvedValueOnce(new ArrayBuffer(64));
+  try {
+    const { unmount } = render(<Hook />);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'MyBrand Bold' })).toBeInTheDocument());
+    pick('MyBrand-Bold');
+    await waitFor(() => expect(add).toHaveBeenCalledTimes(1));
+    expect(preview().fontFamily).toContain('ClippyMe Uploaded');
+    expect(preview().fontWeight).toBe('400');
+    expect(add.mock.calls[0][0].bytes).toBeInstanceOf(ArrayBuffer);
+    unmount();
+    expect(remove).toHaveBeenCalledTimes(1);
+  } finally {
+    globalThis.FontFace = OldFontFace;
+    if (oldDescriptor) Object.defineProperty(document, 'fonts', oldDescriptor);
+    else delete document.fonts;
+  }
+});

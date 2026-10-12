@@ -264,6 +264,15 @@ export async function listFonts() {
   return res.json();
 }
 
+// Protected binary response: same token and origin checks as every /api call.
+export async function fetchUploadedFont(name) {
+  const res = await apiFetch(getApiUrl(`/api/config/fonts/${encodeURIComponent(name)}/preview`), {
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error(`Font preview HTTP ${res.status}`);
+  return res.arrayBuffer();
+}
+
 export async function uploadFont(file) {
   const fd = new FormData();
   fd.append('font_file', file);

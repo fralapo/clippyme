@@ -3,6 +3,8 @@
 // param object (keys match the backend create_hook_image dict); `set(partial)`
 // merges updates. A live WYSIWYG preview sits on top so the user sees the
 // banner / colours / outline before reprocessing.
+import { useEffect, useId, useState } from 'react';
+import { fetchUploadedFont } from '../../api/client';
 import { Segmented, Switch } from '../primitives';
 import { SUB_COLORS, HOOK_OUTLINE, HOOK_BACKEND_DEFAULT_FONT, HOOK_UNSUPPORTED_FONTS, bundledPreviewFont, isHookFontSelectable } from '../../lib/uiOptions';
 
@@ -32,6 +34,44 @@ function previewFontId(font, fontCatalog) {
   return font;
 }
 
+// Binary-source FontFace lets the browser use the same private uploaded TTF
+// as Pillow without exposing it at a public /fonts URL (and leaking LAN auth).
+// Each component instance gets its own CSS family; unmount removes its face.
+function useUploadedPreviewFace(fontId, active) {
+  const instance = useId();
+  const [result, setResult] = useState({ id: null, state: 'idle', family: null });
+  useEffect(() => {
+    if (!active || !fontId) return undefined;
+    let alive = true;
+    let registered = null;
+    setResult({ id: fontId, state: 'loading', family: null });
+    (async () => {
+      try {
+        const bytes = await fetchUploadedFont(fontId);
+        if (typeof FontFace !== 'function' || !document.fonts?.add) {
+          throw new Error('FontFace API unavailable');
+        }
+        const family = `ClippyMe Uploaded ${instance} ${fontId}`;
+        const face = new FontFace(family, bytes, { weight: '400', style: 'normal' });
+        await face.load();
+        if (!alive) return;
+        document.fonts.add(face);
+        registered = face;
+        setResult({ id: fontId, state: 'ready', family });
+      } catch {
+        if (alive) setResult({ id: fontId, state: 'error', family: null });
+      }
+    })();
+    return () => {
+      alive = false;
+      if (registered) document.fonts?.delete?.(registered);
+    };
+  }, [fontId, active, instance]);
+  return active && result.id === fontId
+    ? result
+    : { id: fontId, state: active ? 'loading' : 'idle', family: null };
+}
+
 // `fontCatalog` is the parent's useFontCatalog(), shared with HookStyleControls.
 export function HookPreview({ text, style, fontCatalog }) {
   const s = style || {};
@@ -49,20 +89,25 @@ export function HookPreview({ text, style, fontCatalog }) {
   // weight (a generic 800 would faux-bold 400-only Anton/Bangers). An empty or
   // unavailable font previews the backend default face; s.font is unchanged.
   const fontId = previewFontId(s.font, fontCatalog);
-  const face = bundledPreviewFont(fontId) || {
-    fontFamily: `"${fontId}", sans-serif`,
-    fontWeight: 800,
-  };
+  const bundled = bundledPreviewFont(fontId);
+  const custom = !bundled && fontId !== HOOK_BACKEND_DEFAULT_FONT;
+  const uploaded = useUploadedPreviewFace(fontId, custom);
+  const face = bundled || (uploaded.state === 'ready'
+    ? { fontFamily: `"${uploaded.family}", sans-serif`, fontWeight: 400 }
+    : bundledPreviewFont(HOOK_BACKEND_DEFAULT_FONT));
   // The renderer draws the TTF's default glyphs with no tracking: don't inherit
   // the dashboard's body font-feature-settings (ss01 swaps Montserrat's y/a/t/W…,
   // tnum digits) or letter-spacing (any non-zero value drops fi/fl/ff ligatures).
   return (
-    <div style={{ padding: '18px 12px', background: '#0c0c11', borderRadius: 'var(--r-sm)', textAlign: 'center', display: 'flex', justifyContent: 'center' }}>
+    <div style={{ padding: '18px 12px', background: '#0c0c11', borderRadius: 'var(--r-sm)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
       <span style={{
         display: 'inline-block', padding: s.bg_enabled ? '8px 16px' : '4px 6px',
         borderRadius: 12, background: bg, color: s.text_color || '#fff',
         ...face, fontFeatureSettings: 'normal', letterSpacing: 'normal', fontSize: 17, lineHeight: 1.15, textShadow: stroke, maxWidth: '100%',
       }}>{text || 'Your hook text'}</span>
+      {custom && uploaded.state !== 'ready' && <span role="status" style={{ color: '#ffcf79', fontSize: 11, marginTop: 6 }}>
+        {uploaded.state === 'error' ? 'Custom font preview unavailable; verify the exported clip.' : 'Loading custom font preview…'}
+      </span>}
     </div>
   );
 }
