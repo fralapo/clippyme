@@ -19,6 +19,7 @@ import tempfile
 from typing import Optional
 
 from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 
 from clippyme.api.schemas import ConfigUpdateRequest, ZernioConfigRequest
 from clippyme.api.security import require_trusted_config_request
@@ -221,6 +222,26 @@ async def list_fonts(request: Request):
     """List every font face available for burn-in (bundled + user-uploaded)."""
     require_trusted_config_request(request)
     return {"fonts": await asyncio.to_thread(_list_fonts)}
+
+
+@router.get("/api/config/fonts/{name}/preview")
+async def preview_uploaded_font(name: str, request: Request):
+    """Fetch an uploaded face with API token/origin checks, never public static.
+
+    A browser FontFace URL cannot carry X-API-Token, so the dashboard fetches
+    these bytes via its authenticated JSON client and registers a binary face.
+    """
+    require_trusted_config_request(request)
+    if not _FONT_NAME_RE.fullmatch(name):
+        raise HTTPException(status_code=404, detail="Font not found")
+    for ext in _FONT_EXTS:
+        path = os.path.join(_USER_FONTS_DIR, f"{name}{ext}")
+        if os.path.islink(path):
+            continue
+        if os.path.isfile(path):
+            mime = {".ttf": "font/ttf", ".otf": "font/otf", ".ttc": "font/collection"}[ext]
+            return FileResponse(path, media_type=mime, headers={"Cache-Control": "no-store"})
+    raise HTTPException(status_code=404, detail="Font not found")
 
 
 @router.post("/api/config/fonts")
