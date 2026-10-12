@@ -1,7 +1,7 @@
 // ClippyMe — PublishModal: real concurrent publish to Zernio.
 // Every selected clip is published in parallel (Promise.allSettled) — the fix
-// for the old sequential stall — each row showing live queued→uploading→
-// live/error status. Per-clip compose_first honours the clip's toggles.
+// for the old sequential stall — each row showing queued→uploading→
+// submitted/scheduled/error, never falsely claiming posts are already live. Per-clip compose_first honours the clip's toggles.
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from '../../components/primitives';
 import { LazyVideo } from '../../components/LazyVideo';
@@ -20,7 +20,7 @@ export const PLAT = {
   yt: { platform: 'youtube', acct: 'youtube', icon: 'youtube', label: 'Shorts' },
 };
 
-function PubRow({ clip, idx, st, plats }) {
+function PubRow({ clip, idx, st, plats, mode }) {
   // `st` is either a status string or { state, error } so we can surface the
   // real failure reason instead of a bare "failed".
   const status = typeof st === 'object' && st ? st.state : st;
@@ -48,7 +48,7 @@ function PubRow({ clip, idx, st, plats }) {
           <span className={'pstat' + (done ? ' done' : status === 'uploading' ? '' : ' wait')}
             style={error ? { color: 'var(--danger)' } : undefined}
             title={error && errMsg ? errMsg : undefined}>
-            {error ? (errMsg ? `failed: ${errMsg.slice(0, 60)}` : 'failed') : done ? 'live' : status === 'uploading' ? 'uploading' : 'queued'}
+            {error ? (errMsg ? `failed: ${errMsg.slice(0, 60)}` : 'failed') : done ? (mode === 'now' ? 'submitted' : 'scheduled') : status === 'uploading' ? 'uploading' : 'queued'}
           </span>
         </div>
       </div>
@@ -146,7 +146,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
         await publishClip(jobId, apiIdx, { ...buildBody(clip, idx, batchPos, mode, scheduledFor), intent_id });
         clearPublishIntent(jobId, apiIdx);
         setProgress((p) => ({ ...p, [idx]: { state: 'done' } }));
-        onPublished?.(idx);
+        onPublished?.(idx, mode);
         return true;
       } catch (e) {
         // Surface the real reason (e.g. a Zernio daily-limit 429) instead of a
@@ -161,13 +161,13 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     setTimeout(() => {
       if (!mountedRef.current) return;
       setStage('done');
-      pushToast?.(fail === 0 ? 'success' : 'warn', `${mode === 'now' ? 'Published' : 'Scheduled'} ${ok}/${clips.length}${fail ? `, ${fail} failed` : ''}`);
+      pushToast?.(fail === 0 ? 'success' : 'warn', `${mode === 'now' ? 'Submitted' : 'Scheduled'} ${ok}/${clips.length}${fail ? `, ${fail} failed` : ''}`);
     }, 500);
   };
 
   const wasScheduled = submittedMode !== 'now';
   const manualReady = !exactSchedule || !schedule || (!!manualScheduleIso(publishTime) && !all);
-  const title = stage === 'done' ? (outcome?.fail ? 'Publishing incomplete' : wasScheduled ? 'Scheduled' : 'Published')
+  const title = stage === 'done' ? (outcome?.fail ? 'Publishing incomplete' : wasScheduled ? 'Scheduled' : 'Submitted')
     : all ? `Publish ${clips.length} clips` : `Publish · ${clips[0]?.video_title_for_youtube_short || ''}`;
 
   return (
@@ -242,7 +242,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
         {stage === 'uploading' && (
           <div className="modal-body">
             <div className="pubgrid">
-              {clips.map((c) => <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} />)}
+              {clips.map((c) => <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} mode={submittedMode} />)}
             </div>
           </div>
         )}
@@ -252,13 +252,13 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
             <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'var(--success-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px' }}>
               <Icon n={outcome?.ok === 0 ? 'x' : wasScheduled ? 'calendar-check' : 'party-popper'} style={{ width: 28, height: 28, color: outcome?.fail ? 'var(--danger)' : 'var(--brand-teal)' }} />
             </div>
-            <div style={{ fontWeight: 700, fontSize: 18 }}>{outcome?.fail ? `${outcome.ok}/${clips.length} clips ${wasScheduled ? 'scheduled' : 'published'}` : <>{all ? `${clips.length} clips ` : 'Clip '}{wasScheduled ? 'scheduled' : 'published'}</>}</div>
+            <div style={{ fontWeight: 700, fontSize: 18 }}>{outcome?.fail ? `${outcome.ok}/${clips.length} clips ${wasScheduled ? 'scheduled' : 'submitted'}` : <>{all ? `${clips.length} clips ` : 'Clip '}{wasScheduled ? 'scheduled' : 'submitted'}</>}</div>
             <p style={{ color: 'var(--fg-3)', fontSize: 13.5, marginTop: 8, lineHeight: 1.5 }}>
               {outcome?.fail ? `${outcome.fail} clip${outcome.fail === 1 ? '' : 's'} failed. Review the error below and retry from Results.` : submittedMode === 'manual' ? 'Scheduled via Zernio for your selected date and time.' : wasScheduled ? 'Queued via Zernio for the next prime-time slot.' : 'Sent to Zernio for immediate publish.'}
             </p>
             {outcome?.fail > 0 && <div className="pubgrid" style={{ marginTop: 18, textAlign: 'left' }}>
               {clips.filter((c) => progress[c._idx]?.state === 'error').map((c) =>
-                <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} />)}
+                <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} mode={submittedMode} />)}
             </div>}
             <div style={{ marginTop: 22 }}><Btn variant="secondary" onClick={onClose}>Done</Btn></div>
           </div>
