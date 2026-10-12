@@ -67,6 +67,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   const [caption, setCaption] = useState(clips[0]?.tiktok_caption || clips[0]?.video_title_for_youtube_short || '');
   const [stage, setStage] = useState('setup'); // setup | uploading | done
   const [progress, setProgress] = useState({});
+  const [outcome, setOutcome] = useState(null); // actual confirmed/failed requests
 
   useEffect(() => { getZernio().then(setZernio).catch(() => setZernio({ configured: false })); }, []);
 
@@ -145,15 +146,16 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     }));
     const ok = results.filter((r) => r.status === 'fulfilled' && r.value).length;
     const fail = clips.length - ok;
+    setOutcome({ ok, fail });
     setTimeout(() => {
       if (!mountedRef.current) return;
       setStage('done');
-      pushToast?.(fail === 0 ? 'success' : 'warn', `Published ${ok}/${clips.length}${fail ? `, ${fail} failed` : ''}`);
+      pushToast?.(fail === 0 ? 'success' : 'warn', `${mode === 'auto' ? 'Scheduled' : 'Published'} ${ok}/${clips.length}${fail ? `, ${fail} failed` : ''}`);
     }, 500);
   };
 
   const wasScheduled = submittedMode === 'auto';
-  const title = stage === 'done' ? (wasScheduled ? 'Scheduled' : 'Published')
+  const title = stage === 'done' ? (outcome?.fail ? 'Publishing incomplete' : wasScheduled ? 'Scheduled' : 'Published')
     : all ? `Publish ${clips.length} clips` : `Publish · ${clips[0]?.video_title_for_youtube_short || ''}`;
 
   return (
@@ -224,12 +226,16 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
         {stage === 'done' && (
           <div className="modal-body" style={{ textAlign: 'center', padding: '36px 24px' }}>
             <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'var(--success-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 18px' }}>
-              <Icon n={wasScheduled ? 'calendar-check' : 'party-popper'} style={{ width: 28, height: 28, color: 'var(--brand-teal)' }} />
+              <Icon n={outcome?.ok === 0 ? 'x' : wasScheduled ? 'calendar-check' : 'party-popper'} style={{ width: 28, height: 28, color: outcome?.fail ? 'var(--danger)' : 'var(--brand-teal)' }} />
             </div>
-            <div style={{ fontWeight: 700, fontSize: 18 }}>{all ? `${clips.length} clips ` : 'Clip '}{wasScheduled ? 'scheduled' : 'published'}</div>
+            <div style={{ fontWeight: 700, fontSize: 18 }}>{outcome?.fail ? `${outcome.ok}/${clips.length} clips ${wasScheduled ? 'scheduled' : 'published'}` : <>{all ? `${clips.length} clips ` : 'Clip '}{wasScheduled ? 'scheduled' : 'published'}</>}</div>
             <p style={{ color: 'var(--fg-3)', fontSize: 13.5, marginTop: 8, lineHeight: 1.5 }}>
-              {wasScheduled ? 'Queued via Zernio for the next prime-time slot.' : 'Sent to Zernio for immediate publish.'}
+              {outcome?.fail ? `${outcome.fail} clip${outcome.fail === 1 ? '' : 's'} failed. Review the error below and retry from Results.` : wasScheduled ? 'Queued via Zernio for the next prime-time slot.' : 'Sent to Zernio for immediate publish.'}
             </p>
+            {outcome?.fail > 0 && <div className="pubgrid" style={{ marginTop: 18, textAlign: 'left' }}>
+              {clips.filter((c) => progress[c._idx]?.state === 'error').map((c) =>
+                <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} />)}
+            </div>}
             <div style={{ marginTop: 22 }}><Btn variant="secondary" onClick={onClose}>Done</Btn></div>
           </div>
         )}

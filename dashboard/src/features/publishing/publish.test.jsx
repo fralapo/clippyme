@@ -80,3 +80,17 @@ test('turning prime-time scheduling off makes the primary Queue action publish n
   expect(vi.mocked(publishClip).mock.calls[0][2]).not.toHaveProperty('start_date');
   await waitFor(() => expect(screen.getByText('Clip published')).toBeInTheDocument());
 });
+
+test('a failed publish never shows success and keeps the Zernio error visible', async () => {
+  const onPublished = mount();
+  vi.mocked(publishClip).mockRejectedValueOnce(new Error('Zernio daily limit reached'));
+  const immediate = screen.getByRole('button', { name: 'Publish now' });
+  await waitFor(() => expect(immediate).toBeEnabled());
+
+  fireEvent.click(immediate);
+  await waitFor(() => expect(screen.getByText('Publishing incomplete')).toBeInTheDocument());
+  expect(screen.getByText('0/1 clips published')).toBeInTheDocument();
+  expect(screen.getByText(/failed: Zernio daily limit reached/)).toBeInTheDocument();
+  expect(screen.queryByText('Clip published')).toBeNull();
+  expect(onPublished).not.toHaveBeenCalled();
+});
