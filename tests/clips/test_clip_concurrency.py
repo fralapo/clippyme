@@ -381,6 +381,31 @@ def _publish(root, index, **req):
                              zernio_cfg={"api_key": "k"})
 
 
+
+def test_explicitly_disabled_publish_layers_use_raw_even_when_stale_compose_exists(tmp_path, monkeypatch):
+    """The dashboard's all-off toggles mean raw, not a prior edited export.
+
+    Legacy API callers that omit toggles may still publish an existing
+    composed file. Explicitly disabling all layers must not silently publish
+    an old hook/caption that the user switched off.
+    """
+    root = str(tmp_path)
+    _make_job(root, ["One title"])
+    _stub_hook(monkeypatch)
+    uploads = _capture_uploads(monkeypatch)
+
+    async def scenario():
+        await _compose(root, 0, "old-hook")
+        await _publish(root, 0, toggles={
+            "hook": False, "subtitles": False, "smartcut": False,
+            "logo": False, "grade": False, "banner": False,
+        }, compose_first=False)
+        await _publish(root, 0)  # Historical API: omitted toggles reuse compose.
+
+    asyncio.run(scenario())
+    assert uploads == [b"RAW0", b"HOOK:old-hook:RAW0"]
+
+
 def test_same_title_clips_keep_their_own_composed_file(tmp_path, monkeypatch):
     """Bulk export composes clip after clip and the browser fetches each result
     afterwards; a publish without compose_first falls back to the composed

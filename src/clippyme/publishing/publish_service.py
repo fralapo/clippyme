@@ -112,7 +112,10 @@ async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
         except Exception as e:
             logger.error("publish: compose_layers failed for %s/%d: %s", job_id, clip_index, e)
             raise ClippyMeError(f"Compose before publish failed: {e}", status_code=500)
-    elif os.path.exists(composed_path):
+    elif toggles is None and os.path.exists(composed_path):
+        # Backwards-compatible API behavior: omitted toggles reuse the last
+        # composed file. An explicit all-off selection from the dashboard
+        # must use the raw clip instead of stale edits still on disk.
         upload_path = composed_path
 
     if not os.path.exists(upload_path):

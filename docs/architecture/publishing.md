@@ -10,7 +10,11 @@ or automatically by the [live monitor](live-monitor.md).
 `integrations/social_publisher.py`):
 
 1. Optionally re-compose the clip with the current edit layers, so the upload
-   matches the preview.
+   matches the preview. The dashboard always sends its current `toggles`:
+   if all layers are off, publish the **raw clip**, even if an earlier composed
+   export remains on disk. For backwards compatibility, API callers that
+   omit `toggles` (and do not request composition) still reuse an existing
+   composed clip if available.
 2. Request a presigned upload URL from Zernio and upload the file. The upload
    URL must be HTTPS and every address it resolves to must be public;
    otherwise the upload is refused.
