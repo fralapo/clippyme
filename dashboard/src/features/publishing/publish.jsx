@@ -217,7 +217,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
                         onChange={(e) => setExactSchedule(e.target.checked)} /> Choose exact publication time
                     </label>
                     {exactSchedule && <>
-                      <label className="field-label" htmlFor="publish-exact-datetime">Publication date and time (your device's local time)</label>
+                      <label className="field-label" htmlFor="publish-exact-datetime">Publication date and time (your local time)</label>
                       <input id="publish-exact-datetime" type="datetime-local" value={publishTime}
                         onChange={(e) => setPublishTime(e.target.value)} />
                       {!manualScheduleIso(publishTime) && <div className="cm-small" role="status">Select a future date and time to continue.</div>}
