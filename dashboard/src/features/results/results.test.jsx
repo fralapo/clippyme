@@ -109,7 +109,8 @@ test('selection mode does not publish a clip currently being reprocessed', () =>
   const onPublishAll = vi.fn();
   mount(clips, { 0: { processing: true }, 1: { selected: true } }, onPublishAll);
   fireEvent.click(screen.getByRole('button', { name: 'Select' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+  // Mocked onUpdateClipState does not rerender the harness. Both original
+  // clips were selected, so Select-all is already in its checked state.
   expect(screen.getByRole('button', { name: 'Publish ready 1' })).toBeEnabled();
   fireEvent.click(screen.getByRole('button', { name: 'Publish ready 1' }));
   expect(onPublishAll.mock.calls[0][0].map((c) => c.original_index)).toEqual([1]);
