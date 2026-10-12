@@ -44,6 +44,18 @@ test('no change at all → no API calls, success toast, no processing flag', asy
   expect(calls.toasts).toEqual([['success', 'Clip 3 updated']]);
 });
 
+test('turning all edit layers off drops stale composed preview and returns to raw pixels', async () => {
+  const { calls, args } = makeCtx();
+  // An earlier compose left /videos/.../edited.mp4 in persisted clip state.
+  // All toggles are now off; published/downloaded output uses raw, and the
+  // preview must not keep advertising the old burned-in subtitles or hook.
+  await runApplyEdit({ ...args, params: baseParams() });
+  expect(args.api.reframeClip).not.toHaveBeenCalled();
+  expect(args.api.composeClip).not.toHaveBeenCalled();
+  expect(calls.states.at(-1)).toHaveProperty('previewUrl', undefined);
+  expect(calls.states.at(-1).processing).toBe(false);
+});
+
 test('reframe-only: calls reframeClip, busts cache, never composes', async () => {
   const { calls, args } = makeCtx();
   await runApplyEdit({ ...args, params: baseParams({ reframeMode: 'subject' }) });
