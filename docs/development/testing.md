@@ -120,5 +120,12 @@ python -m clippyme.pipeline.quality.quality_suite quality-manifest.json --output
 ```
 
 Exit code `0` = all cases pass, `1` = quality regression, `2` = invalid or
-unsafe manifest. Case paths must stay inside the manifest's directory. It
-needs `ffprobe`/`ffmpeg`, so run it in the backend container.
+unsafe manifest. Case paths must stay inside the manifest's directory. An
+empty case list is invalid. **Every explicitly configured metric threshold is
+required**: if ffprobe/ffmpeg cannot measure it (including when
+`--no-signal-checks` is used), the case fails rather than silently passing.
+Optional production render warnings remain nonfatal unless `allow_warnings`
+is false. The suite needs `ffprobe`/`ffmpeg`, so run it in the backend
+container. The Docker integration suite additionally generates two short
+synthetic MP4s to verify a real ASS karaoke burn and rejection of a broken
+landscape/no-audio export without external API keys.

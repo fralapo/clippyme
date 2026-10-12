@@ -71,6 +71,8 @@ def _load_manifest(path: str) -> dict[str, Any]:
         raise QualityManifestError(f"cannot read manifest: {exc}") from exc
     if not isinstance(value, dict) or not isinstance(value.get("cases"), list):
         raise QualityManifestError("manifest must be an object containing a cases array")
+    if not value["cases"]:
+        raise QualityManifestError("manifest must contain at least one case")
     return value
 
 
@@ -124,13 +126,32 @@ def _baseline_issues(case: dict[str, Any], report: dict[str, Any]) -> list[str]:
         field="duration_tolerance",
         minimum=0,
     )
-    actual_duration = metrics.get("duration")
-    if expected_duration is not None and actual_duration is not None:
-        if abs(float(actual_duration) - expected_duration) > float(tolerance or 0):
+    # Acceptance baselines must fail closed. Production clip QA intentionally
+    # treats unavailable signal probes as soft failures, but an explicit
+    # manifest constraint cannot be considered satisfied without a measurement.
+    def measured_value(key: str) -> float | None:
+        raw = metrics.get(key)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    if expected_duration is not None:
+        actual_duration = measured_value("duration")
+        if actual_duration is None:
+            issues.append("duration baseline unavailable: ffprobe returned no finite duration")
+        elif abs(actual_duration - expected_duration) > float(tolerance or 0):
             issues.append(
-                f"duration baseline mismatch: measured {float(actual_duration):.3f}s, "
+                f"duration baseline mismatch: measured {actual_duration:.3f}s, 
                 f"expected {expected_duration:.3f}s ± {float(tolerance or 0):.3f}s"
             )
+
+    expected_aspect = parse_aspect(case.get("expected_aspect"))
+    if expected_aspect is not None:
+        width, height = measured_value("width"), measured_value("height")
+        if width is None or height is None or width <= 0 or height <= 0:
+            issues.append("aspect baseline unavailable: ffprobe returned no valid video dimensions")
 
     for manifest_key, metric_key, relation in (
         ("min_size_bytes", "size_bytes", "minimum"),
@@ -140,10 +161,12 @@ def _baseline_issues(case: dict[str, Any], report: dict[str, Any]) -> list[str]:
         ("max_peak_volume_db", "max_volume_db", "maximum"),
     ):
         threshold = _finite_number(case.get(manifest_key), field=manifest_key)
-        measured = metrics.get(metric_key)
-        if threshold is None or measured is None:
+        if threshold is None:
             continue
-        measured = float(measured)
+        measured = measured_value(metric_key)
+        if measured is None:
+            issues.append(f"{metric_key} baseline unavailable: required by {manifest_key}")
+            continue
         violated = measured < threshold if relation == "minimum" else measured > threshold
         if violated:
             symbol = ">=" if relation == "minimum" else "<="
