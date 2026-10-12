@@ -1,5 +1,6 @@
 // The immediate-publish button must never inherit the default auto-schedule
 // mode from a React state update in the same click handler.
+import process from 'node:process';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { PublishModal } from './publish.jsx';
@@ -134,4 +135,23 @@ test('exact scheduling is unavailable for a multi-clip publish to avoid same-tim
   mount(clips);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
   expect(screen.queryByRole('checkbox', { name: 'Choose exact publication time' })).toBeNull();
+});
+
+test('exact-time UI rejects a repeated DST hour and explains the ambiguity', async () => {
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = 'Europe/Rome';
+    mount();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Choose exact publication time' }));
+    fireEvent.change(screen.getByLabelText(/Publication date and time/), {
+      target: { value: '2030-10-27T02:30' },
+    });
+    expect(screen.getByRole('button', { name: 'Schedule exact time' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent(/occurs twice/i);
+    expect(publishClip).not.toHaveBeenCalled();
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  }
 });

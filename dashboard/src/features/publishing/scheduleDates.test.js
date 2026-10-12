@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { localDatePlus } from './scheduleDates.js';
@@ -33,7 +34,7 @@ test('localDatePlus does not mutate the injected date', () => {
   assert.equal(base.getDate(), 15);
 });
 
-import { manualScheduleIso } from './scheduleDates.js';
+import { manualScheduleIso, manualScheduleProblem } from './scheduleDates.js';
 
 test('manualScheduleIso converts the browser-local selection to an explicit UTC instant', () => {
   const local = '2030-06-12T17:45';
@@ -44,5 +45,38 @@ test('manualScheduleIso blocks past, invalid and normalization-prone inputs', ()
   const now = new Date('2030-06-12T17:46');
   for (const local of ['', 'yesterday', '2030-06-12T17:45', '2030-06-12T17:46', '2030-02-31T08:00']) {
     assert.equal(manualScheduleIso(local, now), null, local);
+  }
+});
+
+test('manual scheduling rejects autumn DST fold in Europe/Rome, not a silent hour choice', () => {
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = 'Europe/Rome';
+    const now = new Date('2026-10-12T00:00:00Z');
+    // 02:30 exists twice on Sunday 27 October 2030 (CEST and CET).
+    assert.equal(manualScheduleIso('2030-10-27T02:30', now), null);
+    assert.match(manualScheduleProblem('2030-10-27T02:30', now), /occurs twice/i);
+    assert.equal(manualScheduleIso('2030-10-27T03:30', now), '2030-10-27T02:30:00.000Z');
+    // Spring-forward gap must still be rejected.
+    assert.equal(manualScheduleIso('2030-03-31T02:30', now), null);
+    assert.equal(manualScheduleIso('2030-03-31T03:30', now), '2030-03-31T01:30:00.000Z');
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  }
+});
+
+test('manual scheduling rejects non-European DST ambiguity without rejecting normal times', () => {
+  const original = process.env.TZ;
+  try {
+    process.env.TZ = 'America/New_York';
+    const now = new Date('2026-10-12T00:00:00Z');
+    // 01:30 repeats on Sunday 3 November 2030 in New York.
+    assert.equal(manualScheduleIso('2030-11-03T01:30', now), null);
+    assert.match(manualScheduleProblem('2030-11-03T01:30', now), /occurs twice/i);
+    assert.equal(manualScheduleIso('2030-11-03T02:30', now), '2030-11-03T07:30:00.000Z');
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
   }
 });

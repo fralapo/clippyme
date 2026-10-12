@@ -8,7 +8,7 @@ import { LazyVideo } from '../../components/LazyVideo';
 import { clipVideoSrc } from '../../api/client';
 import { publishClip, getZernio } from '../../api/client';
 import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams, seedBannerParams } from '../../lib/seedClipParams';
-import { localDatePlus, manualScheduleIso } from './scheduleDates';
+import { localDatePlus, manualScheduleIso, manualScheduleProblem } from './scheduleDates';
 import { clearPublishIntent, publishIntent } from './publishIntent';
 import { useModalA11y } from '../../hooks/useModalA11y';
 
@@ -125,7 +125,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   const run = async (mode) => {
     const scheduledFor = mode === 'manual' ? manualScheduleIso(publishTime) : null;
     if (mode === 'manual' && (!scheduledFor || all)) {
-      pushToast?.('warn', 'Choose a future date and time for one clip.');
+      pushToast?.('warn', mode === 'manual' && !all ? manualScheduleProblem(publishTime) : 'Exact scheduling is available for one clip.');
       return;
     }
     setSubmittedMode(mode);
@@ -223,7 +223,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
                       <label className="field-label" htmlFor="publish-exact-datetime">Publication date and time (your local time)</label>
                       <input id="publish-exact-datetime" type="datetime-local" value={publishTime}
                         onChange={(e) => setPublishTime(e.target.value)} />
-                      {!manualScheduleIso(publishTime) && <div className="cm-small" role="status">Select a future date and time to continue.</div>}
+                      {!manualScheduleIso(publishTime) && <div className="cm-small" role="status">{manualScheduleProblem(publishTime)}</div>}
                     </>}
                   </div>}
                 </>
