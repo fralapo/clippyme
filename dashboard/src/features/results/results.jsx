@@ -68,7 +68,7 @@ const ClipCard = memo(function ClipCard({ clip, index, jobId, state, preselectio
             : <span className="rf-badge" title={`Reframe: ${REFRAME_LABEL[mode] || mode}`}><Icon n={REFRAME_ICON[mode] || 'crop'} />{REFRAME_LABEL[mode] || 'Auto'}</span>}
         </div>
         <div className="clip-bottom" style={{ padding: 10 }}>
-          {state?.publishedAt && <span className="clip-pub"><Icon n="check" />{state.publicationStatus === 'scheduled' ? 'scheduled' : state.publicationStatus === 'submitted' ? 'submitted' : 'published'}</span>}
+          {state?.publishedAt && <span className="clip-pub"><Icon n="check" />published</span>}
           <span className="dur" style={{ marginLeft: state?.publishedAt ? 8 : 0 }}>{fmtDuration(clip.start, clip.end)}</span>
         </div>
         {processing && <div className="clip-busy" role="status"><Icon n="loader" /><span>Reprocessing…</span></div>}
@@ -103,11 +103,20 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
   const [exporting, setExporting] = useState(false);
   const visible = useMemo(() => clips.map((clip, index) => ({ c: clip, i: index })).filter(({ i }) => !clipStates[i]?.deleted), [clips, clipStates]);
   const selected = useMemo(() => visible.filter(({ i }) => clipStates[i]?.selected !== false), [visible, clipStates]);
+  // A reframe/compose holds a per-clip lock and may overwrite media: never
+  // include an in-flight clip in a multi-post operation.
+  const ready = useMemo(() => visible.filter(({ i }) => !clipStates[i]?.processing), [visible, clipStates]);
+  const selectedReady = useMemo(() => selected.filter(({ i }) => !clipStates[i]?.processing), [selected, clipStates]);
+  const processingCount = visible.length - ready.length;
   const topScore = useMemo(() => visible.length ? Math.max(...visible.map(({ c }) => Math.round(c.viral_score || 0))) : 0, [visible]);
   const allSelected = visible.length > 0 && selected.length === visible.length;
 
   const setSelectedAll = useCallback((value) => visible.forEach(({ i }) => onUpdateClipState(i, { selected: value })), [visible, onUpdateClipState]);
-  const publishMany = useCallback((list) => onPublishAll(list.map(({ c, i }) => ({ ...c, _idx: i, _apiIdx: c.original_index ?? i }))), [onPublishAll]);
+  const publishMany = useCallback((list) => {
+    const publishable = list.filter(({ i }) => !clipStates[i]?.processing);
+    if (!publishable.length) return;
+    onPublishAll(publishable.map(({ c, i }) => ({ ...c, _idx: i, _apiIdx: c.original_index ?? i })));
+  }, [onPublishAll, clipStates]);
   const exportMany = async (list) => {
     if (exporting || !list.length) return;
     setExporting(true);
@@ -154,10 +163,12 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
             return !current;
           })}>{selectMode ? 'Cancel' : 'Select'}</Btn>
           {!selectMode && <Btn variant="secondary" size="sm" icon="download" loading={exporting} disabled={!visible.length} onClick={() => exportMany(visible)}>{exporting ? 'Exporting…' : 'Export all'}</Btn>}
-          {!selectMode && <Btn variant="grad" size="sm" icon="send" disabled={!visible.length} onClick={() => publishMany(visible)}>Publish all</Btn>}
+          {!selectMode && <Btn variant="grad" size="sm" icon="send" disabled={!ready.length} onClick={() => publishMany(ready)}>{processingCount && ready.length ? `Publish ready ${ready.length}` : 'Publish all'}</Btn>}
         </div>
       </div>
-      <div className="results-sub">Sorted by virality score · top moment {topScore}</div>
+      <div className="results-sub">Sorted by virality score · top moment {topScore}
+        {processingCount > 0 && <span role="status"> · {processingCount} clip{processingCount === 1 ? '' : 's'} still reprocessing — excluded from publishing until ready</span>}
+      </div>
 
       {selectMode && <div className="actionbar" role="toolbar" aria-label="Selected clip actions">
         <span className="sel-n" aria-live="polite">{selected.length} selected</span>
@@ -165,7 +176,7 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
         <div className="ab-right">
           <Btn variant="secondary" size="sm" icon="sliders-horizontal" disabled={!selected.length} onClick={() => onEditSelected(selected)}>Edit {selected.length || ''}</Btn>
           <Btn variant="secondary" size="sm" icon="download" loading={exporting} disabled={!selected.length} onClick={() => exportMany(selected)}>{exporting ? 'Exporting…' : 'Export'}</Btn>
-          <Btn variant="grad" size="sm" icon="send" disabled={!selected.length} onClick={() => publishMany(selected)}>Publish {selected.length || ''}</Btn>
+          <Btn variant="grad" size="sm" icon="send" disabled={!selectedReady.length} onClick={() => publishMany(selectedReady)}>{selectedReady.length < selected.length && selectedReady.length ? `Publish ready ${selectedReady.length}` : `Publish ${selectedReady.length || ''}`}</Btn>
         </div>
       </div>}
 
