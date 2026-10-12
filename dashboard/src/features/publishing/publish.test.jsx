@@ -17,13 +17,13 @@ vi.mock('../../components/LazyVideo', () => ({
 
 const clips = [
   { _idx: 0, original_index: 0, video_title_for_youtube_short: 'First clip', tiktok_caption: 'Caption' },
-  { _idx: 1, original_index: 1, video_title_for_youtube_short: 'Second clip', tiktok_caption: 'Caption' },
+  { _idx: 1, original_index: 1, video_title_for_youtube_short: 'Second clip', tiktok_caption: 'Different second caption' },
 ];
 
-function mount(selected = clips.slice(0, 1)) {
+function mount(selected = clips.slice(0, 1), onClose = vi.fn()) {
   const onPublished = vi.fn();
   render(<PublishModal clips={selected} jobId="publish-mode-test" clipStates={{}}
-    preselections={{}} onClose={vi.fn()} onPublished={onPublished} pushToast={vi.fn()} />);
+    preselections={{}} onClose={onClose} onPublished={onPublished} pushToast={vi.fn()} />);
   return onPublished;
 }
 
@@ -170,4 +170,73 @@ test('exact-time UI rejects a repeated DST hour and explains the ambiguity', asy
     if (original === undefined) delete process.env.TZ;
     else process.env.TZ = original;
   }
+});
+
+test('batch defaults to distinct editable captions from each source clip', async () => {
+  mount(clips);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+  expect(screen.getByRole('textbox', { name: 'Caption for First clip' })).toHaveValue('Caption');
+  expect(screen.getByRole('textbox', { name: 'Caption for Second clip' })).toHaveValue('Different second caption');
+  fireEvent.change(screen.getByRole('textbox', { name: 'Caption for Second clip' }), {
+    target: { value: 'Edited second only' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+  await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(2));
+  const byIndex = Object.fromEntries(vi.mocked(publishClip).mock.calls.map(([, idx, body]) => [idx, body.caption]));
+  expect(byIndex).toEqual({ 0: 'Caption', 1: 'Edited second only' });
+});
+
+test('common batch caption applies to every clip only after explicit opt-in', async () => {
+  mount(clips);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Use the same caption for all clips' }));
+  expect(screen.queryByRole('textbox', { name: 'Caption for Second clip' })).toBeNull();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Shared caption' }), {
+    target: { value: 'One shared copy' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+  await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(publishClip).mock.calls.map(([, , body]) => body.caption)).toEqual([
+    'One shared copy', 'One shared copy',
+  ]);
+});
+
+test('batch publishing starts no more than two uploads concurrently', async () => {
+  const batch = [...clips, {
+    _idx: 2, original_index: 2,
+    video_title_for_youtube_short: 'Third clip', tiktok_caption: 'Third caption',
+  }];
+  let resolveFirst; let resolveSecond;
+  const first = new Promise((resolve) => { resolveFirst = resolve; });
+  const second = new Promise((resolve) => { resolveSecond = resolve; });
+  vi.mocked(publishClip).mockImplementation((_job, idx) => idx === 0 ? first : idx === 1 ? second : Promise.resolve({ success: true }));
+  mount(batch);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+  await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(publishClip).mock.calls.map(([, idx]) => idx)).toEqual([0, 1]);
+  resolveFirst({ success: true });
+  await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(3));
+  expect(vi.mocked(publishClip).mock.calls[2][1]).toBe(2);
+  resolveSecond({ success: true });
+  await waitFor(() => expect(screen.getByText('3 clips scheduled')).toBeInTheDocument());
+});
+
+test('close button, backdrop and Escape cannot hide in-flight social uploads', async () => {
+  let resolvePost;
+  vi.mocked(publishClip).mockImplementation(() => new Promise((resolve) => { resolvePost = resolve; }));
+  const onClose = vi.fn();
+  mount(clips.slice(0, 1), onClose);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Publish now' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Publish now' }));
+  await waitFor(() => expect(publishClip).toHaveBeenCalledOnce());
+  expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  fireEvent.click(screen.getByRole('dialog').parentElement);
+  expect(onClose).not.toHaveBeenCalled();
+  expect(screen.getByText(/keep this dialog open/i)).toBeInTheDocument();
+  resolvePost({ success: true });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Done' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+  expect(onClose).toHaveBeenCalledTimes(1);
 });
