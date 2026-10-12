@@ -57,8 +57,8 @@ test('Publish now sends now, even though the scheduling switch defaults to on', 
   });
   expect(body).not.toHaveProperty('compose_first');
   expect(body).toHaveProperty('intent_id');
-  await waitFor(() => expect(onPublished).toHaveBeenCalledWith(0));
-  await waitFor(() => expect(screen.getByText('Clip published')).toBeInTheDocument());
+  await waitFor(() => expect(onPublished).toHaveBeenCalledWith(0, 'now'));
+  await waitFor(() => expect(screen.getByText('Clip submitted')).toBeInTheDocument());
   expect(screen.queryByText('Clip scheduled')).toBeNull();
 });
 
@@ -89,7 +89,7 @@ test('turning scheduling off shows exactly one Publish now action and never a mi
   await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(1));
   expect(vi.mocked(publishClip).mock.calls[0][2].schedule_mode).toBe('now');
   expect(vi.mocked(publishClip).mock.calls[0][2]).not.toHaveProperty('start_date');
-  await waitFor(() => expect(screen.getByText('Clip published')).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText('Clip submitted')).toBeInTheDocument());
 });
 
 test('a failed publish never shows success and keeps the Zernio error visible', async () => {
@@ -100,9 +100,9 @@ test('a failed publish never shows success and keeps the Zernio error visible', 
 
   fireEvent.click(immediate);
   await waitFor(() => expect(screen.getByText('Publishing incomplete')).toBeInTheDocument());
-  expect(screen.getByText('0/1 clips published')).toBeInTheDocument();
+  expect(screen.getByText('0/1 clips submitted')).toBeInTheDocument();
   expect(screen.getByText(/failed: Zernio daily limit reached/)).toBeInTheDocument();
-  expect(screen.queryByText('Clip published')).toBeNull();
+  expect(screen.queryByText('Clip submitted')).toBeNull();
   expect(onPublished).not.toHaveBeenCalled();
 });
 
@@ -135,6 +135,22 @@ test('exact scheduling is unavailable for a multi-clip publish to avoid same-tim
   mount(clips);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
   expect(screen.queryByRole('checkbox', { name: 'Choose exact publication time' })).toBeNull();
+});
+
+test('scheduled clips show scheduled rather than live while other batch posts are pending', async () => {
+  let completeSecond;
+  const second = new Promise((resolve) => { completeSecond = resolve; });
+  vi.mocked(publishClip).mockImplementation((_job, index) =>
+    index === 0 ? Promise.resolve({ success: true }) : second
+  );
+  const onPublished = mount(clips);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+  await waitFor(() => expect(onPublished).toHaveBeenCalledWith(0, 'auto'));
+  expect(screen.getByText('scheduled')).toBeInTheDocument();
+  expect(screen.queryByText('live')).toBeNull();
+  completeSecond({ success: true });
+  await waitFor(() => expect(onPublished).toHaveBeenCalledWith(1, 'auto'));
 });
 
 test('exact-time UI rejects a repeated DST hour and explains the ambiguity', async () => {

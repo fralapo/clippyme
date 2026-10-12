@@ -18,11 +18,11 @@ const clips = [
   { original_index: 1, video_title_for_youtube_short: 'Second clip', viral_score: 85, start: 10, end: 20 },
 ];
 
-function mount(selected = clips) {
+function mount(selected = clips, clipStates = {}) {
   const pushToast = vi.fn();
   render(<ResultsView
     clips={selected} jobId="results-qa" preselections={{}}
-    clipStates={{}} onUpdateClipState={vi.fn()}
+    clipStates={clipStates} onUpdateClipState={vi.fn()}
     onPublish={vi.fn()} onPublishAll={vi.fn()} onEdit={vi.fn()}
     onApplyToAll={vi.fn()} onEditSelected={vi.fn()} pushToast={pushToast}
   />);
@@ -87,4 +87,19 @@ test('bulk export with already-raw clips reports them as raw instead of composed
   fireEvent.click(screen.getByRole('button', { name: 'Export all' }));
   await waitFor(() => expect(toast).toHaveBeenCalledWith('success', expect.stringContaining('0 edited, 2 unedited')));
   expect(window.confirm).not.toHaveBeenCalled();
+});
+
+test('a scheduled clip keeps a scheduled badge rather than claiming it is already published', () => {
+  mount(clips.slice(0, 1), { 0: { publishedAt: 123, publicationStatus: 'scheduled' } });
+  expect(screen.getByText('scheduled')).toBeInTheDocument();
+  expect(screen.queryByText('published')).toBeNull();
+});
+
+test('accepted immediate requests show submitted; older persisted published badges stay compatible', () => {
+  mount(clips, {
+    0: { publishedAt: 123, publicationStatus: 'submitted' },
+    1: { publishedAt: 456 },
+  });
+  expect(screen.getByText('submitted')).toBeInTheDocument();
+  expect(screen.getByText('published')).toBeInTheDocument();
 });

@@ -485,7 +485,10 @@ export default function App() {
       {publishClips && (
         <PublishModal clips={publishClips} jobId={jobId} clipStates={clipStates} preselections={preselections}
           onClose={() => setPublishClips(null)}
-          onPublished={(idx) => updateClipStateT(idx, { publishedAt: Date.now() })}
+          onPublished={(idx, mode) => updateClipStateT(idx, {
+            publishedAt: Date.now(),
+            publicationStatus: mode === 'now' ? 'submitted' : 'scheduled',
+          })}
           pushToast={pushToast} />
       )}
       {editClip && (
