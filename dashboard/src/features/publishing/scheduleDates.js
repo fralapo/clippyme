@@ -11,19 +11,60 @@ export function localDatePlus(addDays, now = new Date()) {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-// Browser-local datetime-local input -> unambiguous UTC instant for Zernio.
-// Reject past times and local times silently normalized across a DST gap.
-export function manualScheduleIso(value, now = new Date()) {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+// Browser-local datetime-local input -> an unambiguous UTC instant for Zernio.
+// The local clock can be non-existent (spring DST gap) or occur TWICE (autumn
+// DST fold). JavaScript Date silently selects the earlier instant for a fold;
+// sending it would publish at an hour the operator did not unambiguously pick.
+const LOCAL_MINUTE = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$/;
+
+function localMinute(instant) {
+  const pad = (number) => String(number).padStart(2, '0');
+  return `${instant.getFullYear()}-${pad(instant.getMonth() + 1)}-${pad(instant.getDate())}T${pad(instant.getHours())}:${pad(instant.getMinutes())}`;
+}
+
+function hasSecondInstant(instant, selectedLocalMinute) {
+  const milliseconds = instant.getTime();
+  const selectedOffset = instant.getTimezoneOffset();
+  // Inspect offsets on both sides of the selected day. If a DST transition
+  // makes the selected wall-clock minute repeat, the other instant differs
+  // by exactly the two timezone offsets. Handles 30-minute transitions too.
+  for (const direction of [-1, 1]) {
+    const otherOffset = new Date(milliseconds + direction * 24 * 60 * 60 * 1000).getTimezoneOffset();
+    if (otherOffset === selectedOffset) continue;
+    const alternative = new Date(milliseconds + (otherOffset - selectedOffset) * 60 * 1000);
+    if (alternative.getTime() !== milliseconds && localMinute(alternative) === selectedLocalMinute) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function validateManualSchedule(value, now) {
+  const generic = 'Select a valid future date and time to continue.';
+  if (typeof value !== 'string' || !LOCAL_MINUTE.test(value)) {
+    return { iso: null, problem: generic };
+  }
   const instant = new Date(value);
-  if (!Number.isFinite(instant.getTime()) || instant.getTime() <= now.getTime()) return null;
-  const local = [
-    instant.getFullYear(),
-    String(instant.getMonth() + 1).padStart(2, '0'),
-    String(instant.getDate()).padStart(2, '0'),
-  ].join('-') + 'T' + [
-    String(instant.getHours()).padStart(2, '0'),
-    String(instant.getMinutes()).padStart(2, '0'),
-  ].join(':');
-  return local === value ? instant.toISOString() : null;
+  if (!Number.isFinite(instant.getTime()) || localMinute(instant) !== value) {
+    return { iso: null, problem: generic };
+  }
+  if (hasSecondInstant(instant, value)) {
+    return {
+      iso: null,
+      problem: 'This local time occurs twice when daylight saving time ends. Choose another time.',
+    };
+  }
+  if (instant.getTime() <= now.getTime()) return { iso: null, problem: generic };
+  return { iso: instant.toISOString(), problem: null };
+}
+
+// A manual timestamp is only valid if it names one specific future instant.
+export function manualScheduleIso(value, now = new Date()) {
+  return validateManualSchedule(value, now).iso;
+}
+
+// Human explanation for disabled exact-time scheduling. No different parser:
+// the UI and outgoing payload share precisely the same validation.
+export function manualScheduleProblem(value, now = new Date()) {
+  return validateManualSchedule(value, now).problem;
 }
