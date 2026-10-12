@@ -48,6 +48,13 @@ test('Publish now sends now, even though the scheduling switch defaults to on', 
   expect(index).toBe(0);
   expect(body.schedule_mode).toBe('now');
   expect(body).not.toHaveProperty('start_date');
+  // An explicit all-off edit selection means raw even if a stale composed
+  // artifact from an earlier edit is still present on the server.
+  expect(body.toggles).toEqual({
+    smartcut: false, hook: false, subtitles: false,
+    logo: false, grade: false, banner: false,
+  });
+  expect(body).not.toHaveProperty('compose_first');
   expect(body).toHaveProperty('intent_id');
   await waitFor(() => expect(onPublished).toHaveBeenCalledWith(0));
   await waitFor(() => expect(screen.getByText('Clip published')).toBeInTheDocument());
