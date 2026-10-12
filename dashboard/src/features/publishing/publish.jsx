@@ -1,7 +1,7 @@
 // ClippyMe — PublishModal: real concurrent publish to Zernio.
-// Every selected clip is published in parallel (Promise.allSettled) — the fix
-// for the old sequential stall — each row showing queued→uploading→
-// submitted/scheduled/error, never falsely claiming posts are already live. Per-clip compose_first honours the clip's toggles.
+// Up to two uploads run concurrently; the remainder stay visibly queued.
+// Each row reports queued→uploading→submitted/scheduled/error without claiming
+// Zernio acknowledgement means a social post is already live.
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from '../../components/primitives';
 import { LazyVideo } from '../../components/LazyVideo';
@@ -14,6 +14,8 @@ import { useModalA11y } from '../../hooks/useModalA11y';
 
 // UI platform id → backend platform + account key. Exported so other
 // surfaces publishing to Zernio (live.jsx) don't re-derive this mapping.
+const MAX_PARALLEL_PUBLISHES = 2;
+
 export const PLAT = {
   tiktok: { platform: 'tiktok', acct: 'tiktok', icon: 'tiktok', label: 'TikTok' },
   ig: { platform: 'instagram', acct: 'instagram', icon: 'instagram', label: 'Reels' },
@@ -67,19 +69,41 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   // Snapshot the mode the user actually submitted; React state updates are async.
   const [submittedMode, setSubmittedMode] = useState(null);
   const [caption, setCaption] = useState(clips[0]?.tiktok_caption || clips[0]?.video_title_for_youtube_short || '');
+  const [useSharedCaption, setUseSharedCaption] = useState(false);
+  const [captionsByIndex, setCaptionsByIndex] = useState(() =>
+    Object.fromEntries(clips.map((clip) => [
+      clip._idx, clip.tiktok_caption || clip.video_title_for_youtube_short || '',
+    ])),
+  );
   const [stage, setStage] = useState('setup'); // setup | uploading | done
   const [progress, setProgress] = useState({});
   const [outcome, setOutcome] = useState(null); // actual confirmed/failed requests
 
   useEffect(() => { getZernio().then(setZernio).catch(() => setZernio({ configured: false })); }, []);
 
-  // Accessibility: focus trap + Escape-to-close + focus restore.
-  const panelRef = useModalA11y(onClose);
+  // Once a post starts, hiding the modal discards observable progress but
+  // cannot cancel the server-side Zernio operation. Keep it open until all
+  // outstanding requests settle; only "Cancel" in setup aborts the workflow.
+  const inFlightRef = useRef(false);
+  const guardedClose = () => {
+    if (!inFlightRef.current) onClose();
+  };
+  // Accessibility: focus trap + Escape uses the same guarded close.
+  const panelRef = useModalA11y(guardedClose);
 
   // Guard the post-publish setTimeout so it never calls setState after the
   // modal has been unmounted (e.g. parent closes it while the delay is in flight).
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
+  useEffect(() => {
+    const warnOnUnload = (event) => {
+      if (!inFlightRef.current) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnOnUnload);
+    return () => window.removeEventListener('beforeunload', warnOnUnload);
+  }, []);
 
   const accounts = zernio?.accounts || {};
   const toggle = (k) => setPlats((p) => ({ ...p, [k]: !p[k] }));
@@ -105,7 +129,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     const title = (clip.video_title_for_youtube_short || `Clip ${idx + 1}`).slice(0, 100);
     return {
       title,
-      caption: (caption && caption.trim()) || title,
+      caption: ((all && !useSharedCaption ? captionsByIndex[idx] : caption) || '').trim() || title,
       platforms: targets,
       // Always send the operator's edit intent. All-off must select the raw
       // clip even if an earlier composed artifact remains on disk.
@@ -123,43 +147,58 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   };
 
   const run = async (mode) => {
+    if (inFlightRef.current) return;
     const scheduledFor = mode === 'manual' ? manualScheduleIso(publishTime) : null;
     if (mode === 'manual' && (!scheduledFor || all)) {
       pushToast?.('warn', mode === 'manual' && !all ? manualScheduleProblem(publishTime) : 'Exact scheduling is available for one clip.');
       return;
     }
+    inFlightRef.current = true;
     setSubmittedMode(mode);
     setStage('uploading');
     const init = {};
-    clips.forEach((c) => { init[c._idx] = { state: 'uploading' }; });
+    clips.forEach((c) => { init[c._idx] = { state: 'queued' }; });
     setProgress(init);
-    const results = await Promise.allSettled(clips.map(async (clip, batchPos) => {
-      const idx = clip._idx;
-      // Resolve to the backend's ABSOLUTE `shorts` position for the actual
-      // publish call — `idx` (array position) stays the key into local
-      // clipStates/progress, which are unaffected by a manual-publish gap.
-      const apiIdx = clip._apiIdx ?? idx;
-      try {
-        // Same intent for every retry of this Publish; a new one only after
-        // the server confirmed it (then publishing again is a re-publish).
-        const intent_id = publishIntent(jobId, apiIdx);
-        await publishClip(jobId, apiIdx, { ...buildBody(clip, idx, batchPos, mode, scheduledFor), intent_id });
-        clearPublishIntent(jobId, apiIdx);
-        setProgress((p) => ({ ...p, [idx]: { state: 'done' } }));
-        onPublished?.(idx, mode);
-        return true;
-      } catch (e) {
-        // Surface the real reason (e.g. a Zernio daily-limit 429) instead of a
-        // bare "failed", so the user knows to retry that platform tomorrow.
-        setProgress((p) => ({ ...p, [idx]: { state: 'error', error: e?.message || 'Publish failed' } }));
-        return false;
+    // Sending every composed clip at once can saturate FFmpeg, sockets and
+    // Zernio quotas. Preserve the original batch order/date calculation while
+    // allowing at most two requests to be active. A failed clip does not stall
+    // remaining jobs or lose its idempotency identity.
+    const accepted = new Array(clips.length).fill(false);
+    let next = 0;
+    const worker = async () => {
+      while (next < clips.length) {
+        const batchPos = next++;
+        const clip = clips[batchPos];
+        setProgress((current) => ({ ...current, [clip._idx]: { state: 'uploading' } }));
+
+        const idx = clip._idx;
+        // Resolve to the backend's ABSOLUTE `shorts` position for the actual
+        // publish call — `idx` (array position) stays the key into local
+        // clipStates/progress, which are unaffected by a manual-publish gap.
+        const apiIdx = clip._apiIdx ?? idx;
+        try {
+          // Same intent for every retry of this Publish; a new one only after
+          // the server confirmed it (then publishing again is a re-publish).
+          const intent_id = publishIntent(jobId, apiIdx);
+          await publishClip(jobId, apiIdx, { ...buildBody(clip, idx, batchPos, mode, scheduledFor), intent_id });
+          clearPublishIntent(jobId, apiIdx);
+          setProgress((p) => ({ ...p, [idx]: { state: 'done' } }));
+          onPublished?.(idx, mode);
+          accepted[batchPos] = true;
+        } catch (e) {
+          // Surface the real reason (e.g. a Zernio daily-limit 429) instead of a
+          // bare "failed", so the user knows to retry that platform tomorrow.
+          setProgress((p) => ({ ...p, [idx]: { state: 'error', error: e?.message || 'Publish failed' } }));
+        }
       }
-    }));
-    const ok = results.filter((r) => r.status === 'fulfilled' && r.value).length;
+    };
+    await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL_PUBLISHES, clips.length) }, () => worker()));
+    const ok = accepted.filter(Boolean).length;
     const fail = clips.length - ok;
     setOutcome({ ok, fail });
     setTimeout(() => {
       if (!mountedRef.current) return;
+      inFlightRef.current = false;
       setStage('done');
       pushToast?.(fail === 0 ? 'success' : 'warn', `${mode === 'now' ? 'Submitted' : 'Scheduled'} ${ok}/${clips.length}${fail ? `, ${fail} failed` : ''}`);
     }, 500);
@@ -173,15 +212,15 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   return (
     // Backdrop click is a mouse-only convenience; keyboard users close via
     // Esc (useModalA11y). currentTarget guard replaces stopPropagation.
-    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) guardedClose(); }}>
       <div className={'modal' + (all ? ' wide' : '')} ref={panelRef}
         role="dialog" aria-modal="true" aria-labelledby="publish-modal-title">
         <div className="modal-head">
           <div>
             <h3 id="publish-modal-title">{title}</h3>
-            {stage === 'uploading' && <div className="mh-sub">uploading concurrently · daily-limit checks server-side</div>}
+            {stage === 'uploading' && <div className="mh-sub">Publishing up to two at a time · remaining clips queued</div>}
           </div>
-          <button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button>
+          <button type="button" className="x" onClick={guardedClose} disabled={stage === 'uploading'} aria-label="Close"><Icon n="x" /></button>
         </div>
 
         {stage === 'setup' && (
@@ -206,8 +245,27 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
                     </div>
                   </div>
                   <div className="field">
-                    <span className="field-label">Caption</span>
-                    <textarea className="ta" rows="3" value={caption} onChange={(e) => setCaption(e.target.value)}></textarea>
+                    {all && <label className="field-label">
+                      <input type="checkbox" checked={useSharedCaption}
+                        onChange={(e) => setUseSharedCaption(e.target.checked)} /> Use the same caption for all clips
+                    </label>}
+                    {all && !useSharedCaption ? (
+                      <div role="group" aria-label="Individual captions">
+                        {clips.map((clip, position) => {
+                          const name = clip.video_title_for_youtube_short || `Clip ${position + 1}`;
+                          return <div className="field" key={clip._idx}>
+                            <label className="field-label" htmlFor={`publish-caption-${clip._idx}`}>{`Caption for ${name}`}</label>
+                            <textarea id={`publish-caption-${clip._idx}`} className="ta" rows="2"
+                              value={captionsByIndex[clip._idx] ?? ''}
+                              onChange={(e) => setCaptionsByIndex((prev) => ({ ...prev, [clip._idx]: e.target.value }))} />
+                          </div>;
+                        })}
+                      </div>
+                    ) : <>
+                      <label className="field-label" htmlFor="publish-shared-caption">{all ? 'Shared caption' : 'Caption'}</label>
+                      <textarea id="publish-shared-caption" className="ta" rows="3" value={caption}
+                        onChange={(e) => setCaption(e.target.value)} />
+                    </>}
                   </div>
                   <div className="opt" style={{ borderBottom: 0 }}>
                     <div className="oico"><Icon n="calendar-clock" /></div>
@@ -230,7 +288,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
               )}
             </div>
             <div className="modal-foot">
-              <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
+              <Btn variant="ghost" onClick={guardedClose}>Cancel</Btn>
               <div className="mf-right">
                 {schedule && <Btn variant="secondary" icon="send" disabled={!ready} onClick={() => run('now')}>Publish now</Btn>}
                 <Btn variant="grad" icon={schedule ? 'calendar-clock' : 'send'} disabled={!ready || !manualReady} onClick={() => run(schedule ? (exactSchedule ? 'manual' : 'auto') : 'now')}>{schedule ? (exactSchedule ? 'Schedule exact time' : 'Schedule') : 'Publish now'}</Btn>
@@ -241,6 +299,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
 
         {stage === 'uploading' && (
           <div className="modal-body">
+            <p role="status" className="cm-small">Please keep this dialog open while publishing completes. Closing the page will not cancel requests already accepted by Zernio.</p>
             <div className="pubgrid">
               {clips.map((c) => <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} mode={submittedMode} />)}
             </div>
@@ -260,7 +319,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
               {clips.filter((c) => progress[c._idx]?.state === 'error').map((c) =>
                 <PubRow key={c._idx} clip={c} idx={c._idx} st={progress[c._idx]} plats={plats} mode={submittedMode} />)}
             </div>}
-            <div style={{ marginTop: 22 }}><Btn variant="secondary" onClick={onClose}>Done</Btn></div>
+            <div style={{ marginTop: 22 }}><Btn variant="secondary" onClick={guardedClose}>Done</Btn></div>
           </div>
         )}
       </div>
