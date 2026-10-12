@@ -19,6 +19,7 @@
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md) · [Testing](development/testing.md) · [Dependencies](development/dependencies.md)
 - [Agent skill routing](development/agent-skills.md) — FFmpeg, editorial quality and UX workflows; optional external references, not runtime dependencies
+- [Development roadmap](development/roadmap.md) — completed PRs, verified next gates and discovery candidates
 
 **Background** (not current documentation)
 
