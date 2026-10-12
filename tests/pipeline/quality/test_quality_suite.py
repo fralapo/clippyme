@@ -28,6 +28,8 @@ def test_manifest_suite_passes_clean_case(monkeypatch, tmp_path):
         "warnings": [],
         "metrics": {
             "duration": 10.2,
+            "width": 1080,
+            "height": 1920,
             "size_bytes": 1_000_000,
             "black_ratio": 0.01,
             "freeze_ratio": 0.02,
@@ -103,3 +105,63 @@ def test_main_writes_report_and_returns_failure(monkeypatch, tmp_path):
     })
     assert quality_suite.main([str(manifest), "--output", str(output)]) == 1
     assert json.loads(output.read_text(encoding="utf-8"))["summary"]["failed"] == 1
+
+
+@pytest.mark.parametrize(
+    ("condition", "expected_issue"),
+    [
+        ({"expected_duration": 5}, "duration baseline unavailable"),
+        ({"expected_aspect": "9:16"}, "aspect baseline unavailable"),
+        ({"min_size_bytes": 10000}, "size_bytes baseline unavailable"),
+        ({"max_black_ratio": 0.10}, "black_ratio baseline unavailable"),
+        ({"max_freeze_ratio": 0.10}, "freeze_ratio baseline unavailable"),
+        ({"min_mean_volume_db": -32}, "mean_volume_db baseline unavailable"),
+        ({"max_peak_volume_db": -0.1}, "max_volume_db baseline unavailable"),
+    ],
+)
+def test_explicit_baseline_requires_a_measurement(monkeypatch, tmp_path, condition, expected_issue):
+    (tmp_path / "clip.mp4").write_bytes(b"video")
+    manifest = _manifest(tmp_path, [{"path": "clip.mp4", **condition}])
+    monkeypatch.setattr(quality_suite, "inspect_clip", lambda *args, **kwargs: {
+        "issues": [], "warnings": [], "metrics": {},
+    })
+    result = quality_suite.run_manifest(str(manifest))
+    case = result["cases"][0]
+    assert case["passed"] is False
+    assert case["critical"] is True
+    assert any(expected_issue in issue for issue in case["issues"])
+
+
+def test_missing_signal_metrics_fail_even_when_warning_is_allowed(monkeypatch, tmp_path):
+    (tmp_path / "clip.mp4").write_bytes(b"video")
+    manifest = _manifest(tmp_path, [{
+        "path": "clip.mp4", "max_black_ratio": 0.2, "allow_warnings": True,
+    }])
+    monkeypatch.setattr(quality_suite, "inspect_clip", lambda *args, **kwargs: {
+        "issues": [], "warnings": [], "metrics": {
+            "signal_error": "ffmpeg filter failed", "black_ratio": None,
+        },
+    })
+    result = quality_suite.run_manifest(str(manifest), signal_checks=False)
+    assert result["summary"]["failed"] == 1
+    assert any("black_ratio baseline unavailable" in i for i in result["cases"][0]["issues"])
+
+
+def test_invalid_nonfinite_measurement_does_not_pass_baseline(monkeypatch, tmp_path):
+    (tmp_path / "clip.mp4").write_bytes(b"video")
+    manifest = _manifest(tmp_path, [{
+        "path": "clip.mp4", "min_mean_volume_db": -35,
+    }])
+    monkeypatch.setattr(quality_suite, "inspect_clip", lambda *args, **kwargs: {
+        "issues": [], "warnings": [], "metrics": {"mean_volume_db": float("nan")},
+    })
+    case = quality_suite.run_manifest(str(manifest))["cases"][0]
+    assert not case["passed"]
+    assert any("mean_volume_db baseline unavailable" in issue for issue in case["issues"])
+
+
+def test_empty_manifest_is_not_a_success(monkeypatch, tmp_path):
+    manifest = _manifest(tmp_path, [])
+    with pytest.raises(quality_suite.QualityManifestError, match="at least one"):
+        quality_suite.run_manifest(str(manifest))
+    assert quality_suite.main([str(manifest)]) == 2
