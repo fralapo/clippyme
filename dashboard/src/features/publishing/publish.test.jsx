@@ -56,7 +56,7 @@ test('Publish now sends now, even though the scheduling switch defaults to on', 
   });
   expect(body).not.toHaveProperty('compose_first');
   expect(body).toHaveProperty('intent_id');
-  await waitFor(() => expect(onPublished).toHaveBeenCalledWith(0));
+  await waitFor(() => expect(onPublished).toHaveBeenCalledWith(0, 'now'));
   await waitFor(() => expect(screen.getByText('Clip published')).toBeInTheDocument());
   expect(screen.queryByText('Clip scheduled')).toBeNull();
 });
@@ -134,4 +134,20 @@ test('exact scheduling is unavailable for a multi-clip publish to avoid same-tim
   mount(clips);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
   expect(screen.queryByRole('checkbox', { name: 'Choose exact publication time' })).toBeNull();
+});
+
+test('scheduled clips show scheduled rather than live while other batch posts are pending', async () => {
+  let completeSecond;
+  const second = new Promise((resolve) => { completeSecond = resolve; });
+  vi.mocked(publishClip).mockImplementation((_job, index) =>
+    index === 0 ? Promise.resolve({ success: true }) : second
+  );
+  const onPublished = mount(clips);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+  await waitFor(() => expect(onPublished).toHaveBeenCalledWith(0, 'auto'));
+  expect(screen.getByText('scheduled')).toBeInTheDocument();
+  expect(screen.queryByText('live')).toBeNull();
+  completeSecond({ success: true });
+  await waitFor(() => expect(onPublished).toHaveBeenCalledWith(1, 'auto'));
 });
