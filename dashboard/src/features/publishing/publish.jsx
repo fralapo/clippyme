@@ -107,6 +107,9 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
       title,
       caption: (caption && caption.trim()) || title,
       platforms: targets,
+      // Always send the operator's edit intent. All-off must select the raw
+      // clip even if an earlier composed artifact remains on disk.
+      toggles,
       schedule_mode: mode,
       ...(mode === 'auto' ? { start_date: localDatePlus(batchPos) } : {}),
       ...(mode === 'manual' ? { scheduled_for: scheduledFor } : {}),
@@ -115,7 +118,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
         privacy_level: 'PUBLIC_TO_EVERYONE', allow_comment: true, allow_duet: true,
         allow_stitch: true, content_preview_confirmed: true, express_consent_given: true,
       } : undefined,
-      ...(any ? { compose_first: true, toggles, hook_params: toggles.hook ? hookParams : {}, subtitle_params: toggles.subtitles ? subtitleParams : {}, logo_params: toggles.logo ? logoParams : {}, grade_params: toggles.grade ? gradeParams : {}, banner_params: toggles.banner ? bannerParams : {}, drop_ranges: toggles.smartcut ? (cs.dropRanges || []) : [] } : {}),
+      ...(any ? { compose_first: true, hook_params: toggles.hook ? hookParams : {}, subtitle_params: toggles.subtitles ? subtitleParams : {}, logo_params: toggles.logo ? logoParams : {}, grade_params: toggles.grade ? gradeParams : {}, banner_params: toggles.banner ? bannerParams : {}, drop_ranges: toggles.smartcut ? (cs.dropRanges || []) : [] } : {}),
     };
   };
 
