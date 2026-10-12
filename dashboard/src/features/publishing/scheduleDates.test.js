@@ -1,3 +1,4 @@
+import process from 'node:process';
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { localDatePlus } from './scheduleDates.js';
