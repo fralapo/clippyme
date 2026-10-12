@@ -15,7 +15,7 @@ export function localDatePlus(addDays, now = new Date()) {
 // The local clock can be non-existent (spring DST gap) or occur TWICE (autumn
 // DST fold). JavaScript Date silently selects the earlier instant for a fold;
 // sending it would publish at an hour the operator did not unambiguously pick.
-const LOCAL_MINUTE = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$/;
+const LOCAL_MINUTE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 
 function localMinute(instant) {
   const pad = (number) => String(number).padStart(2, '0');
