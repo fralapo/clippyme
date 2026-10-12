@@ -68,13 +68,16 @@ test('Schedule keeps auto mode and gives each batch clip its own day', async () 
   await waitFor(() => expect(screen.getByText('2 clips scheduled')).toBeInTheDocument());
 });
 
-test('turning prime-time scheduling off makes the primary Queue action publish now', async () => {
+test('turning scheduling off shows exactly one Publish now action and never a misleading Queue', async () => {
   mount();
-  const primary = screen.getByRole('button', { name: 'Schedule' });
-  await waitFor(() => expect(primary).toBeEnabled());
+  const scheduleButton = screen.getByRole('button', { name: 'Schedule' });
+  await waitFor(() => expect(scheduleButton).toBeEnabled());
 
   fireEvent.click(screen.getByRole('switch'));
-  fireEvent.click(screen.getByRole('button', { name: 'Queue' }));
+  expect(screen.queryByRole('button', { name: 'Queue' })).toBeNull();
+  const immediate = screen.getAllByRole('button', { name: 'Publish now' });
+  expect(immediate).toHaveLength(1);
+  fireEvent.click(immediate[0]);
   await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(1));
   expect(vi.mocked(publishClip).mock.calls[0][2].schedule_mode).toBe('now');
   expect(vi.mocked(publishClip).mock.calls[0][2]).not.toHaveProperty('start_date');

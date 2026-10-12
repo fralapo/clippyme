@@ -229,8 +229,8 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
             <div className="modal-foot">
               <Btn variant="ghost" onClick={onClose}>Cancel</Btn>
               <div className="mf-right">
-                <Btn variant="secondary" icon="send" disabled={!ready} onClick={() => run('now')}>Publish now</Btn>
-                <Btn variant="grad" icon="calendar-clock" disabled={!ready || !manualReady} onClick={() => run(schedule ? (exactSchedule ? 'manual' : 'auto') : 'now')}>{schedule ? (exactSchedule ? 'Schedule exact time' : 'Schedule') : 'Queue'}</Btn>
+                {schedule && <Btn variant="secondary" icon="send" disabled={!ready} onClick={() => run('now')}>Publish now</Btn>}
+                <Btn variant="grad" icon={schedule ? 'calendar-clock' : 'send'} disabled={!ready || !manualReady} onClick={() => run(schedule ? (exactSchedule ? 'manual' : 'auto') : 'now')}>{schedule ? (exactSchedule ? 'Schedule exact time' : 'Schedule') : 'Publish now'}</Btn>
               </div>
             </div>
           </>
