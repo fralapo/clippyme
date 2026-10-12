@@ -31,7 +31,7 @@ Scheduling modes:
 The dashboard's publish dialog supports `now`, `auto`, and (for a single clip)
 `manual`. For an exact manual time, the browser converts the local date/time
 selected by the user to an explicit UTC ISO 8601 instant before submission;
-past dates and invalid local times are rejected. Batch publishing supports `now`
+past dates, nonexistent DST-gap times and repeated DST-fallback times are rejected\n(instead of silently selecting one of two possible instants). The exact-time\ninput uses the operator's **device-local** timezone, not the configured\nSmartScheduler/Zernio timezone; the API always receives an explicit UTC time. Batch publishing supports `now`
 and `auto` only: in `auto` mode each clip starts its slot search one day later
 than the previous one to reduce daily-limit collisions. Zernio error bodies are
 passed through so the dashboard can show a platform's daily-limit 429.
