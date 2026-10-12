@@ -1,5 +1,6 @@
 // The immediate-publish button must never inherit the default auto-schedule
 // mode from a React state update in the same click handler.
+import process from 'node:process';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { PublishModal } from './publish.jsx';
