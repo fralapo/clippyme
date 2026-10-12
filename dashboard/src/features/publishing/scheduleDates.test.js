@@ -32,3 +32,17 @@ test('localDatePlus does not mutate the injected date', () => {
   localDatePlus(5, base);
   assert.equal(base.getDate(), 15);
 });
+
+import { manualScheduleIso } from './scheduleDates.js';
+
+test('manualScheduleIso converts the browser-local selection to an explicit UTC instant', () => {
+  const local = '2030-06-12T17:45';
+  assert.equal(manualScheduleIso(local, new Date('2026-10-01T00:00:00Z')), new Date(local).toISOString());
+});
+
+test('manualScheduleIso blocks past, invalid and normalization-prone inputs', () => {
+  const now = new Date('2030-06-12T17:46');
+  for (const local of ['', 'yesterday', '2030-06-12T17:45', '2030-06-12T17:46', '2030-02-31T08:00']) {
+    assert.equal(manualScheduleIso(local, now), null, local);
+  }
+});

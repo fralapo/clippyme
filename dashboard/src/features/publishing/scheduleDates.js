@@ -10,3 +10,20 @@ export function localDatePlus(addDays, now = new Date()) {
   const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
 }
+
+// Browser-local datetime-local input -> unambiguous UTC instant for Zernio.
+// Reject past times and local times silently normalized across a DST gap.
+export function manualScheduleIso(value, now = new Date()) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value)) return null;
+  const instant = new Date(value);
+  if (!Number.isFinite(instant.getTime()) || instant.getTime() <= now.getTime()) return null;
+  const local = [
+    instant.getFullYear(),
+    String(instant.getMonth() + 1).padStart(2, '0'),
+    String(instant.getDate()).padStart(2, '0'),
+  ].join('-') + 'T' + [
+    String(instant.getHours()).padStart(2, '0'),
+    String(instant.getMinutes()).padStart(2, '0'),
+  ].join(':');
+  return local === value ? instant.toISOString() : null;
+}
