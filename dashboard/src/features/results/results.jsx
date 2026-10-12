@@ -35,9 +35,23 @@ const ClipCard = memo(function ClipCard({ clip, index, jobId, state, preselectio
     try {
       const kind = await exportClip(jobId, index, clip, state, preselections);
       pushToast?.('success', kind === 'composed' ? 'Composed clip downloaded' : 'Clip downloaded');
-    } catch {
-      pushToast?.('warn', 'Compose failed; downloading the raw clip instead');
-      downloadClip(clip, index);
+    } catch (error) {
+      // A raw fallback silently discards the user's edits. Require explicit
+      // consent and keep the original compose failure visible.
+      const reason = error?.message || 'Unknown error';
+      const useRaw = window.confirm(
+        `Edited export failed for "${title}": ${reason}. Download the unedited original instead?`
+      );
+      if (useRaw) {
+        try {
+          downloadClip(clip, index);
+          pushToast?.('warn', 'Edited export failed; unedited download started');
+        } catch {
+          pushToast?.('warn', 'Edited export failed; unedited download also failed');
+        }
+      } else {
+        pushToast?.('warn', `Edited export failed for "${title}": ${reason}`);
+      }
     } finally {
       setDownloading(false);
     }
@@ -97,17 +111,34 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
   const exportMany = async (list) => {
     if (exporting || !list.length) return;
     setExporting(true);
-    let composed = 0;
-    let rawFallback = 0;
+    let edited = 0;
+    let raw = 0;
+    const failures = [];
     try {
       for (const { c, i } of list) {
-        try { await exportClip(jobId, i, c, clipStates[i], preselections); composed += 1; }
-        catch { downloadClip(c, i); rawFallback += 1; }
+        try {
+          const kind = await exportClip(jobId, i, c, clipStates[i], preselections);
+          if (kind === 'composed') edited += 1;
+          else raw += 1;
+        } catch (error) {
+          failures.push({ clip: c, index: i, error });
+        }
         await delay(150);
       }
-      pushToast?.(rawFallback ? 'warn' : 'success', rawFallback
-        ? `Exported ${list.length} clips; ${rawFallback} used the raw fallback`
-        : `Exported ${composed}/${list.length} clips`);
+      // One decision for the batch instead of silently replacing edited clips
+      // or repeatedly opening confirmation dialogs for individual failures.
+      if (failures.length && window.confirm(
+        `Edited export failed for ${failures.length} clip(s). Download unedited originals for those clips instead?`
+      )) {
+        for (const { clip, index } of failures) {
+          try { downloadClip(clip, index); raw += 1; }
+          catch { /* count as failed, not downloaded */ }
+        }
+      }
+      const started = edited + raw;
+      const notDownloaded = list.length - started;
+      pushToast?.(notDownloaded ? 'warn' : failures.length ? 'warn' : 'success',
+        `Started ${started}/${list.length} clip downloads (${edited} edited, ${raw} unedited)${notDownloaded ? `; ${notDownloaded} failed or skipped` : ''}`);
     } finally { setExporting(false); }
   };
 
