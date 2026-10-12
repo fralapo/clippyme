@@ -1,7 +1,7 @@
 // ClippyMe — PublishModal: real concurrent publish to Zernio.
-// Every selected clip is published in parallel (Promise.allSettled) — the fix
-// for the old sequential stall — each row showing queued→uploading→
-// submitted/scheduled/error, never falsely claiming posts are already live. Per-clip compose_first honours the clip's toggles.
+// Up to two uploads run concurrently; the remainder stay visibly queued.
+// Each row reports queued→uploading→submitted/scheduled/error without claiming
+// Zernio acknowledgement means a social post is already live.
 import { useState, useEffect, useRef } from 'react';
 import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from '../../components/primitives';
 import { LazyVideo } from '../../components/LazyVideo';
@@ -14,6 +14,8 @@ import { useModalA11y } from '../../hooks/useModalA11y';
 
 // UI platform id → backend platform + account key. Exported so other
 // surfaces publishing to Zernio (live.jsx) don't re-derive this mapping.
+const MAX_PARALLEL_PUBLISHES = 2;
+
 export const PLAT = {
   tiktok: { platform: 'tiktok', acct: 'tiktok', icon: 'tiktok', label: 'TikTok' },
   ig: { platform: 'instagram', acct: 'instagram', icon: 'instagram', label: 'Reels' },
@@ -137,9 +139,20 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
     setSubmittedMode(mode);
     setStage('uploading');
     const init = {};
-    clips.forEach((c) => { init[c._idx] = { state: 'uploading' }; });
+    clips.forEach((c) => { init[c._idx] = { state: 'queued' }; });
     setProgress(init);
-    const results = await Promise.allSettled(clips.map(async (clip, batchPos) => {
+    // Sending every composed clip at once can saturate FFmpeg, sockets and
+    // Zernio quotas. Preserve the original batch order/date calculation while
+    // allowing at most two requests to be active. A failed clip does not stall
+    // remaining jobs or lose its idempotency identity.
+    const accepted = new Array(clips.length).fill(false);
+    let next = 0;
+    const worker = async () => {
+      while (next < clips.length) {
+        const batchPos = next++;
+        const clip = clips[batchPos];
+        setProgress((current) => ({ ...current, [clip._idx]: { state: 'uploading' } }));
+
       const idx = clip._idx;
       // Resolve to the backend's ABSOLUTE `shorts` position for the actual
       // publish call — `idx` (array position) stays the key into local
@@ -153,15 +166,16 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
         clearPublishIntent(jobId, apiIdx);
         setProgress((p) => ({ ...p, [idx]: { state: 'done' } }));
         onPublished?.(idx, mode);
-        return true;
+        accepted[batchPos] = true;
       } catch (e) {
         // Surface the real reason (e.g. a Zernio daily-limit 429) instead of a
         // bare "failed", so the user knows to retry that platform tomorrow.
         setProgress((p) => ({ ...p, [idx]: { state: 'error', error: e?.message || 'Publish failed' } }));
-        return false;
       }
-    }));
-    const ok = results.filter((r) => r.status === 'fulfilled' && r.value).length;
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(MAX_PARALLEL_PUBLISHES, clips.length) }, () => worker()));
+    const ok = accepted.filter(Boolean).length;
     const fail = clips.length - ok;
     setOutcome({ ok, fail });
     setTimeout(() => {
