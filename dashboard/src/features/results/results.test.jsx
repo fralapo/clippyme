@@ -18,12 +18,12 @@ const clips = [
   { original_index: 1, video_title_for_youtube_short: 'Second clip', viral_score: 85, start: 10, end: 20 },
 ];
 
-function mount(selected = clips) {
+function mount(selected = clips, clipStates = {}, onPublishAll = vi.fn()) {
   const pushToast = vi.fn();
   render(<ResultsView
     clips={selected} jobId="results-qa" preselections={{}}
-    clipStates={{}} onUpdateClipState={vi.fn()}
-    onPublish={vi.fn()} onPublishAll={vi.fn()} onEdit={vi.fn()}
+    clipStates={clipStates} onUpdateClipState={vi.fn()}
+    onPublish={vi.fn()} onPublishAll={onPublishAll} onEdit={vi.fn()}
     onApplyToAll={vi.fn()} onEditSelected={vi.fn()} pushToast={pushToast}
   />);
   return pushToast;
@@ -87,4 +87,30 @@ test('bulk export with already-raw clips reports them as raw instead of composed
   fireEvent.click(screen.getByRole('button', { name: 'Export all' }));
   await waitFor(() => expect(toast).toHaveBeenCalledWith('success', expect.stringContaining('0 edited, 2 unedited')));
   expect(window.confirm).not.toHaveBeenCalled();
+});
+
+test('Publish all excludes clips still reprocessing and identifies the ready count', () => {
+  const onPublishAll = vi.fn();
+  mount(clips, { 0: { processing: true } }, onPublishAll);
+  expect(screen.getByText(/1 clip still reprocessing/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Publish ready 1' }));
+  expect(onPublishAll).toHaveBeenCalledTimes(1);
+  expect(onPublishAll.mock.calls[0][0].map((c) => c.original_index)).toEqual([1]);
+});
+
+test('Publish all is disabled when all clips are processing', () => {
+  const onPublishAll = vi.fn();
+  mount(clips, { 0: { processing: true }, 1: { processing: true } }, onPublishAll);
+  expect(screen.getByRole('button', { name: 'Publish all' })).toBeDisabled();
+  expect(onPublishAll).not.toHaveBeenCalled();
+});
+
+test('selection mode does not publish a clip currently being reprocessed', () => {
+  const onPublishAll = vi.fn();
+  mount(clips, { 0: { processing: true }, 1: { selected: true } }, onPublishAll);
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
+  expect(screen.getByRole('button', { name: 'Publish ready 1' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Publish ready 1' }));
+  expect(onPublishAll.mock.calls[0][0].map((c) => c.original_index)).toEqual([1]);
 });
