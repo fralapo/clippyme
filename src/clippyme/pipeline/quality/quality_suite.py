@@ -143,7 +143,7 @@ def _baseline_issues(case: dict[str, Any], report: dict[str, Any]) -> list[str]:
             issues.append("duration baseline unavailable: ffprobe returned no finite duration")
         elif abs(actual_duration - expected_duration) > float(tolerance or 0):
             issues.append(
-                f"duration baseline mismatch: measured {actual_duration:.3f}s, 
+                f"duration baseline mismatch: measured {actual_duration:.3f}s, "
                 f"expected {expected_duration:.3f}s ± {float(tolerance or 0):.3f}s"
             )
 
