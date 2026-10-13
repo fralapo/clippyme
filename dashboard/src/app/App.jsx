@@ -4,6 +4,7 @@
 // app uses, so the pipeline behaves identically.
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import '../styles/tokens.css';
+import { readBrowserCredential, writeBrowserCredential } from '../lib/credentialStorage';
 import '../styles/app.css';
 import { Icon, Btn } from '../components/primitives';
 import { TopNav } from '../components/headers';
@@ -80,14 +81,9 @@ function Toasts({ items, onDismiss }) {
 
 export default function App() {
   const restoredSession = useMemo(() => loadPersistedSession(), []);
-  // The Gemini key is persisted in localStorage in cleartext. This is an
-  // accepted tradeoff for the single-user self-host model (no server-side
-  // session store, key never leaves the browser except as the X-Gemini-Key
-  // header to the same-origin backend). Any same-origin XSS would expose it —
-  // the production CSP in vite.config.js (no inline/eval scripts) is the
-  // mitigation. If multi-user is ever added, move this to a short-lived
-  // server-issued token or sessionStorage.
-  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
+  // Storage retention is user-selectable; the backend still owns provider
+  // configuration. Session-only avoids leaving this browser copy on disk.
+  const [apiKey, setApiKey] = useState(() => readBrowserCredential('gemini_key'));
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [tab, setTab] = useState(restoredSession?.activeTab || 'create');
   const [jobId, setJobId] = useState(restoredSession?.jobId || null);
@@ -144,7 +140,7 @@ export default function App() {
     updateClipState(idx, patch);
   };
 
-  useEffect(() => { if (apiKey) localStorage.setItem('gemini_key', apiKey); }, [apiKey]);
+  useEffect(() => { writeBrowserCredential('gemini_key', apiKey); }, [apiKey]);
   const syncHistory = useCallback(async () => {
     try {
       const jobs = await refreshHistory();

@@ -11,6 +11,19 @@ export function localDatePlus(addDays, now = new Date()) {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+// Batch spacing uses Zernio's configured calendar date, not the device's:
+// a user scheduling at 01:00 in Rome for New York may still be on yesterday.
+export function dateInTimezonePlus(addDays, timeZone, now = new Date()) {
+  const zone = timeZone || 'Europe/Rome';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now).map((part) => [part.type, part.value]));
+  const stamp = new Date(Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day) + addDays,
+  ));
+  return stamp.toISOString().slice(0, 10);
+}
+
 // Browser-local datetime-local input -> an unambiguous UTC instant for Zernio.
 // The local clock can be non-existent (spring DST gap) or occur TWICE (autumn
 // DST fold). JavaScript Date silently selects the earlier instant for a fold;
@@ -56,6 +69,31 @@ function validateManualSchedule(value, now) {
   }
   if (instant.getTime() <= now.getTime()) return { iso: null, problem: generic };
   return { iso: instant.toISOString(), problem: null };
+}
+
+// Show the same UTC instant in both the operator's and the provider's zone.
+// The provider timezone changes its displayed clock, NEVER the submitted UTC
+// instant (or a browser DST ambiguity would be silently reintroduced).
+export function schedulePreview(value, providerTimezone, now = new Date()) {
+  const iso = manualScheduleIso(value, now);
+  if (!iso) return null;
+  const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'device local';
+  const targetTimezone = providerTimezone || 'Europe/Rome';
+  const format = (timeZone) => new Intl.DateTimeFormat('en-GB', {
+    dateStyle: 'full', timeStyle: 'long', timeZone,
+  }).format(new Date(iso));
+  try {
+    return {
+      iso, browserTimezone, providerTimezone: targetTimezone,
+      browserTime: format(browserTimezone),
+      providerTime: format(targetTimezone),
+    };
+  } catch (error) {
+    // An invalid server-supplied IANA timezone must never crash the modal.
+    if (!(error instanceof RangeError)) throw error;
+    return { iso, browserTimezone, providerTimezone: targetTimezone,
+      browserTime: format(browserTimezone), providerTime: 'Invalid provider timezone' };
+  }
 }
 
 // A manual timestamp is only valid if it names one specific future instant.

@@ -11,6 +11,7 @@ import {
 } from '../../api/client';
 import { SUB_FONTS } from '../../lib/uiOptions';
 import { getApiToken, setApiToken } from '../../api/apiToken';
+import { getCredentialMode, setCredentialMode } from '../../lib/credentialStorage';
 
 // Curated fallback when live discovery is unavailable (no key yet / offline).
 // Mirrors the allow-list prefixes (gemini-2.5- / gemini-3) the backend accepts.
@@ -59,6 +60,7 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
   const [twitchId, setTwitchId] = useState('');
   const [twitchSecret, setTwitchSecret] = useState('');
   const [apiToken, setApiTokenState] = useState(() => getApiToken());
+  const [browserRetention, setBrowserRetention] = useState(() => getCredentialMode());
   const [present, setPresent] = useState({});
   const [zernio, setZernioState] = useState(null);
   const [zKey, setZKey] = useState('');
@@ -187,6 +189,20 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
       <Hero eyebrow="Settings" line1="Keys & connections." sub="Everything is stored locally. Your keys never leave your machine." />
 
       <Panel title="API keys" sub="Required for transcription & moment detection" icon="key-round" style={{ marginBottom: 18 }}>
+        <div className="opt" role="group" aria-label="Browser credential retention">
+          <div className="oico"><Icon n="shield" /></div>
+          <div className="otxt">
+            <div className="ot">Browser credential retention</div>
+            <div className="od">Session only clears browser copies when the browser session ends. Backend provider keys remain stored on the server.</div>
+          </div>
+          <div className="r">
+            <select aria-label="Browser credential retention" className="key-input" value={browserRetention}
+              onChange={(event) => { setBrowserRetention(setCredentialMode(event.target.value)); pushToast?.('info', 'Browser credential retention updated'); }}>
+              <option value="local">Remember on this device</option>
+              <option value="session">Session only (safer)</option>
+            </select>
+          </div>
+        </div>
         <KeyRow icon="sparkles" name="Gemini" desc="Viral-moment detection" value={gemini} present={present.gemini}
           onChange={(v) => { setGemini(v); onApiKey?.(v); }} onSave={() => saveKeys({ GEMINI_API_KEY: gemini })}
           onClear={() => { setGemini(''); onApiKey?.(''); saveKeys({ GEMINI_API_KEY: '' }); }} placeholder="AIza…" />

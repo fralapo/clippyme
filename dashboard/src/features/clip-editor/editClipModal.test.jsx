@@ -291,3 +291,9 @@ test('bulk mode hides the Trim tab and the hook text field, dropRanges stay empt
   expect(p.toggles.hook).toBe(true);
   expect(p.dropRanges).toEqual([]);
 });
+
+test('editing preview is explicitly labelled as the currently saved file, not a live render', () => {
+  mount();
+  expect(screen.getByRole('status')).toHaveTextContent('Current saved video');
+  expect(screen.getByRole('status')).toHaveTextContent('edits are not previewed live');
+});
