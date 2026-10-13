@@ -3,7 +3,15 @@ import { Icon, Btn, Badge, Panel } from '../../components/primitives';
 import { Hero } from '../../components/headers';
 import { relTime } from '../../lib/relTime';
 
-export function HistoryView({ history, availableIds, offline = false, onOpen, onDelete, onClear }) {
+export function formatStorageBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'unknown';
+  if (bytes < 1024) return `${bytes} B`;
+  const unit = bytes < 1024 ** 2 ? 'KB' : bytes < 1024 ** 3 ? 'MB' : 'GB';
+  const divisor = unit === 'KB' ? 1024 : unit === 'MB' ? 1024 ** 2 : 1024 ** 3;
+  return `${(bytes / divisor).toFixed(1)} ${unit}`;
+}
+
+export function HistoryView({ history, availableIds, offline = false, storageUsage = null, onOpen, onDelete, onClear }) {
   if (!history.length) {
     return (
       <div className="container narrow fade-in">
@@ -20,6 +28,21 @@ export function HistoryView({ history, availableIds, offline = false, onOpen, on
   return (
     <div className="container narrow fade-in">
       {offline && <p role="status">Backend unavailable — showing cached history. Actions need a connection.</p>}
+      {storageUsage && (
+        <Panel className="hstorage" style={{ marginBottom: 18 }}>
+          <div role="status" aria-label="Disk storage usage">
+            <strong>Storage</strong> · Jobs {formatStorageBytes(storageUsage.outputBytes)}
+            {' · '}Uploads {formatStorageBytes(storageUsage.uploadsBytes)}
+            {' · '}Config {formatStorageBytes(storageUsage.dataBytes)}
+            {' · '}Free {formatStorageBytes(storageUsage.diskFreeBytes)}
+            {' / '}Total {formatStorageBytes(storageUsage.diskTotalBytes)}
+          </div>
+          {storageUsage.lowSpace && (
+            <p role="alert">Low disk space. Delete individual finished jobs below to reclaim space; active jobs cannot be deleted.</p>
+          )}
+          <p className="cm-small">Delete a specific job using its trash icon. This permanently removes its files from disk.</p>
+        </Panel>
+      )}
       <div className="results-head" style={{ marginBottom: 18 }}>
         <h2>History</h2>
         <Badge tone="out">{history.length} jobs</Badge>

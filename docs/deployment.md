@@ -86,3 +86,30 @@ frontend and verifies the real backend API health through nginx's reverse
 proxy, plus the shipped CSP. Only the CPU image actually boots on CI; a
 physical NVIDIA GPU/driver passthrough test remains a separate hardware
 acceptance task (not claimed as passed by the overlay syntax test).
+
+## Offline backup and restore
+
+ClippyMe stores configuration, stream-monitor state/journal and video output
+on disk. Back up `.env`, `data/`, `uploads/`, and `output/` together so
+a restored job and its media remain consistent. **Do not back up or restore
+while the backend is running.** First finish/stop active jobs, verify the
+Live Monitor is idle, and stop the services yourself. The utility deliberately
+does not stop jobs or services, and requires an explicit offline confirmation.
+The archive contains secrets and cookies: it is created mode `0600` and
+must be stored securely outside the ClippyMe storage folders.
+
+```bash
+docker compose ps
+docker compose stop backend frontend
+python scripts/backup_clippyme.py backup --root . --archive ../clippyme-backup.tar.gz --confirm-stopped
+# Restore only into a fresh checkout, without existing data/output/uploads/.env:
+python scripts/backup_clippyme.py restore --root . --archive ../clippyme-backup.tar.gz --confirm-stopped
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+The tool refuses symlinks, unsafe archive members, missing offline confirmation,
+overwriting existing state, and malformed archives. It verifies SHA-256 hashes
+before placing the restored folders. After restore, check the saved connections,
+job history, and live-monitor status *before* enabling unattended publishing.
+The dashboard may display disk usage and the History delete action removes
+specific jobs; automatic job retention remains disabled by default.

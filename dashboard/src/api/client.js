@@ -197,6 +197,17 @@ export async function deleteHistoryJob(jobId) {
 }
 
 // Canonical backend history; an unavailable backend must not erase the cache.
+// Read-only filesystem inventory. Backend token/origin rules apply.
+export async function getStorageUsage() {
+  const response = await apiFetch(getApiUrl('/api/storage'));
+  if (!response.ok) throw new Error(`Storage usage HTTP ${response.status}`);
+  const data = await response.json();
+  if (!Array.isArray(data?.jobs) || !Number.isFinite(data?.diskFreeBytes)) {
+    throw new Error('Malformed storage usage response');
+  }
+  return data;
+}
+
 export async function listHistoryJobs() {
   const res = await apiFetch(getApiUrl('/api/history'));
   if (!res.ok) {

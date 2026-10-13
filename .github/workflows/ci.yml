@@ -211,11 +211,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --no-audit --no-fund
       - name: Install pinned E2E harness (isolated; no lockfile mutation)
-        run: npm install --no-save --package-lock=false --ignore-scripts @playwright/test@1.60.0
+        run: |
+          npm install --prefix "$RUNNER_TEMP/clippyme-playwright" --ignore-scripts --no-audit --no-fund @playwright/test@1.60.0
+          mkdir -p node_modules/@playwright
+          ln -s "$RUNNER_TEMP/clippyme-playwright/node_modules/@playwright/test" node_modules/@playwright/test
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: '"$RUNNER_TEMP/clippyme-playwright/node_modules/.bin/playwright" install --with-deps chromium'
       - name: Test browser navigation and mocked provider workflows
-        run: npx playwright test --config=playwright.config.js
+        run: '"$RUNNER_TEMP/clippyme-playwright/node_modules/.bin/playwright" test --config=playwright.config.js'
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v4

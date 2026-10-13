@@ -15,7 +15,7 @@ import { HistoryView } from '../features/history/history';
 import { SettingsView, ApiKeyModal } from '../features/settings/settings';
 import { LiveMonitorView } from '../features/live-monitor/live';
 import { EditClipModal } from '../features/clip-editor/editClipModal';
-import { optsToPreselections, restoreJob, deleteHistoryJob, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from '../api/client';
+import { optsToPreselections, restoreJob, deleteHistoryJob, getStorageUsage, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from '../api/client';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from '../features/create/presets';
 import { HOOK_STYLE_DEFAULT } from '../lib/uiOptions';
 import { clipStateToParams, buildBulkPlan } from '../features/clip-editor/bulkApply';
@@ -124,6 +124,7 @@ export default function App() {
   const [availableJobIds, setAvailableJobIds] = useState(null);
 
   const [historyOffline, setHistoryOffline] = useState(false);
+  const [storageUsage, setStorageUsage] = useState(null);
   const { history, saveToHistory, deleteFromHistory, refreshHistory } = useHistory();
   const { cookiesConfigured, setCookiesConfigured } = useBackendStatus();
   const { states: clipStates, updateClip: updateClipState } = useClipStates(jobId);
@@ -149,9 +150,12 @@ export default function App() {
       const jobs = await refreshHistory();
       setAvailableJobIds(new Set(jobs.map((item) => item.jobId)));
       setHistoryOffline(false);
+      try { setStorageUsage(await getStorageUsage()); }
+      catch { setStorageUsage(null); }
     } catch {
       setAvailableJobIds(null);
       setHistoryOffline(true);
+      setStorageUsage(null);
     }
   }, [refreshHistory]);
   useEffect(() => {
@@ -470,7 +474,7 @@ export default function App() {
       {tab === 'live' && <LiveMonitorView pushToast={pushToast} />}
 
       {tab === 'history' && !viewingHistory && (
-        <HistoryView history={history} availableIds={availableJobIds} offline={historyOffline}
+        <HistoryView history={history} availableIds={availableJobIds} offline={historyOffline} storageUsage={storageUsage}
           onOpen={openHistoryJob}
           onDelete={onDeleteHistoryJob}
           onClear={onClearHistory} />

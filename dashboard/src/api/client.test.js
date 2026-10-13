@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 // Vitest runs with a jsdom environment, so window.location.origin is real —
 // the old plain-Node `globalThis.window` stub is gone.
-import { optsToPreselections, clipVideoSrc, clipPreviewSrc, fmtDuration, exportClip, deleteHistoryJob, listHistoryJobs } from './client.js';
+import { optsToPreselections, clipVideoSrc, clipPreviewSrc, fmtDuration, exportClip, deleteHistoryJob, listHistoryJobs, getStorageUsage } from './client.js';
 
 // --- optsToPreselections: the Create-tab → backend translation layer --------
 
@@ -173,4 +173,17 @@ test('listHistoryJobs returns canonical backend rows and propagates errors', asy
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('storage summary requests the backend and rejects invalid responses', async () => {
+  const previous = globalThis.fetch;
+  const valid = { jobs: [], diskFreeBytes: 100, diskTotalBytes: 200, outputBytes: 0,
+    dataBytes: 0, uploadsBytes: 0, lowSpace: false };
+  try {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => valid });
+    assert.deepEqual(await getStorageUsage(), valid);
+    assert.match(globalThis.fetch.mock.calls[0][0], /\/api\/storage$/);
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ jobs: [] }) });
+    await assert.rejects(getStorageUsage(), /Malformed/);
+  } finally { globalThis.fetch = previous; }
 });
