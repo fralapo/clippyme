@@ -130,3 +130,35 @@ test('selection mode does not publish a clip currently being reprocessed', () =>
   fireEvent.click(screen.getByRole('button', { name: 'Publish ready 1' }));
   expect(onPublishAll.mock.calls[0][0].map((c) => c.original_index)).toEqual([1]);
 });
+
+test('provider-accepted scheduled post restores its status from job metadata after browser state is lost', () => {
+  const restored = [{ ...clips[0], published: [{
+    post_id: 'provider-id', at: '2030-01-01T00:00:00.000Z',
+    scheduled_for: '2030-01-02T12:00:00.000Z',
+  }] }];
+  mount(restored, {});
+  expect(screen.getByText('scheduled')).toBeInTheDocument();
+  expect(screen.queryByText('published')).toBeNull();
+});
+
+test('provider-accepted immediate post restores as submitted without localStorage', () => {
+  mount([{ ...clips[0], published: [{ at: '2030-01-01T00:00:00.000Z', post_id: 'provider-id' }] }], {});
+  expect(screen.getByText('submitted')).toBeInTheDocument();
+  expect(screen.queryByText('published')).toBeNull();
+});
+
+test('newer provider record takes priority over an old local published badge', () => {
+  mount([{ ...clips[0], published: [{
+    at: '2030-01-01T00:00:00.000Z', scheduled_for: '2030-01-02T12:00:00.000Z',
+  }] }], { 0: { publishedAt: 456 } });
+  expect(screen.getByText('scheduled')).toBeInTheDocument();
+  expect(screen.queryByText('published')).toBeNull();
+});
+
+test('a newer local submission remains visible before a refreshed server result arrives', () => {
+  mount([{ ...clips[0], published: [{
+    at: '2020-01-01T00:00:00.000Z', scheduled_for: '2020-01-02T12:00:00.000Z',
+  }] }], { 0: { publishedAt: Date.now(), publicationStatus: 'submitted' } });
+  expect(screen.getByText('submitted')).toBeInTheDocument();
+  expect(screen.queryByText('scheduled')).toBeNull();
+});
