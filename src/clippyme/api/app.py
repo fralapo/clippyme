@@ -73,6 +73,7 @@ from clippyme.storage.config_store import (
 )
 from clippyme.jobs.job_worker import make_workers
 from clippyme.jobs.history_service import scan_history, is_valid_job_id
+from clippyme.jobs.storage_usage import storage_overview
 from clippyme.api.config_routes import router as config_router
 
 # Constants
@@ -740,6 +741,13 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
         letterbox_zoom=req.letterbox_zoom,
         output_root=OUTPUT_DIR, jobs=jobs,
     )
+
+
+@app.get("/api/storage")
+async def get_storage_usage(request: Request):
+    """Report current disk usage; no cleanup is performed implicitly."""
+    require_trusted_config_request(request)
+    return await asyncio.to_thread(storage_overview, OUTPUT_DIR)
 
 
 @app.get("/api/history")
