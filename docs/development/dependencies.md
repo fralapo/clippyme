@@ -69,3 +69,37 @@ CI fails on any known vulnerability in the locked Python trees and on any high
 or critical npm advisory. Fix by upgrading the affected package. An
 advisory may be added to the `pip-audit` ignore list in `ci.yml` only when no
 fixed version is usable; record the reason in the commit message.
+
+## Security exception review — 2026-10-13
+
+The CI lockfile audit has **explicit, narrowly scoped risk acceptances**.
+A green `pip-audit --ignore-vuln` result does **not** mean the ignored packages
+are patched. These findings were checked against the current
+`requirements.lock`; package upgrades must follow the uv regeneration
+procedure above and pass the real Docker/FFmpeg integration suite before an
+exception can be removed. Do not manually edit the generated lock.
+
+| Advisory | Package in runtime lock | Upstream fixed version | Risk and disposition |
+|---|---|---|---|
+| [CVE-2025-3000](https://osv.dev/vulnerability/CVE-2025-3000) | `torch==2.11.0` | `2.13.0` | Memory-corruption report involving `torch.jit.script`. No direct call found in ClippyMe, but transitive execution cannot be ruled out. **Still vulnerable / temporarily waived** until a matching torch+torchvision+CV stack is validated. |
+| [CVE-2026-24049](https://osv.dev/vulnerability/CVE-2026-24049) | `wheel` **not present** in `requirements.lock` | `0.46.2` | Malicious wheel extraction path/permission attack. This waiver was irrelevant to the **runtime lockfile** scan and was removed from CI. Separate installation/build tooling remains outside the runtime lockfile audit; use patched wheel if invoking `wheel unpack`. |
+| [PYSEC-2026-1805](https://osv.dev/vulnerability/PYSEC-2026-1805) | `protobuf==4.25.9` | `5.29.6` or `6.33.5` | Nested `Any` parsing can bypass the JSON parsing recursion limit (DoS). `mediapipe==0.10.14` requires `protobuf>=4.25.3,<5`; there is no compatible patched 4.x in this advisory. **Still vulnerable / temporarily waived** pending a validated MediaPipe/Protobuf upgrade. Avoid feeding untrusted protobuf JSON to parsing helpers. |
+| [PYSEC-2026-2132](https://osv.dev/vulnerability/PYSEC-2026-2132) | `click==8.2.1` | `8.3.3` | Command injection in `click.edit()`; no direct call in ClippyMe. **Still vulnerable / temporarily waived** until the resolved lock is regenerated with `click>=8.3.3`, its dependency constraints checked and CLI/monitor paths tested. This is the first independent upgrade candidate. |
+| [PYSEC-2026-3447](https://osv.dev/vulnerability/PYSEC-2026-3447) | `setuptools==81.0.0` | `83.0.0` | Unicode-normalization bypass of excluded filenames when building source archives, mainly relevant on macOS. `torch==2.11.0` requires `setuptools<82`; cannot safely raise the installed runtime version independently. **Still vulnerable / temporarily waived** pending Torch compatibility upgrades. Do not create release sdists with this runtime toolchain; use isolated, patched build tooling. |
+
+Operational limits: ClippyMe supports one trusted operator on loopback/trusted
+LAN, never an exposed internet service. This reduces the reachable attack
+surface but does **not** eliminate the four remaining dependency risks.
+
+Remediation sequence (separate PRs, re-review each waiver when its package
+changes): (1) regenerate the uv lock for fixed Click, run host/CLI/Docker
+tests, and remove its waiver; (2) upgrade MediaPipe and Protobuf together and
+run real reframe/video tests; (3) upgrade Torch with matching torchvision
+and validate CPU/GPU, YOLO, Whisper and reframe; (4) resolve setuptools after
+Torch permits 83+. If an upgrade is incompatible, record the failing
+dependency resolution and keep the waiver visible, not silently suppressed.
+Review every residual waiver again before a tagged release.
+
+The list of permitted CI waivers is deliberately pinned in
+`tests/repository/test_dependency_waivers.py` so adding an unreviewed
+suppression fails a regression test.
