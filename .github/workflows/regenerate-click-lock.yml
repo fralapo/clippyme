@@ -1,0 +1,23 @@
+name: Temporary Click lock regeneration
+on:
+  push:
+    branches: ["security/fix-click-advisory-20261013"]
+permissions:
+  contents: read
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+      - name: Regenerate pinned Linux Python 3.11 lock with uv
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv pip compile requirements.txt --python-platform linux --python-version 3.11 -o requirements.lock --upgrade-package click==8.3.3
+          echo "BEGIN_GENERATED_REQUIREMENTS_LOCK"
+          cat requirements.lock
+          echo "END_GENERATED_REQUIREMENTS_LOCK"

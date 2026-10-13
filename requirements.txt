@@ -27,6 +27,9 @@ fastapi==0.135.3
 # regress to a vulnerable 0.x/1.0.0.
 starlette>=1.0.1
 uvicorn==0.42.0
+# Click 8.3.3 fixes command injection in click.edit() (PYSEC-2026-2132).
+# Ensure the resolved transitively imported CLI package is patched.
+click>=8.3.3,<9
 # 0.0.31 fixes CVE-2026-40347/42561/53538/53539/53540 (multipart parser DoS).
 python-multipart==0.0.31
 # Fonts/emoji rendering in subtitles.py + hook_overlay.py assume the Pillow 12.x
