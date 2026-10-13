@@ -12,7 +12,11 @@ function safeStore(kind) {
 }
 
 export function getCredentialMode() {
-  return safeStore('local')?.getItem(MODE_KEY) === 'session' ? 'session' : 'local';
+  try {
+    return safeStore('local')?.getItem(MODE_KEY) === 'session' ? 'session' : 'local';
+  } catch {
+    return 'local';
+  }
 }
 
 export function readBrowserCredential(key) {

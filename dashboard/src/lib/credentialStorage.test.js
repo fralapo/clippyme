@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from 'vitest';
+import { beforeEach, expect, test, vi } from 'vitest';
 import { getCredentialMode, readBrowserCredential, writeBrowserCredential, setCredentialMode } from './credentialStorage';
 
 beforeEach(() => {
@@ -36,4 +36,17 @@ test('switching back restores previous opt-in persistent behavior', () => {
 
 test('cannot move browser secrets using an unsupported retention mode', () => {
   expect(() => setCredentialMode('unknown')).toThrow();
+});
+
+test('blocked storage operations cannot crash credential reads or writes', () => {
+  const blocked = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    throw new DOMException('Storage blocked', 'SecurityError');
+  });
+  try {
+    expect(getCredentialMode()).toBe('local');
+    expect(readBrowserCredential('gemini_key')).toBe('');
+    expect(() => writeBrowserCredential('gemini_key', 'test')).not.toThrow();
+  } finally {
+    blocked.mockRestore();
+  }
 });
