@@ -18,12 +18,12 @@ const clips = [
   { original_index: 1, video_title_for_youtube_short: 'Second clip', viral_score: 85, start: 10, end: 20 },
 ];
 
-function mount(selected = clips, clipStates = {}) {
+function mount(selected = clips, clipStates = {}, onPublishAll = vi.fn()) {
   const pushToast = vi.fn();
   render(<ResultsView
     clips={selected} jobId="results-qa" preselections={{}}
     clipStates={clipStates} onUpdateClipState={vi.fn()}
-    onPublish={vi.fn()} onPublishAll={vi.fn()} onEdit={vi.fn()}
+    onPublish={vi.fn()} onPublishAll={onPublishAll} onEdit={vi.fn()}
     onApplyToAll={vi.fn()} onEditSelected={vi.fn()} pushToast={pushToast}
   />);
   return pushToast;
@@ -89,19 +89,46 @@ test('bulk export with already-raw clips reports them as raw instead of composed
   expect(window.confirm).not.toHaveBeenCalled();
 });
 
-test('a scheduled clip keeps a scheduled badge rather than claiming it is already published', () => {
+test('a scheduled clip keeps a scheduled badge rather than claiming it is published', () => {
   mount(clips.slice(0, 1), { 0: { publishedAt: 123, publicationStatus: 'scheduled' } });
   expect(screen.getByText('scheduled')).toBeInTheDocument();
   expect(screen.queryByText('published')).toBeNull();
 });
 
-test('accepted immediate requests show submitted; older persisted published badges stay compatible', () => {
+test('immediate accepted requests show submitted while persisted legacy entries remain compatible', () => {
   mount(clips, {
     0: { publishedAt: 123, publicationStatus: 'submitted' },
     1: { publishedAt: 456 },
   });
   expect(screen.getByText('submitted')).toBeInTheDocument();
   expect(screen.getByText('published')).toBeInTheDocument();
+});
+
+test('Publish all excludes clips still reprocessing and identifies the ready count', () => {
+  const onPublishAll = vi.fn();
+  mount(clips, { 0: { processing: true } }, onPublishAll);
+  expect(screen.getByText(/1 clip still reprocessing/i)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Publish ready 1' }));
+  expect(onPublishAll).toHaveBeenCalledTimes(1);
+  expect(onPublishAll.mock.calls[0][0].map((c) => c.original_index)).toEqual([1]);
+});
+
+test('Publish all is disabled when all clips are processing', () => {
+  const onPublishAll = vi.fn();
+  mount(clips, { 0: { processing: true }, 1: { processing: true } }, onPublishAll);
+  expect(screen.getByRole('button', { name: 'Publish all' })).toBeDisabled();
+  expect(onPublishAll).not.toHaveBeenCalled();
+});
+
+test('selection mode does not publish a clip currently being reprocessed', () => {
+  const onPublishAll = vi.fn();
+  mount(clips, { 0: { processing: true }, 1: { selected: true } }, onPublishAll);
+  fireEvent.click(screen.getByRole('button', { name: 'Select' }));
+  // Mocked onUpdateClipState does not rerender the harness. Both original
+  // clips were selected, so Select-all is already in its checked state.
+  expect(screen.getByRole('button', { name: 'Publish ready 1' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Publish ready 1' }));
+  expect(onPublishAll.mock.calls[0][0].map((c) => c.original_index)).toEqual([1]);
 });
 
 test('provider-accepted scheduled post restores its status from job metadata after browser state is lost', () => {
