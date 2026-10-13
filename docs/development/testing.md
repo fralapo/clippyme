@@ -129,3 +129,29 @@ is false. The suite needs `ffprobe`/`ffmpeg`, so run it in the backend
 container. The Docker integration suite additionally generates two short
 synthetic MP4s to verify a real ASS karaoke burn and rejection of a broken
 landscape/no-audio export without external API keys.
+
+## Real-provider staging checks
+
+The `tests/live/test_providers_live.py` suite is excluded from normal CI
+unless explicitly enabled. Run it in a trusted environment with scoped,
+temporary staging keys and no production accounts:
+
+```bash
+CLIPPYME_LIVE_SMOKE=1 pytest -m live tests/live -q
+```
+
+Read-only checks exercise Deepgram project listing, ElevenLabs user discovery,
+Gemini model listing, and Zernio account listing. Optional **billable** checks
+exercise real Deepgram and ElevenLabs audio transcription and Gemini generation:
+
+```bash
+CLIPPYME_LIVE_SMOKE=1 CLIPPYME_LIVE_BILLABLE=1 \
+  CLIPPYME_LIVE_MEDIA_WAV=/path/to/small-voice.wav pytest -m live tests/live -q
+```
+
+Each provider test skips independently if its key is unset. Zernio is **never**
+asked to create a live social post by this suite: actual scheduling/publishing
+requires an explicit isolated account approval test. CI's deterministic
+provider mocks cannot establish real provider uptime, authorization or billing.
+No staging provider keys are stored in the repository or uploaded as CI
+artifacts. Results must be recorded after a real run, not inferred from skips.

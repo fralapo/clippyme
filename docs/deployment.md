@@ -77,3 +77,12 @@ the [configuration reference](reference/configuration.md).
 | API calls return 403 when the dashboard is opened from another device | Its address is not in `ALLOWED_ORIGINS`, or the containers were not recreated (`docker compose down`, then `up -d`) after editing `.env`; see [Network exposure](#network-exposure). |
 | Smart Cut result looks like a plain cut | The auto-editor binary is missing or failed; ClippyMe fell back to ffmpeg. Rebuild the image. |
 | Permission denied on `data/` | Restart the backend container; the entrypoint repairs ownership on start. |
+
+## Production image smoke checks
+
+The CI Docker job validates the CPU+nginx and NVIDIA+nginx Compose overlay
+configurations without requiring GPU hardware. It builds the static nginx
+frontend and verifies the real backend API health through nginx's reverse
+proxy, plus the shipped CSP. Only the CPU image actually boots on CI; a
+physical NVIDIA GPU/driver passthrough test remains a separate hardware
+acceptance task (not claimed as passed by the overlay syntax test).

@@ -50,4 +50,5 @@ python_files = ["test_*.py"]
 # host suite with `pytest -m "not integration"`; run everything in Docker.
 markers = [
     "integration: requires the heavy CV/ML runtime (cv2, scenedetect, mediapipe); run in Docker",
+    "live: real external provider calls, always opt-in and credential-gated",
 ]
