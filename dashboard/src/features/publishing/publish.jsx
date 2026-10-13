@@ -8,7 +8,7 @@ import { LazyVideo } from '../../components/LazyVideo';
 import { clipVideoSrc } from '../../api/client';
 import { publishClip, getZernio } from '../../api/client';
 import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams, seedBannerParams } from '../../lib/seedClipParams';
-import { localDatePlus, manualScheduleIso, manualScheduleProblem } from './scheduleDates';
+import { localDatePlus, manualScheduleIso, manualScheduleProblem, schedulePreview } from './scheduleDates';
 import { clearPublishIntent, publishIntent } from './publishIntent';
 import { useModalA11y } from '../../hooks/useModalA11y';
 
@@ -205,7 +205,8 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   };
 
   const wasScheduled = submittedMode !== 'now';
-  const manualReady = !exactSchedule || !schedule || (!!manualScheduleIso(publishTime) && !all);
+  const scheduleDetails = schedulePreview(publishTime, zernio?.timezone);
+  const manualReady = !exactSchedule || !schedule || (!!scheduleDetails && !all);
   const title = stage === 'done' ? (outcome?.fail ? 'Publishing incomplete' : wasScheduled ? 'Scheduled' : 'Submitted')
     : all ? `Publish ${clips.length} clips` : `Publish · ${clips[0]?.video_title_for_youtube_short || ''}`;
 
@@ -272,6 +273,10 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
                     <div className="otxt"><div className="ot">Schedule for prime time</div><div className="od">SmartScheduler picks the slot · off = publish now</div></div>
                     <div className="r"><Switch on={schedule} onChange={setSchedule} /></div>
                   </div>
+                  {schedule && <p className="cm-small">
+                    SmartScheduler timezone: {zernio?.timezone || 'Europe/Rome'}.
+                    {all ? ' Each clip starts on a different device-local calendar day.' : ' Automatic slots are selected in that timezone.'}
+                  </p>}
                   {schedule && !all && <div className="field">
                     <label className="field-label">
                       <input type="checkbox" checked={exactSchedule}
@@ -281,7 +286,12 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
                       <label className="field-label" htmlFor="publish-exact-datetime">Publication date and time (your local time)</label>
                       <input id="publish-exact-datetime" type="datetime-local" value={publishTime}
                         onChange={(e) => setPublishTime(e.target.value)} />
-                      {!manualScheduleIso(publishTime) && <div className="cm-small" role="status">{manualScheduleProblem(publishTime)}</div>}
+                      {!scheduleDetails ? <div className="cm-small" role="status">{manualScheduleProblem(publishTime)}</div>
+                        : <div className="cm-small" role="status" aria-label="Exact scheduling confirmation">
+                          <div>Device timezone: {scheduleDetails.browserTimezone} — {scheduleDetails.browserTime}</div>
+                          <div>Zernio timezone: {scheduleDetails.providerTimezone} — {scheduleDetails.providerTime}</div>
+                          <div>Exact UTC instant sent to Zernio: {scheduleDetails.iso}</div>
+                        </div>}
                     </>}
                   </div>}
                 </>

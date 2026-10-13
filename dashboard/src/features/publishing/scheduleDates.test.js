@@ -34,7 +34,7 @@ test('localDatePlus does not mutate the injected date', () => {
   assert.equal(base.getDate(), 15);
 });
 
-import { manualScheduleIso, manualScheduleProblem } from './scheduleDates.js';
+import { manualScheduleIso, manualScheduleProblem, schedulePreview } from './scheduleDates.js';
 
 test('manualScheduleIso converts the browser-local selection to an explicit UTC instant', () => {
   const local = '2030-06-12T17:45';
@@ -79,4 +79,19 @@ test('manual scheduling rejects non-European DST ambiguity without rejecting nor
     if (original === undefined) delete process.env.TZ;
     else process.env.TZ = original;
   }
+});
+
+test('schedulePreview preserves the exact instant across device and Zernio zones', () => {
+  const now = new Date('2026-01-01T00:00:00Z');
+  const local = '2026-07-20T15:30';
+  const preview = schedulePreview(local, 'America/New_York', now);
+  assert.equal(preview.iso, manualScheduleIso(local, now));
+  assert.equal(preview.providerTimezone, 'America/New_York');
+  assert.match(preview.providerTime, /2026/);
+  assert.match(preview.browserTime, /2026/);
+});
+test('schedulePreview rejects invalid zones without breaking scheduling', () => {
+  const x = schedulePreview('2030-07-20T15:30', 'not/a_timezone');
+  assert.equal(x.providerTime, 'Invalid provider timezone');
+  assert.ok(x.iso.endsWith('Z'));
 });

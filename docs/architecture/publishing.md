@@ -35,7 +35,9 @@ past dates, nonexistent DST-gap times and repeated DST-fallback times are
 rejected instead of silently selecting one of two possible instants. The
 exact-time input uses the operator's **device-local** timezone, not the
 configured SmartScheduler/Zernio timezone; the API receives an explicit
-UTC timestamp. Batch publishing supports `now` and `auto` only: in `auto`
+UTC timestamp. The modal previews the same instant in device-local time,
+configured Zernio time, and UTC before scheduling; provider timezone changes
+display only, never the UTC value sent to the API. Batch publishing supports `now` and `auto` only: in `auto`
 mode each clip starts its slot search one day later than the previous one
 to reduce daily-limit collisions. Zernio error bodies are passed through
 so the dashboard can show a platform's daily-limit 429.

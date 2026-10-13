@@ -58,6 +58,31 @@ function validateManualSchedule(value, now) {
   return { iso: instant.toISOString(), problem: null };
 }
 
+// Show the same UTC instant in both the operator's and the provider's zone.
+// The provider timezone changes its displayed clock, NEVER the submitted UTC
+// instant (or a browser DST ambiguity would be silently reintroduced).
+export function schedulePreview(value, providerTimezone, now = new Date()) {
+  const iso = manualScheduleIso(value, now);
+  if (!iso) return null;
+  const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'device local';
+  const targetTimezone = providerTimezone || 'Europe/Rome';
+  const format = (timeZone) => new Intl.DateTimeFormat('en-GB', {
+    dateStyle: 'full', timeStyle: 'long', timeZone,
+  }).format(new Date(iso));
+  try {
+    return {
+      iso, browserTimezone, providerTimezone: targetTimezone,
+      browserTime: format(browserTimezone),
+      providerTime: format(targetTimezone),
+    };
+  } catch (error) {
+    // An invalid server-supplied IANA timezone must never crash the modal.
+    if (!(error instanceof RangeError)) throw error;
+    return { iso, browserTimezone, providerTimezone: targetTimezone,
+      browserTime: format(browserTimezone), providerTime: 'Invalid provider timezone' };
+  }
+}
+
 // A manual timestamp is only valid if it names one specific future instant.
 export function manualScheduleIso(value, now = new Date()) {
   return validateManualSchedule(value, now).iso;
