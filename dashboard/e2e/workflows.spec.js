@@ -24,7 +24,7 @@ async function fixtures(page) {
     localStorage.setItem('gemini_key', 'browser-e2e-test-key');
     localStorage.setItem('clippyme_api_token', '');
   });
-  await page.route('**/api/**', async (route) => {
+  await page.route(/^https?:\/\/[^/]+\/api\//, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
