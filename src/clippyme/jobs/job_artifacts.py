@@ -95,7 +95,11 @@ def record_clip_publish(job_id: str, clip_index: int, output_dir: str, record: d
         shorts = data.get("shorts", [])
         if not 0 <= clip_index < len(shorts):
             return False
-        shorts[clip_index].setdefault("published", []).append(record)
+        published = shorts[clip_index].setdefault("published", [])
+        intent_id = record.get("intent_id")
+        if intent_id and any(isinstance(r, dict) and r.get("intent_id") == intent_id for r in published):
+            return False
+        published.append(record)
         return True
 
     update_job_metadata(job_id, output_dir, mutate)

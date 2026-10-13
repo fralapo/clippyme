@@ -71,6 +71,20 @@ Rules:
   the clip's publish record without posting again. No `intent_id` means no key:
   every request is a new post.
 
+## Manual uncertain-outcome reconciliation
+
+Before making a provider call, the server atomically records a pending manual
+intent in `.clippyme_publish_intents.json` (owner-only, not served through
+`/videos`). The same intent resumes with the same Zernio Idempotency-Key.
+Once accepted, a durable receipt is written independently of the clip metadata;
+a retry repairs missing metadata and verifies a known post ID with
+`GET /v1/posts/{postId}` without uploading again. Unknown outcomes older than
+23 hours are *blocked*, not blindly resubmitted outside Zernio's 24-hour
+replay guarantee. When no post ID exists, an exact remote match is impossible:
+the operator must inspect Zernio before deliberately creating a new intent.
+Definitive client-side rejections drop the pending marker. A 5xx, timeout or
+in-progress 409 retains it.
+
 ## Delivery guarantee
 
 Delivery is **at least once**. Duplicates are prevented inside the provider's

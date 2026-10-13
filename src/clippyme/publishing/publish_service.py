@@ -17,6 +17,7 @@ from clippyme.clips.clip_locks import clip_lock
 from clippyme.clips.clip_resolve import ResolvedClip, composed_clip_basename
 from clippyme.editing.compose import compose_layers
 from clippyme.core.errors import ClippyMeError, NotFoundError, ValidationError
+from clippyme.publishing.intent_journal import read_intent, begin_intent, confirm_intent, reject_intent
 from clippyme.jobs.job_artifacts import load_job_metadata, record_clip_publish
 
 logger = logging.getLogger("clippyme")
@@ -59,9 +60,44 @@ async def publish_clip_flow(*, job_id: str, clip_index: int,
                 return {"success": True, "replayed": True,
                         "post_id": recorded.get("post_id"),
                         "scheduled_for": recorded.get("scheduled_for")}
+            receipt = await asyncio.to_thread(read_intent, resolved.job_dir, clip_index, intent_id)
+            if receipt and receipt.get("state") == "confirmed":
+                outcome = receipt.get("result") or {}
+                # The receipt is authoritative when metadata write failed after
+                # Zernio accepted the post. Reconcile it without re-uploading.
+                try:
+                    await asyncio.to_thread(
+                        record_clip_publish, job_id, clip_index,
+                        os.path.dirname(resolved.job_dir),
+                        _publication_record(req, intent_id, outcome),
+                    )
+                except Exception:
+                    logger.warning("Cannot repair metadata for accepted publication %s/%d", job_id, clip_index)
+                # A known remote post ID permits a precise provider GET. Never
+                # approximate by title or scheduled time (could match another).
+                if outcome.get("post_id"):
+                    from clippyme.integrations.social_publisher import ZernioClient, ZernioError
+                    try:
+                        fresh = await asyncio.to_thread(ZernioClient(api_key).get_post, outcome["post_id"])
+                        post = fresh.get("post", fresh) if isinstance(fresh, dict) else {}
+                        if isinstance(post, dict):
+                            outcome = {**outcome, "status": post.get("status", outcome.get("status"))}
+                    except (ZernioError, ValueError):
+                        logger.info("Remote verification unavailable for saved post %s", outcome["post_id"])
+                return {"success": True, "replayed": True, **outcome}
         return await _compose_and_upload(
             job_id=job_id, clip_index=clip_index, resolved=resolved, req=req,
             api_key=api_key, zernio_cfg=zernio_cfg)
+
+
+def _publication_record(req: dict, intent_id: str | None, result: dict) -> dict:
+    return {
+        "platforms": req.get("platforms"),
+        "post_id": result.get("post_id"),
+        "scheduled_for": result.get("scheduled_for"),
+        "at": datetime.now(timezone.utc).isoformat(),
+        **({"intent_id": intent_id} if intent_id else {}),
+    }
 
 
 def manual_request_id(job_id: str, clip_index: int, intent_id: str) -> str:
@@ -121,6 +157,15 @@ async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
     if not os.path.exists(upload_path):
         raise NotFoundError(f"Clip file not found: {upload_path}")
 
+    # Write the pending intent BEFORE any possible remote acceptance. Retrying
+    # the same intent reuses the provider key. An uncertain intent older than
+    # 23h is blocked instead of risking duplicates after Zernio's TTL.
+    if intent_id:
+        try:
+            await asyncio.to_thread(begin_intent, job_dir, clip_index, intent_id)
+        except OSError as exc:
+            raise ClippyMeError("Could not durably register publication intent", status_code=503) from exc
+
     # Run the publish in a worker thread (presign + PUT + create are blocking)
     from clippyme.integrations.social_publisher import publish_clip, ZernioError
     try:
@@ -139,8 +184,14 @@ async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
             request_id=manual_request_id(job_id, clip_index, intent_id) if intent_id else None,
         )
     except ValueError as e:
+        if intent_id:
+            await asyncio.to_thread(reject_intent, job_dir, clip_index, intent_id)
         raise ValidationError(str(e))
     except ZernioError as e:
+        # Known client-side rejections cannot have created a post. An unknown
+        # network outcome, 5xx or 409 in-progress MUST retain the ledger.
+        if intent_id and e.status_code in {400, 401, 403, 404, 422, 429}:
+            await asyncio.to_thread(reject_intent, job_dir, clip_index, intent_id)
         logger.error("publish: Zernio error: %s (status=%s body=%s)",
                      e, e.status_code, (e.body or "")[:200])
         # Include the full response body (truncated) in the error detail so
@@ -159,23 +210,34 @@ async def _compose_and_upload(*, job_id, clip_index, resolved, req, api_key,
         logger.exception("publish: unexpected error")
         raise ClippyMeError("Publish failed", status_code=500)
 
-    # Best-effort: the publish already succeeded, so a metadata-write hiccup
-    # here must not fail the response — just leave the history badge stale.
+    # Dual durability: write the provider receipt and the ordinary metadata
+    # independently. A failed metadata save must never erase accepted status.
+    # If BOTH writes fail, report an ambiguous result so the client retains
+    # its intent key (rather than confidently announcing success).
+    receipt_saved = not bool(intent_id)
+    metadata_saved = False
+    if intent_id:
+        try:
+            await asyncio.to_thread(confirm_intent, job_dir, clip_index, intent_id, result)
+            receipt_saved = True
+        except OSError:
+            logger.exception("Could not persist provider receipt for %s/%d", job_id, clip_index)
     try:
         await asyncio.to_thread(
             record_clip_publish,
             job_id,
             clip_index,
             os.path.dirname(job_dir),
-            {
-                "platforms": req.get("platforms"),
-                "post_id": result.get("post_id"),
-                "scheduled_for": result.get("scheduled_for"),
-                "at": datetime.now(timezone.utc).isoformat(),
-                **({"intent_id": intent_id} if intent_id else {}),
-            },
+            _publication_record(req, intent_id, result),
         )
-    except Exception as e:
-        logger.warning("publish: failed to persist publish record for %s/%d: %s", job_id, clip_index, e)
+        metadata_saved = True
+    except Exception:
+        logger.warning("Could not persist accepted publication into metadata %s/%d", job_id, clip_index, exc_info=True)
+    if not receipt_saved and not metadata_saved:
+        raise ClippyMeError(
+            "Zernio may have accepted the post but its receipt could not be saved. "
+            "Do not start a new publication; retry with the same intent once storage is repaired.",
+            status_code=503,
+        )
 
     return {"success": True, **result}
