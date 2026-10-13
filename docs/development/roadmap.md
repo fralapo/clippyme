@@ -19,6 +19,23 @@ authoritative (see [CLAUDE.md](../../CLAUDE.md)).
   scheduling for one clip.
 - [x] [#39](https://github.com/fralapo/clippyme/pull/39): authenticated
   binary previews for uploaded custom fonts.
+- [x] [#53](https://github.com/fralapo/clippyme/pull/53),
+  [#54](https://github.com/fralapo/clippyme/pull/54) and
+  [#55](https://github.com/fralapo/clippyme/pull/55): History recovery,
+  Python advisory review and the compatible Click/SceneDetect updates.
+- [x] [#57](https://github.com/fralapo/clippyme/pull/57) and
+  [#60](https://github.com/fralapo/clippyme/pull/60): offline backup/restore,
+  disk capacity reporting and History storage visibility.
+- [x] [#58](https://github.com/fralapo/clippyme/pull/58): durable receipts
+  and safe reconciliation for uncertain Zernio publication results.
+- [x] [#56](https://github.com/fralapo/clippyme/pull/56): explicit device,
+  Zernio and UTC schedule times; saved-video preview labeling; session-only
+  browser credential retention. Its [four-job CI](https://github.com/fralapo/clippyme/actions/runs/38416212114)
+  passed before merge.
+- [x] [#59](https://github.com/fralapo/clippyme/pull/59): Chromium user
+  journeys, progressive coverage gates, production Docker smoke checks and
+  opt-in provider/monitor test harnesses. Its [five-job CI](https://github.com/fralapo/clippyme/actions/runs/38418800831)
+  passed before merge.
 
 ## Next gates — verify before marking complete
 
@@ -53,9 +70,8 @@ user-visible gap. One independently testable change per PR.
 
 - [x] Reject ambiguous `datetime-local` wall-clock values at autumn DST
   fallback ([#43](https://github.com/fralapo/clippyme/pull/43)).
-- [ ] Independently review user-device-local scheduling versus the configured
-  Zernio timezone and confirm the selected instant in the UX (separate from
-  DST ambiguity already fixed).
+- [x] [#56](https://github.com/fralapo/clippyme/pull/56): display user-device,
+  configured Zernio and exact UTC scheduling times before confirmation.
 - [ ] Audit the Publish modal's close/escape behavior while a request is
   in progress: after submission, closing the dialog must not suggest a post
   was cancelled. Verify idempotent retry and durable status visibility.
@@ -65,10 +81,9 @@ user-visible gap. One independently testable change per PR.
 
 ### P2 — review-before-publish and editorial quality
 
-- [ ] Audit the current Results and Edit modal against the intended
-  review-before-publish flow. The edit preview currently displays the
-  existing on-disk artifact while controls are staged; distinguish a design
-  preview from a final FFmpeg-composed output.
+- [x] [#56](https://github.com/fralapo/clippyme/pull/56): label the Edit
+  preview as the saved video and explain that staged changes are not rendered
+  live. Apply still starts the background reprocessing flow.
 - [ ] Define the smallest operator-approval workflow (approve, request
   changes, or discard a clip) with clear failure/retry states, accessibility,
   and no accidental blocking of unattended Live Monitor posting.
@@ -89,6 +104,19 @@ user-visible gap. One independently testable change per PR.
   file-backed journal, monitor ownership and at-least-once Zernio behavior
   before proposing an independent queue.
 
+### P4 — staging acceptance still required
+
+- [ ] Run the read-only Deepgram, ElevenLabs, Gemini and Zernio provider
+  checks with scoped staging credentials. No provider credentials were
+  configured in the development environment during this review. Billable
+  audio/generation checks require explicit opt-in; no real social post is sent.
+- [ ] Run the Live Monitor soak against an already configured local instance
+  for 24 hours and review the JSONL report. CI verifies the anomaly detector,
+  but does not establish live-stream recovery or sustained operation.
+- [ ] Exercise a production deployment on physical NVIDIA hardware. CI
+  validates the GPU Compose overlay and the CPU/nginx deployment; it does not
+  run a GPU workload on a physical GPU.
+
 ## Execution contract
 
 1. Scope a single user-visible defect or measurable improvement.
@@ -99,7 +127,7 @@ user-visible gap. One independently testable change per PR.
    atomic file writes, per-clip locks, compose order, and publish idempotency.
 5. Run relevant pytest/Ruff, frontend test/lint/build and security audits;
    run real FFmpeg/Docker tests for media/renderer changes.
-6. All four GitHub CI jobs green before merge; re-check `main` after merge.
+6. All five GitHub CI jobs green before merge; re-check `main` after merge.
    Do not claim local tests/hooks executed when changes are made via GitHub API.
 7. Update completed checkboxes only after the PR is merged and its required
    verification has been observed. Link evidence rather than treating a
