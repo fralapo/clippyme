@@ -684,3 +684,42 @@ def test_intent_does_not_bypass_monitor_ownership(manual, zernio):
     r = _publish(TestClient(app_module.app, headers=ORIGIN))
     assert r.status_code == 409
     assert zernio.posts == []
+
+def test_confirmed_receipt_reconciles_metadata_failure_without_second_upload(manual, zernio, monkeypatch):
+    """If Zernio accepts a post but the metadata write fails, the sidecar
+    answers retries without re-uploading; the second attempt repairs metadata.
+    """
+    from clippyme.publishing import publish_service
+    original = publish_service.record_clip_publish
+    count = {"n": 0}
+
+    def fail_once(*args, **kwargs):
+        count["n"] += 1
+        if count["n"] == 1:
+            raise OSError("out of space writing metadata")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(publish_service, "record_clip_publish", fail_once)
+    client = TestClient(app_module.app, headers=ORIGIN)
+    first = _publish(client)
+    assert first.status_code == 200, first.text
+    presigns = zernio.presigns
+    second = _publish(client)
+    assert second.status_code == 200, second.text
+    assert second.json()["replayed"] is True
+    assert len(zernio.posts) == 1 and zernio.presigns == presigns
+    records = load_job_metadata(JOB, str(manual))[1]["shorts"][0]["published"]
+    assert len(records) == 1 and records[0]["intent_id"] == INTENT
+
+
+def test_pending_receipt_is_left_after_unknown_response(manual, zernio):
+    from clippyme.publishing.intent_journal import read_intent
+
+    zernio.lose_next_create_response = True
+    client = TestClient(app_module.app, headers=ORIGIN)
+    first = _publish(client)
+    assert first.status_code == 502
+    stored = read_intent(str(manual / JOB), 0, INTENT)
+    assert stored["state"] == "pending"
+    # Same intent still safely reuses the provider's replay key.
+    assert _publish(client).status_code == 200
