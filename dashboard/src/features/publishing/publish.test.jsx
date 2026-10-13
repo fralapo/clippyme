@@ -240,3 +240,15 @@ test('close button, backdrop and Escape cannot hide in-flight social uploads', a
   fireEvent.click(screen.getByRole('button', { name: 'Done' }));
   expect(onClose).toHaveBeenCalledTimes(1);
 });
+
+test('exact-time confirmation shows device timezone, provider timezone and submitted UTC instant', async () => {
+  mount();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Schedule' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Choose exact publication time' }));
+  const local = futureLocalTime();
+  fireEvent.change(screen.getByLabelText(/Publication date and time/), { target: { value: local } });
+  const details = screen.getByRole('status', { name: 'Exact scheduling confirmation' });
+  expect(details).toHaveTextContent('Device timezone:');
+  expect(details).toHaveTextContent('Zernio timezone: Europe/Rome');
+  expect(details).toHaveTextContent(new Date(local).toISOString());
+});

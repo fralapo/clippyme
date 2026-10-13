@@ -184,12 +184,16 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
         </div>
 
         <div className="modal-body edit-grid">
-          {/* Live preview of the (representative) clip as it stands on disk. */}
+          {/* Only the saved artifact is shown. Staged effects do not modify its
+              pixels; the Apply action starts FFmpeg processing in the parent. */}
           <div className="clip" style={{ cursor: 'default' }}>
             <div className="clip-media" style={{ padding: 0, background: '#000' }}>
               {/* Captions are burned into the pixels by the subtitle layer — no separate text track exists. */}
               <video src={clipPreviewSrc(clip, initial)} controls playsInline preload="metadata"
                 style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 0 }} />
+              <div role="status" className="cm-small" style={{ padding: '6px 10px', position: 'relative', zIndex: 3, color: '#fff', background: '#151515cc' }}>
+                Current saved video · edits are not previewed live
+              </div>
               <div className="clip-top" style={{ padding: 10 }}>
                 <span className="score"><Icon n="flame" style={{ width: 12, height: 12 }} />{Math.round(clip.viral_score || 0)}</span>
               </div>
@@ -232,7 +236,7 @@ export function EditClipModal({ clip, idx, jobId, initial, appliedMode, preselec
 
         <div className="modal-foot">
           {willReprocess && (
-            <span className="edit-dirty">
+            <span className="edit-dirty" role="status" aria-live="polite">
               {bulk
                 ? `Will reprocess ${targetCount} clips in the background`
                 : `${reframeChanged ? 'Will re-render framing' : 'Will re-compose layers'} in the background`}
