@@ -6,6 +6,10 @@ ClippyMe is configured in two places:
   transcription provider, cookies, logo, fonts, Zernio and Twitch credentials.
   Stored in `data/config.json` (owner-only, git-ignored). This is the normal
   way to configure an installation.
+- **Browser credential retention** in Settings controls whether the dashboard
+  keeps its Gemini browser copy and optional LAN API token in persistent
+  browser storage or only for the current browser session. This preference
+  does not change provider keys stored in `data/config.json`.
 - **Environment variables** — everything below. Put them in a `.env` file in
   the repository root; [`.env.example`](../../.env.example) is the template
   for the commonly changed ones. Docker Compose reads `.env` for the values it

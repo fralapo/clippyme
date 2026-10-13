@@ -11,5 +11,11 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.test.{js,jsx}'],
     setupFiles: ['./src/test/setup.js'],
+    // Baseline lower than the last passing CI metrics; ratchet upward as
+    // client/Create/Settings/History integration branches gain coverage.
+    coverage: {
+      provider: 'v8',
+      thresholds: { statements: 65, branches: 60, functions: 60, lines: 70 },
+    },
   },
 })

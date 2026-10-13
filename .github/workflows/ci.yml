@@ -51,7 +51,7 @@ jobs:
           set -o pipefail
           pytest -m "not integration" -vv \
             --timeout=120 --timeout-method=thread \
-            --cov=clippyme --cov-report=term \
+            --cov=clippyme --cov-report=term --cov-fail-under=68 \
             --junitxml=pytest-report.xml \
             2>&1 | tee pytest-output.log
 
@@ -173,3 +173,57 @@ jobs:
 
       - name: Run integration suite in the backend image
         run: docker compose run --rm -u root backend sh -lc "pip install -q pytest && pytest -m integration -q"
+
+      - name: Validate CPU/production and NVIDIA overlay configurations
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+          docker compose -f docker-compose.yml -f docker-compose.gpu.yml -f docker-compose.prod.yml config --quiet
+
+      - name: Build production nginx dashboard and smoke-test proxy/health
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -f dashboard/Dockerfile.prod -t clippyme-frontend-prod ./dashboard
+          trap 'docker compose -f docker-compose.yml -f docker-compose.prod.yml down --remove-orphans' EXIT
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build --pull never
+          for attempt in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:5175/api/health | grep -q healthy; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:5175/api/health | grep -q healthy
+          curl -fsS http://127.0.0.1:5175/ | grep -q Content-Security-Policy
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+
+  browser-e2e:
+    name: Browser E2E (Playwright Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install pinned E2E harness (isolated; no lockfile mutation)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/clippyme-playwright" --ignore-scripts --no-audit --no-fund @playwright/test@1.60.0
+          mkdir -p node_modules/@playwright
+          ln -s "$RUNNER_TEMP/clippyme-playwright/node_modules/@playwright/test" node_modules/@playwright/test
+      - name: Install Chromium
+        run: '"$RUNNER_TEMP/clippyme-playwright/node_modules/.bin/playwright" install --with-deps chromium'
+      - name: Test browser navigation and mocked provider workflows
+        run: '"$RUNNER_TEMP/clippyme-playwright/node_modules/.bin/playwright" test --config=playwright.config.js'
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: dashboard/test-results/
+          retention-days: 7
+          if-no-files-found: ignore

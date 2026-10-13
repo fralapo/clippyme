@@ -68,13 +68,36 @@ Any other skip or failure is a real result.
 
 | Job | Steps |
 |-----|-------|
-| Backend | Ruff (bug-class rules above) → Bandit (`bandit -q -r src/clippyme -ll -ii`) → host suite with coverage (report only) and a 120 s per-test timeout → `pip-audit` on `requirements.lock` and on `requirements-runtime-tools.txt`. The test result is enforced after the audits, so one run reports everything. |
+| Backend | Ruff (bug-class rules above) → Bandit (`bandit -q -r src/clippyme -ll -ii`) → host suite with a 68% coverage minimum and a 120 s per-test timeout → `pip-audit` on `requirements.lock` and on `requirements-runtime-tools.txt`. The test result is enforced after the audits, so one run reports everything. |
 | Frontend | `npm ci` → lint → `npm test -- --coverage` → build |
 | Frontend audit | `npm audit --package-lock-only --audit-level=high`; any high or critical advisory fails |
 | Integration | Builds the backend image (CPU) and runs `pytest -m integration`; on pull requests, pushes to `main`, and manual dispatch |
+| Browser E2E | Chromium user journeys with deterministic backend/provider fixtures; no real AI calls or social posts |
+
+Frontend coverage minimums are 65% statements, 60% branches, 60% functions
+and 70% lines. The Docker integration job also checks production nginx and
+CPU/GPU Compose configuration; physical GPU execution remains a staging task.
 
 The `pip-audit` ignore list lives only in `ci.yml`; each entry is an advisory
 without a usable fix. See [dependencies.md](dependencies.md).
+
+## Browser journeys
+
+From `dashboard/`, after `npm ci`:
+
+```bash
+npm install --prefix ../tmp/playwright --ignore-scripts --no-audit --no-fund @playwright/test@1.60.0
+mkdir -p node_modules/@playwright
+ln -s ../../../tmp/playwright/node_modules/@playwright/test node_modules/@playwright/test
+../tmp/playwright/node_modules/.bin/playwright install chromium
+../tmp/playwright/node_modules/.bin/playwright test --config=playwright.config.js
+```
+
+The suite covers Create → Processing → Results, opening and cancelling Edit,
+Publish now, and History → Restore in a clean browser. It checks navigation
+and requests against fixtures; video rendering and real provider delivery
+need separate integration/staging validation. Failure traces are retained in
+`dashboard/test-results/` and uploaded by CI.
 
 ## Before you push
 
@@ -129,3 +152,42 @@ is false. The suite needs `ffprobe`/`ffmpeg`, so run it in the backend
 container. The Docker integration suite additionally generates two short
 synthetic MP4s to verify a real ASS karaoke burn and rejection of a broken
 landscape/no-audio export without external API keys.
+
+## Real-provider staging checks
+
+The `tests/live/test_providers_live.py` suite is excluded from normal CI
+unless explicitly enabled. Run it in a trusted environment with scoped,
+temporary staging keys and no production accounts:
+
+```bash
+CLIPPYME_LIVE_SMOKE=1 pytest -m live tests/live -q
+```
+
+Read-only checks exercise Deepgram project listing, ElevenLabs user discovery,
+Gemini model listing, and Zernio account listing. Optional **billable** checks
+exercise real Deepgram and ElevenLabs audio transcription and Gemini generation:
+
+```bash
+CLIPPYME_LIVE_SMOKE=1 CLIPPYME_LIVE_BILLABLE=1 \
+  CLIPPYME_LIVE_MEDIA_WAV=/path/to/small-voice.wav pytest -m live tests/live -q
+```
+
+Each provider test skips independently if its key is unset. Zernio is **never**
+asked to create a live social post by this suite: actual scheduling/publishing
+requires an explicit isolated account approval test. CI's deterministic
+provider mocks cannot establish real provider uptime, authorization or billing.
+No staging provider keys are stored in the repository or uploaded as CI
+artifacts. Results must be recorded after a real run, not inferred from skips.
+
+## Live Monitor observation
+
+Against an already running local instance with configured monitors:
+
+```bash
+python scripts/soak_live_monitor.py --hours 24 --output /path/to/monitor-soak.jsonl
+```
+
+The read-only probe uses `CLIPPYME_API_TOKEN` when configured and reports
+queue limits, unexpected stops, counter resets and increasing failed posts.
+It does not start monitors, inject disconnections or establish that recovery
+works. An empty or inactive monitor set is not evidence of a successful soak.
