@@ -8,7 +8,7 @@ import { LazyVideo } from '../../components/LazyVideo';
 import { clipVideoSrc } from '../../api/client';
 import { publishClip, getZernio } from '../../api/client';
 import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams, seedBannerParams } from '../../lib/seedClipParams';
-import { localDatePlus, manualScheduleIso, manualScheduleProblem, schedulePreview } from './scheduleDates';
+import { dateInTimezonePlus, manualScheduleIso, manualScheduleProblem, schedulePreview } from './scheduleDates';
 import { clearPublishIntent, publishIntent } from './publishIntent';
 import { useModalA11y } from '../../hooks/useModalA11y';
 
@@ -135,7 +135,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
       // clip even if an earlier composed artifact remains on disk.
       toggles,
       schedule_mode: mode,
-      ...(mode === 'auto' ? { start_date: localDatePlus(batchPos) } : {}),
+      ...(mode === 'auto' ? { start_date: dateInTimezonePlus(batchPos, zernio?.timezone) } : {}),
       ...(mode === 'manual' ? { scheduled_for: scheduledFor } : {}),
       timezone: zernio?.timezone || 'Europe/Rome',
       tiktok_settings: plats.tiktok && accounts.tiktok ? {
@@ -275,7 +275,7 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
                   </div>
                   {schedule && <p className="cm-small">
                     SmartScheduler timezone: {zernio?.timezone || 'Europe/Rome'}.
-                    {all ? ' Each clip starts on a different device-local calendar day.' : ' Automatic slots are selected in that timezone.'}
+                    {all ? ' Each clip starts on a different Zernio-local calendar day.' : ' Automatic slots are selected in that timezone.'}
                   </p>}
                   {schedule && !all && <div className="field">
                     <label className="field-label">

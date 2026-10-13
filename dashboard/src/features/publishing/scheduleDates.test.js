@@ -34,7 +34,7 @@ test('localDatePlus does not mutate the injected date', () => {
   assert.equal(base.getDate(), 15);
 });
 
-import { manualScheduleIso, manualScheduleProblem, schedulePreview } from './scheduleDates.js';
+import { manualScheduleIso, manualScheduleProblem, schedulePreview, dateInTimezonePlus } from './scheduleDates.js';
 
 test('manualScheduleIso converts the browser-local selection to an explicit UTC instant', () => {
   const local = '2030-06-12T17:45';
@@ -94,4 +94,11 @@ test('schedulePreview rejects invalid zones without breaking scheduling', () => 
   const x = schedulePreview('2030-07-20T15:30', 'not/a_timezone');
   assert.equal(x.providerTime, 'Invalid provider timezone');
   assert.ok(x.iso.endsWith('Z'));
+});
+
+test('automatic schedule starts on Zernio calendar day, not device day', () => {
+  const instant = new Date('2026-07-01T00:30:00Z');
+  assert.equal(dateInTimezonePlus(0, 'America/Los_Angeles', instant), '2026-06-30');
+  assert.equal(dateInTimezonePlus(1, 'America/Los_Angeles', instant), '2026-07-01');
+  assert.equal(dateInTimezonePlus(0, 'Europe/Rome', instant), '2026-07-01');
 });

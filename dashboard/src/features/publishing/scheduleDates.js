@@ -11,6 +11,19 @@ export function localDatePlus(addDays, now = new Date()) {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
+// Batch spacing uses Zernio's configured calendar date, not the device's:
+// a user scheduling at 01:00 in Rome for New York may still be on yesterday.
+export function dateInTimezonePlus(addDays, timeZone, now = new Date()) {
+  const zone = timeZone || 'Europe/Rome';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now).map((part) => [part.type, part.value]));
+  const stamp = new Date(Date.UTC(
+    Number(parts.year), Number(parts.month) - 1, Number(parts.day) + addDays,
+  ));
+  return stamp.toISOString().slice(0, 10);
+}
+
 // Browser-local datetime-local input -> an unambiguous UTC instant for Zernio.
 // The local clock can be non-existent (spring DST gap) or occur TWICE (autumn
 // DST fold). JavaScript Date silently selects the earlier instant for a fold;
