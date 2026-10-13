@@ -42,3 +42,15 @@ test('offline history visibly explains that records may be stale', () => {
     availableIds={null} onOpen={vi.fn()} onDelete={vi.fn()} onClear={vi.fn()} />);
   expect(screen.getByRole('status')).toHaveTextContent(/backend unavailable/i);
 });
+
+test('storage metrics are readable and low-space warning points to selective job deletion', () => {
+  const row = { jobId: 'one', status: 'complete', clipCount: 1, title: 'Video', timestamp: Date.now() };
+  render(<HistoryView history={[row]} availableIds={new Set(['one'])}
+    storageUsage={{ outputBytes: 1048576, dataBytes: 256, uploadsBytes: 1024,
+      diskFreeBytes: 2048, diskTotalBytes: 10485760, lowSpace: true,
+      jobs: [{ jobId: 'one', bytes: 1048576 }] }}
+    onOpen={vi.fn()} onDelete={vi.fn()} onClear={vi.fn()} />);
+  expect(screen.getByRole('status', { name: 'Disk storage usage' })).toHaveTextContent('1.0 MB');
+  expect(screen.getByRole('alert')).toHaveTextContent('Low disk space');
+  expect(screen.getByRole('button', { name: 'Delete job' })).toBeInTheDocument();
+});
