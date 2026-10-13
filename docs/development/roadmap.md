@@ -1,6 +1,6 @@
 # ClippyMe — development execution roadmap
 
-Updated: 2026-10-12. Status is based on actual GitHub code and pull requests,
+Updated: 2026-10-13. Status is based on actual GitHub code and pull requests,
 not unverified browser-chat history. This is a living **execution tracker**, not
 a source of runtime behavior: architecture docs, tests and code remain
 authoritative (see [CLAUDE.md](../../CLAUDE.md)).
@@ -29,11 +29,19 @@ authoritative (see [CLAUDE.md](../../CLAUDE.md)).
   legacy behavior.
 - [x] [#43](https://github.com/fralapo/clippyme/pull/43):
   reject ambiguous autumn DST times instead of silently selecting an instant.
-- [ ] [#45](https://github.com/fralapo/clippyme/pull/45):
+- [x] [#45](https://github.com/fralapo/clippyme/pull/45):
   status is **scheduled** or **submitted** after Zernio acceptance, not
   incorrectly **live**; supersedes conflicting [#44](https://github.com/fralapo/clippyme/pull/44).
-- [ ] Recheck the combined `main` CI (all four jobs) after merging the
-  above, rather than relying solely on isolated pull-request runs.
+- [x] Rechecked the combined `main` CI: [run #664](https://github.com/fralapo/clippyme/actions/runs/38370087530)
+  on [`cf824902`](https://github.com/fralapo/clippyme/commit/cf8249023c621a168a59c71ff1330f9284aca192)
+  passed all four jobs after [#52](https://github.com/fralapo/clippyme/pull/52).
+
+## Publishing follow-up releases already integrated
+
+- [x] [#47](https://github.com/fralapo/clippyme/pull/47): clear stale composed preview.
+- [x] [#50](https://github.com/fralapo/clippyme/pull/50): bounded publishing and safe modal closing.
+- [x] [#51](https://github.com/fralapo/clippyme/pull/51): restore publication state from server metadata.
+- [x] [#52](https://github.com/fralapo/clippyme/pull/52): exclude reprocessing clips from bulk publish.
 
 ## Product and reliability review candidates
 

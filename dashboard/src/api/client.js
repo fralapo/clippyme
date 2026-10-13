@@ -196,19 +196,23 @@ export async function deleteHistoryJob(jobId) {
   return res.json();
 }
 
-// Jobs that actually exist on disk right now. The History list is driven by
-// localStorage (survives rebuilds), but the clip files live in output/ — a
-// docker rebuild/cleanup can wipe them while the localStorage entry lingers.
-// Cross-checking against this set lets the UI flag entries that can no longer
-// be opened instead of failing silently on click. Returns a Set of jobIds;
-// empty Set on any error (treated as "unknown" → don't disable anything).
+// Canonical backend history; an unavailable backend must not erase the cache.
+export async function listHistoryJobs() {
+  const res = await apiFetch(getApiUrl('/api/history'));
+  if (!res.ok) {
+    const error = new Error(`History request failed: HTTP ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  const data = await res.json();
+  if (!Array.isArray(data?.jobs)) throw new Error('Malformed history response');
+  return data.jobs.filter((job) => job && typeof job.jobId === 'string');
+}
+
+// Compatibility helper used by legacy callers.
 export async function listBackendJobIds() {
-  try {
-    const res = await apiFetch(getApiUrl('/api/history'));
-    if (!res.ok) return null;
-    const data = await res.json();
-    return new Set((data.jobs || []).map((j) => j.jobId).filter(Boolean));
-  } catch { return null; }
+  try { return new Set((await listHistoryJobs()).map((job) => job.jobId)); }
+  catch { return null; }
 }
 
 // --- config / settings ----------------------------------------------------

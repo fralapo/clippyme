@@ -137,6 +137,23 @@ def load_runtime_state(output_dir: str) -> dict[str, Any] | None:
         return None
 
 
+def record_graceful_stop(output_dir: str) -> bool:
+    """Mark a stopped pipeline terminal without fabricating state for old jobs."""
+    path = runtime_path(output_dir)
+    with _lock_for(path):
+        try:
+            with open(path, encoding="utf-8") as handle:
+                state = json.load(handle)
+        except (OSError, ValueError):
+            return False
+        if not isinstance(state, dict) or state.get("schema") != SCHEMA_VERSION:
+            return False
+        state.update(stage="stopped", progress=100, resumable=False,
+                     detail="stopped by operator", updated_at=time.time())
+        _atomic_json(path, state)
+    return True
+
+
 def _has_orchestrator_url_arg(cmd: list | None) -> bool:
     """Recognize ``-u/--url`` only after the orchestrator module argument.
 

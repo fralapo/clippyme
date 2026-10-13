@@ -1,5 +1,6 @@
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { listHistoryJobs } from '../api/client';
 import { HISTORY_KEY, HISTORY_MAX_ITEMS } from '../lib/constants';
 import { readStoredJson, removeStoredValue, subscribeStoredJson, writeStoredJson } from '../lib/storage';
 
@@ -8,6 +9,26 @@ const normalize = (value) => (Array.isArray(value) ? value.filter((entry) => ent
 
 export function useHistory() {
   const [history, setHistoryState] = useState(() => normalize(readStoredJson(HISTORY_KEY, [], { validate: validHistory })));
+
+  const requestSequence = useRef(0);
+
+  // Backend is authoritative; browser storage is only an offline cache.
+  const refreshHistory = useCallback(async () => {
+    const request = ++requestSequence.current;
+    const jobs = await listHistoryJobs();
+    if (request !== requestSequence.current) return jobs;
+    setHistoryState((previous) => {
+      const cached = new Map(previous.map((entry) => [entry.jobId, entry]));
+      const synced = normalize(jobs.map((entry) => ({
+        ...cached.get(entry.jobId),
+        ...entry,
+        sourceType: entry.sourceType || cached.get(entry.jobId)?.sourceType,
+      }))).slice(0, HISTORY_MAX_ITEMS);
+      writeStoredJson(HISTORY_KEY, synced);
+      return synced;
+    });
+    return jobs;
+  }, []);
 
   useEffect(() => subscribeStoredJson(HISTORY_KEY, (value) => setHistoryState(normalize(value)), { validate: validHistory }), []);
 
@@ -48,5 +69,5 @@ export function useHistory() {
     removeStoredValue(HISTORY_KEY);
   }, [purgeJobStorage]);
 
-  return { history, setHistory: replaceHistory, saveToHistory, deleteFromHistory, clearHistory };
+  return { history, setHistory: replaceHistory, saveToHistory, deleteFromHistory, clearHistory, refreshHistory };
 }
