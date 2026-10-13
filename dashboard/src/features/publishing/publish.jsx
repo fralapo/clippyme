@@ -94,7 +94,13 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   // Guard the post-publish setTimeout so it never calls setState after the
   // modal has been unmounted (e.g. parent closes it while the delay is in flight).
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // React.StrictMode replays effect setup/cleanup in development. Reset the
+  // guard on each setup; otherwise the 500ms completion timer refuses to
+  // transition from uploading to done even after Zernio accepted the post.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   useEffect(() => {
     const warnOnUnload = (event) => {
       if (!inFlightRef.current) return;

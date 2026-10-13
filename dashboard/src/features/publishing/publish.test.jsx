@@ -1,6 +1,7 @@
 // The immediate-publish button must never inherit the default auto-schedule
 // mode from a React state update in the same click handler.
 import process from 'node:process';
+import { StrictMode } from 'react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { PublishModal } from './publish.jsx';
@@ -239,4 +240,16 @@ test('close button, backdrop and Escape cannot hide in-flight social uploads', a
   await waitFor(() => expect(screen.getByRole('button', { name: 'Done' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Done' }));
   expect(onClose).toHaveBeenCalledTimes(1);
+});
+
+test('StrictMode effect replay does not strand a confirmed post on uploading', async () => {
+  render(<StrictMode>
+    <PublishModal clips={clips.slice(0, 1)} jobId="strict-publish" clipStates={{}}
+      preselections={{}} onClose={vi.fn()} onPublished={vi.fn()} pushToast={vi.fn()} />
+  </StrictMode>);
+  const button = screen.getByRole('button', { name: 'Publish now' });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+  await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByText('Clip submitted')).toBeInTheDocument());
 });
