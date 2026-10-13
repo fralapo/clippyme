@@ -6,7 +6,6 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPECTED = {
     "CVE-2025-3000",
     "PYSEC-2026-1805",
-    "PYSEC-2026-2132",
     "PYSEC-2026-3447",
 }
 

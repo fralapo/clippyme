@@ -25,6 +25,7 @@ host-tests = [
     "fastapi==0.135.3",
     "starlette>=1.0.1",  # CVE-2026-48710 (BadHost auth bypass) fixed in 1.0.1
     "uvicorn==0.42.0",
+    "click>=8.3.3,<9",  # PYSEC-2026-2132 (click.edit command injection)
     "python-multipart==0.0.31",
     "yt-dlp>=2026.6.9,<2027",  # CVE-2026-50023 / CVE-2026-50574 fixed in 2026.6.9
     "google-genai>=1.70.0,<2.0.0",
