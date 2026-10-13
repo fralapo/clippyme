@@ -72,7 +72,6 @@ jobs:
           --ignore-vuln CVE-2025-3000
           --ignore-vuln CVE-2026-24049
           --ignore-vuln PYSEC-2026-1805
-          --ignore-vuln PYSEC-2026-2132
           --ignore-vuln PYSEC-2026-3447
 
       - name: Dependency vulnerability scan (runtime tools)
