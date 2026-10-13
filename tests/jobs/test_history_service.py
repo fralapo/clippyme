@@ -116,3 +116,44 @@ def test_scan_history_surfaces_published_records(tmp_path):
     assert out[0]["clips"][0]["published"] == [{"platforms": ["tiktok"], "post_id": "p1"}]
     assert out[0]["clips"][1]["published"] == []
     assert out[0]["publishedCount"] == 1
+
+
+def test_scan_history_reopens_stopped_jobs_after_restart(tmp_path):
+    from clippyme.jobs.runtime_state import RuntimeState, load_runtime_state, record_graceful_stop
+
+    job_dir = _make_job(str(tmp_path), VALID_UUID, clips=[{"start": 0, "end": 15}])
+    runtime = RuntimeState(job_dir, job_id=VALID_UUID)
+    runtime.start("reframing")
+    assert record_graceful_stop(job_dir)
+    assert load_runtime_state(job_dir)["stage"] == "stopped"
+    assert load_runtime_state(job_dir)["resumable"] is False
+    # After a restart jobs={} and the active-only journal holds no stopped job.
+    out = hs.scan_history(str(tmp_path))
+    assert out[0]["status"] == "stopped"
+    assert out[0]["clipCount"] == 1
+    # Live, authoritative worker state wins over disk while job is running.
+    active = hs.scan_history(str(tmp_path), {VALID_UUID: "processing"})
+    assert active[0]["status"] == "processing"
+
+
+def test_scan_history_counts_published_clips_removed_by_monitor(tmp_path):
+    clips = [
+        {"start": 0, "end": 10, "published": [{"post_id": "abc"}],
+         "deleted_after_publish": True},
+        {"start": 10, "end": 20},
+    ]
+    job_dir = _make_job(str(tmp_path), VALID_UUID, clips=clips)
+    os.remove(os.path.join(job_dir, "myvideo_clip_1.mp4"))
+    out = hs.scan_history(str(tmp_path))
+    assert out[0]["clipCount"] == 1
+    assert out[0]["publishedCount"] == 1
+    assert len(out[0]["clips"]) == 1
+
+
+def test_record_graceful_stop_does_not_create_runtime_for_legacy_jobs(tmp_path):
+    from clippyme.jobs.runtime_state import record_graceful_stop, runtime_path
+
+    job_dir = _make_job(str(tmp_path), VALID_UUID, clips=[{"start": 0, "end": 10}])
+    assert record_graceful_stop(job_dir) is False
+    assert not os.path.exists(runtime_path(job_dir))
+    assert hs.scan_history(str(tmp_path))[0]["status"] == "complete"

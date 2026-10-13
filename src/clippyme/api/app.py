@@ -746,7 +746,8 @@ async def reframe_clip(job_id: str, clip_index: int, req: ReframeRequest, reques
 async def list_history(request: Request):
     """Scan output/ for past jobs with metadata files."""
     require_trusted_config_request(request)
-    return {"jobs": await asyncio.to_thread(scan_history, OUTPUT_DIR)}
+    statuses = {job_id: job.get("status") for job_id, job in jobs.items()}
+    return {"jobs": await asyncio.to_thread(scan_history, OUTPUT_DIR, statuses)}
 
 @app.delete("/api/history/{job_id}")
 async def delete_history(job_id: str, request: Request):

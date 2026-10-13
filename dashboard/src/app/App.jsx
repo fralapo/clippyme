@@ -15,7 +15,7 @@ import { HistoryView } from '../features/history/history';
 import { SettingsView, ApiKeyModal } from '../features/settings/settings';
 import { LiveMonitorView } from '../features/live-monitor/live';
 import { EditClipModal } from '../features/clip-editor/editClipModal';
-import { optsToPreselections, restoreJob, listBackendJobIds, deleteHistoryJob, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from '../api/client';
+import { optsToPreselections, restoreJob, deleteHistoryJob, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from '../api/client';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from '../features/create/presets';
 import { HOOK_STYLE_DEFAULT } from '../lib/uiOptions';
 import { clipStateToParams, buildBulkPlan } from '../features/clip-editor/bulkApply';
@@ -123,7 +123,8 @@ export default function App() {
   // reality so jobs wiped by a rebuild are flagged instead of dead-clicking.
   const [availableJobIds, setAvailableJobIds] = useState(null);
 
-  const { history, saveToHistory, deleteFromHistory } = useHistory();
+  const [historyOffline, setHistoryOffline] = useState(false);
+  const { history, saveToHistory, deleteFromHistory, refreshHistory } = useHistory();
   const { cookiesConfigured, setCookiesConfigured } = useBackendStatus();
   const { states: clipStates, updateClip: updateClipState } = useClipStates(jobId);
 
@@ -143,12 +144,19 @@ export default function App() {
   };
 
   useEffect(() => { if (apiKey) localStorage.setItem('gemini_key', apiKey); }, [apiKey]);
-  // Refresh the on-disk job set whenever the History tab opens, so a job whose
-  // files were removed (rebuild/cleanup) shows as unavailable rather than
-  // failing silently when clicked.
+  const syncHistory = useCallback(async () => {
+    try {
+      const jobs = await refreshHistory();
+      setAvailableJobIds(new Set(jobs.map((item) => item.jobId)));
+      setHistoryOffline(false);
+    } catch {
+      setAvailableJobIds(null);
+      setHistoryOffline(true);
+    }
+  }, [refreshHistory]);
   useEffect(() => {
-    if (tab === 'history' && !viewingHistory) listBackendJobIds().then(setAvailableJobIds);
-  }, [tab, viewingHistory]);
+    if (tab === 'history' && !viewingHistory) syncHistory();
+  }, [tab, viewingHistory, syncHistory]);
   useSessionPersistence({ status, jobId, results, processingMedia, activeTab: tab, preselections });
 
   const dismissToast = useCallback((id) => setToasts((items) => items.filter((item) => item.id !== id)), []);
@@ -220,7 +228,7 @@ export default function App() {
       else pushToast('error', 'Delete failed — could not remove the files');
       return;
     }
-    listBackendJobIds().then(setAvailableJobIds);
+    syncHistory();
   };
 
   const onClearHistory = async () => {
@@ -239,7 +247,7 @@ export default function App() {
     if (removed === jobs.length) pushToast('info', 'History cleared');
     else if (removed === 0) pushToast('error', 'Could not delete jobs — is the backend up?');
     else pushToast('warn', `Deleted ${removed}/${jobs.length} jobs — the rest are still processing`);
-    listBackendJobIds().then(setAvailableJobIds);
+    syncHistory();
   };
 
   useJobPolling({
@@ -375,8 +383,8 @@ export default function App() {
       // entry so the phantom row stops teasing a click that can never open.
       if (err?.status === 404 || err?.status === 400) {
         deleteFromHistory(h.jobId);
-        setAvailableJobIds((prev) => { if (!prev) return prev; const n = new Set(prev); n.delete(h.jobId); return n; });
-        pushToast('error', 'Clip files were removed (rebuild/cleanup) — entry cleared');
+        syncHistory();
+        pushToast('error', 'Clip files are no longer available for this job');
       } else {
         pushToast('error', 'Could not restore this job');
       }
@@ -462,7 +470,7 @@ export default function App() {
       {tab === 'live' && <LiveMonitorView pushToast={pushToast} />}
 
       {tab === 'history' && !viewingHistory && (
-        <HistoryView history={history} availableIds={availableJobIds}
+        <HistoryView history={history} availableIds={availableJobIds} offline={historyOffline}
           onOpen={openHistoryJob}
           onDelete={onDeleteHistoryJob}
           onClear={onClearHistory} />
@@ -484,7 +492,7 @@ export default function App() {
 
       {publishClips && (
         <PublishModal clips={publishClips} jobId={jobId} clipStates={clipStates} preselections={preselections}
-          onClose={() => setPublishClips(null)}
+          onClose={() => { setPublishClips(null); syncHistory(); }}
           onPublished={(idx, mode) => updateClipStateT(idx, {
             publishedAt: Date.now(),
             publicationStatus: mode === 'now' ? 'submitted' : 'scheduled',

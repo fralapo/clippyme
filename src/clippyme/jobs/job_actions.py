@@ -7,6 +7,7 @@ import shutil
 from clippyme.jobs import job_control
 from clippyme.core.errors import ConflictError, ValidationError
 from clippyme.jobs.job_results import load_partial_result
+from clippyme.jobs.runtime_state import record_graceful_stop
 
 logger = logging.getLogger("clippyme")
 
@@ -117,6 +118,15 @@ async def stop_job_action(job_id: str, job: dict) -> dict:
         partial = await asyncio.to_thread(load_partial_result, job_id, output_dir)
         if partial:
             job["result"] = partial
+
+    # The active-only journal forgets terminal states after restart;
+    # persist the operator stop after killing the subprocess tree.
+    output_dir = job.get("output_dir")
+    if output_dir:
+        try:
+            await asyncio.to_thread(record_graceful_stop, output_dir)
+        except OSError:
+            logger.warning("Unable to persist stop marker for %s", job_id, exc_info=True)
 
     n = len((job.get("result") or {}).get("clips", []) or [])
     msg = (
