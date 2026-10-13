@@ -35,9 +35,7 @@ past dates, nonexistent DST-gap times and repeated DST-fallback times are
 rejected instead of silently selecting one of two possible instants. The
 exact-time input uses the operator's **device-local** timezone, not the
 configured SmartScheduler/Zernio timezone; the API receives an explicit
-UTC timestamp. The modal previews the same instant in device-local time,
-configured Zernio time, and UTC before scheduling; provider timezone changes
-display only, never the UTC value sent to the API. Batch publishing supports `now` and `auto` only: in `auto`
+UTC timestamp. The modal displays the same instant in the device timezone, Zernio timezone, and UTC before submission. Automatic batch days are anchored to the Zernio timezone rather than the device timezone. Batch publishing supports `now` and `auto` only: in `auto`
 mode each clip starts its slot search one day later than the previous one
 to reduce daily-limit collisions. Zernio error bodies are passed through
 so the dashboard can show a platform's daily-limit 429.
@@ -72,6 +70,20 @@ Rules:
   `(job_id, clip_index, intent_id)` and answers a repeat of an intent already on
   the clip's publish record without posting again. No `intent_id` means no key:
   every request is a new post.
+
+## Manual uncertain-outcome reconciliation
+
+Before making a provider call, the server atomically records a pending manual
+intent in `.clippyme_publish_intents.json` (owner-only, not served through
+`/videos`). The same intent resumes with the same Zernio Idempotency-Key.
+Once accepted, a durable receipt is written independently of the clip metadata;
+a retry repairs missing metadata and verifies a known post ID with
+`GET /v1/posts/{postId}` without uploading again. Unknown outcomes older than
+23 hours are *blocked*, not blindly resubmitted outside Zernio's 24-hour
+replay guarantee. When no post ID exists, an exact remote match is impossible:
+the operator must inspect Zernio before deliberately creating a new intent.
+Definitive client-side rejections drop the pending marker. A 5xx, timeout or
+in-progress 409 retains it.
 
 ## Delivery guarantee
 

@@ -94,7 +94,12 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   // Guard the post-publish setTimeout so it never calls setState after the
   // modal has been unmounted (e.g. parent closes it while the delay is in flight).
   const mountedRef = useRef(true);
-  useEffect(() => () => { mountedRef.current = false; }, []);
+  // StrictMode replays effects: reset on setup or the completion timer
+  // remains blocked after a successful publish.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   useEffect(() => {
     const warnOnUnload = (event) => {
       if (!inFlightRef.current) return;

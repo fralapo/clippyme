@@ -77,3 +77,30 @@ the [configuration reference](reference/configuration.md).
 | API calls return 403 when the dashboard is opened from another device | Its address is not in `ALLOWED_ORIGINS`, or the containers were not recreated (`docker compose down`, then `up -d`) after editing `.env`; see [Network exposure](#network-exposure). |
 | Smart Cut result looks like a plain cut | The auto-editor binary is missing or failed; ClippyMe fell back to ffmpeg. Rebuild the image. |
 | Permission denied on `data/` | Restart the backend container; the entrypoint repairs ownership on start. |
+
+## Offline backup and restore
+
+ClippyMe stores configuration, stream-monitor state/journal and video output
+on disk. Back up `.env`, `data/`, `uploads/`, and `output/` together so
+a restored job and its media remain consistent. **Do not back up or restore
+while the backend is running.** First finish/stop active jobs, verify the
+Live Monitor is idle, and stop the services yourself. The utility deliberately
+does not stop jobs or services, and requires an explicit offline confirmation.
+The archive contains secrets and cookies: it is created mode `0600` and
+must be stored securely outside the ClippyMe storage folders.
+
+```bash
+docker compose ps
+docker compose stop backend frontend
+python scripts/backup_clippyme.py backup --root . --archive ../clippyme-backup.tar.gz --confirm-stopped
+# Restore only into a fresh checkout, without existing data/output/uploads/.env:
+python scripts/backup_clippyme.py restore --root . --archive ../clippyme-backup.tar.gz --confirm-stopped
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+The tool refuses symlinks, unsafe archive members, missing offline confirmation,
+overwriting existing state, and malformed archives. It verifies SHA-256 hashes
+before placing the restored folders. After restore, check the saved connections,
+job history, and live-monitor status *before* enabling unattended publishing.
+The dashboard may display disk usage and the History delete action removes
+specific jobs; automatic job retention remains disabled by default.

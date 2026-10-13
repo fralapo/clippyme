@@ -226,6 +226,15 @@ class ZernioClient:
             return data.get("accounts", []) or []
         return data or []
 
+    def get_post(self, post_id: str) -> dict:
+        """GET /v1/posts/{postId}; only exact IDs, never a fuzzy title lookup."""
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", str(post_id)):
+            raise ValueError("Invalid Zernio post ID")
+        result = self._request("GET", f"/posts/{post_id}")
+        if not isinstance(result, dict):
+            raise ZernioError("Malformed post lookup response")
+        return result
+
     def list_scheduled_posts(self, date_from: str, date_to: str, limit: int = 100) -> list[dict]:
         """GET /v1/posts?status=scheduled&dateFrom&dateTo — for collision check."""
         data = self._request(
