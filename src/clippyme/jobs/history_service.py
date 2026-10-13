@@ -7,6 +7,7 @@ import re
 from typing import List
 
 from clippyme.clips.clip_resolve import clip_filename_for
+from clippyme.jobs.runtime_state import load_runtime_state
 
 logger = logging.getLogger("clippyme")
 
@@ -41,7 +42,7 @@ def is_valid_job_id(job_id) -> bool:
     return bool(_JOB_ID_RE.match(job_id))
 
 
-def scan_history(output_dir: str) -> List[dict]:
+def scan_history(output_dir: str, job_statuses: dict | None = None) -> List[dict]:
     """Walk ``output_dir`` and build a history list of completed jobs.
 
     Returns a list sorted by directory mtime descending. Each entry has the
@@ -63,8 +64,18 @@ def scan_history(output_dir: str) -> List[dict]:
                 with open(meta_files[0], "r") as f:
                     data = json.load(f)
                 clips = data.get("shorts", [])
+                if not isinstance(clips, list):
+                    continue
+                # Count all accepted posts, including monitor clips removed
+                # from disk by delete_after_publish.
+                published_count = sum(
+                    1 for clip in clips
+                    if isinstance(clip, dict) and clip.get("published")
+                )
                 clip_files = []
                 for i, clip in enumerate(clips):
+                    if not isinstance(clip, dict) or clip.get("deleted_after_publish"):
+                        continue
                     clip_filename = clip_filename_for(meta_files[0], clip, i)
                     clip_path = os.path.join(job_dir, clip_filename)
                     if os.path.exists(clip_path):
@@ -87,10 +98,18 @@ def scan_history(output_dir: str) -> List[dict]:
                     .replace("_metadata.json", "")
                     .replace("_", " ")
                 )
-                published_count = sum(1 for c in clip_files if c["published"])
+                runtime = load_runtime_state(job_dir) or {}
+                stage = runtime.get("stage")
+                # Only persist terminal status; active status comes from the
+                # application's in-memory owner. Older unmarked clips remain
+                # restorable as complete, including legacy partial jobs.
+                status = (job_statuses or {}).get(entry) or (
+                    stage if stage in {"stopped", "failed"} else "complete"
+                )
                 results.append(
                     {
                         "jobId": entry,
+                        "status": status,
                         "timestamp": int(dir_mtime * 1000),
                         "clipCount": len(clip_files),
                         "clips": clip_files,

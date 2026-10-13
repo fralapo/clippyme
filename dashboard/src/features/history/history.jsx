@@ -3,10 +3,11 @@ import { Icon, Btn, Badge, Panel } from '../../components/primitives';
 import { Hero } from '../../components/headers';
 import { relTime } from '../../lib/relTime';
 
-export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }) {
+export function HistoryView({ history, availableIds, offline = false, onOpen, onDelete, onClear }) {
   if (!history.length) {
     return (
       <div className="container narrow fade-in">
+        {offline && <p role="status">Backend unavailable — no cached jobs to show.</p>}
         <Hero eyebrow="History" line1="Nothing here yet." sub="Every job you run lands here, ready to reopen, re-export, or publish again." />
         <div className="empty">
           <div className="ei"><Icon n="clock" /></div>
@@ -18,6 +19,7 @@ export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }
   }
   return (
     <div className="container narrow fade-in">
+      {offline && <p role="status">Backend unavailable — showing cached history. Actions need a connection.</p>}
       <div className="results-head" style={{ marginBottom: 18 }}>
         <h2>History</h2>
         <Badge tone="out">{history.length} jobs</Badge>
@@ -32,7 +34,7 @@ export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }
           // An entry whose files were wiped by a rebuild is shown muted + flagged
           // "files removed" instead of looking clickable and dead-ending.
           const onDisk = !availableIds || availableIds.has(h.jobId);
-          const ok = h.status === 'complete' && onDisk;
+          const ok = ['complete', 'completed', 'stopped'].includes(h.status) && onDisk && (h.clipCount || 0) > 0;
           const removed = !!availableIds && !availableIds.has(h.jobId);
           return (
             <div className="hrow" key={h.jobId}
@@ -56,8 +58,9 @@ export function HistoryView({ history, availableIds, onOpen, onDelete, onClear }
                   <Badge tone="teal" icon="send">{h.publishedCount} published</Badge>
                 )}
                 {removed ? <Badge tone="out" icon="triangle-alert">unavailable</Badge>
-                  : h.status === 'complete' ? <Badge tone="teal" icon="check">complete</Badge>
-                    : h.status === 'error' ? <Badge tone="danger" icon="triangle-alert">error</Badge>
+                  : ['complete', 'completed'].includes(h.status) ? <Badge tone="teal" icon="check">complete</Badge>
+                    : h.status === 'stopped' ? <Badge tone="amber" icon="square">stopped</Badge>
+                      : ['error', 'failed'].includes(h.status) ? <Badge tone="danger" icon="triangle-alert">error</Badge>
                       : <Badge tone="amber" icon="clock">{h.status || 'pending'}</Badge>}
                 <button type="button" className="mini" title="Delete" aria-label="Delete job" onClick={(e) => { e.stopPropagation(); onDelete(h.jobId); }}><Icon n="trash-2" /></button>
                 {ok && <Icon n="chevron-right" style={{ width: 18, height: 18, color: 'var(--fg-4)' }} />}
