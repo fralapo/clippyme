@@ -3,7 +3,9 @@
 # time, then run `pytest -m integration`): bump torch>=2.4 + matching
 # torchvision, rebuild the CUDA image, verify YOLO + MediaPipe load and a clip
 # reframes correctly before committing the new pin.
-scenedetect==0.6.7.1
+# 0.7.2 permits patched Click >=8.3.3; the old 0.6.7.1 required <8.3.
+# Scene/timecode API changed in 0.7: Docker integration must validate behavior.
+scenedetect==0.7.2
 ultralytics==8.4.33
 torch==2.11.0
 torchvision==0.26.0
