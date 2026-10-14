@@ -73,9 +73,15 @@ remain authoritative (see [CLAUDE.md](../../CLAUDE.md)).
 - [x] Add offline catalog, auth, pagination, JSON-output, usage-normalization,
   request-security and UI regression tests. Record the API contracts in
   [the provider integration note](llm-providers.md).
-- [ ] Run catalog and analysis smoke checks against real provider accounts.
+- [ ] Optional operator check: run catalog and analysis smoke checks against
+  provider accounts configured on the operator's self-hosted installation.
   Local tests stub HTTP; model generation can incur provider charges, so no
-  live call is claimed here.
+  live call is needed for local code verification and none is claimed here.
+  Rechecked on 2026-10-14: credentials are present on this host but were not
+  used. The focused local LLM request/service tests passed (40 tests across
+  `test_llm_service.py`, `test_gemini_service.py` and `test_gemini_request.py`);
+  both provider-catalog API route tests also passed in the local Docker
+  container.
 
 ## Product and reliability review candidates
 
@@ -107,11 +113,13 @@ user-visible gap. One independently testable change per PR.
   discard state in job metadata. Manual publish fails closed until approval;
   edits revoke approval, failures expose a retry, and the Live Monitor path
   remains automatic. API/UI and Axe coverage added.
-- [ ] Evaluate quality by representative talking-head, podcast, gameplay,
-  screen-capture and no-face samples. Automated media-signal quality does not
-  prove editorial coherence, retention value or caption legibility. The
-  [review rubric](editorial-quality-review.md) is ready; representative media
-  was not present in the checkout, so no editorial pass is claimed.
+- [ ] Optional operator review: evaluate quality with authorized,
+  representative talking-head, podcast, gameplay, screen-capture and no-face
+  samples. Automated media-signal quality does not prove editorial coherence,
+  retention value or caption legibility. The
+  [review rubric](editorial-quality-review.md) is ready. Rechecked on
+  2026-10-14: no authorized representative samples were supplied; the test
+  tree contains no source-media fixtures, so no editorial pass is claimed.
 - [x] Optional, categorized approval/rejection feedback now uses bounded local
   storage: only an explicitly selected reason, coarse score and rounded
   duration are retained; repeated selection-relevant reasons add a restrained
@@ -141,26 +149,30 @@ user-visible gap. One independently testable change per PR.
   single-instance deployment; multi-process/shared-storage operation remains
   outside the current contract.
 
-### P4 — staging acceptance still required
+### P4 — optional on-device checks (no staging environment required)
 
-- [ ] Run read-only provider checks with scoped staging credentials, including
-  current LLM catalog calls. Generation and audio checks may be billable; no
-  live provider call or social post is claimed in the local test suite.
-- [ ] Run the Live Monitor soak against an already configured local instance
-  for 24 hours and review the JSONL report. Rechecked locally on 2026-10-14:
-  ports 8000 and 5175 are closed; the persisted monitor record has no config,
-  so it is not an already configured/running monitor. CI verifies the anomaly
-  detector, but does not establish live-stream recovery or sustained operation.
+- [ ] Optional operator check: run read-only provider checks against the
+  accounts configured on the self-hosted installation, including current LLM
+  catalog calls. Generation and audio checks may be billable; local tests use
+  deterministic HTTP fixtures. Rechecked on 2026-10-14: host credentials were
+  not used and no provider request or social post was made.
+- [ ] Optional operator check: run the Live Monitor soak against an already
+  configured local instance for 24 hours and review the JSONL report. Rechecked
+  locally on 2026-10-14: ports 8000 and 5175 are closed; the persisted monitor
+  record has no config, so there is no configured/running monitor to observe.
+  CI verifies the anomaly detector, but does not establish live-stream recovery
+  or sustained operation.
 - [x] Simulated the NVIDIA deployment contract on the host by parsing
   `docker-compose.gpu.yml` and asserting its NVIDIA build runtime, device
   driver and GPU capability. Physical GPU execution is explicitly skipped per
   user request; this static check does not claim a real CUDA workload ran.
 
-## Local verification — 2026-10-14
+## Earlier local verification — 2026-10-14 (before `0c706693`)
 
-GitHub Actions was not used because the repository's free Actions credits are
-exhausted. The current local checkout passed the CI-equivalent checks
-available on this host:
+This records the previous checkout and host, before the current follow-up
+branch. GitHub Actions was not used because the repository's free Actions
+credits were exhausted. That checkout passed the CI-equivalent checks then
+available on that host:
 
 - Backend host suite: **1,778 passed, 10 skipped, 159 deselected**, with
   **71.09% coverage** against the 68% CI minimum.
@@ -185,13 +197,40 @@ available on this host:
   or the CI container is required to verify those cases.
 - `git diff --check` passed.
 
+### Recheck on `codex/local-roadmap-follow-up` — 2026-10-14
+
+The local environment differs from the earlier verification above:
+
+- Ruff and ESLint passed. The dashboard suite passed: **374 tests across 39
+  files**. The Vite production build passed; it emitted runtime font URL
+  warnings for `/fonts/*.ttf`.
+- Focused multi-provider LLM request/service tests passed: **40 passed**.
+- The two `/api/config/models` route tests passed in the Docker Linux
+  container. The same focused route selection stalled in the Windows host
+  runner, so the container result is the verified API-route result.
+- The focused Docker/FFmpeg libass integration test rendered every subtitle
+  preset successfully: **1 passed in 7.69 s**. Docker, OpenCV, PyTorch,
+  MediaPipe and FFmpeg's `ass`/`subtitles` filters are available on this host.
+  The full integration run was interrupted during the expensive 1080×1920
+  render matrix; it produced no failure summary and is **not** counted as a
+  pass.
+- The full host suite was attempted but did not reach a summary. This virtualenv
+  lacks `pytest-timeout`, which CI uses for its 120-second per-test limit;
+  PyPI DNS access was unavailable, so the plugin could not be installed. The
+  host run made no progress beyond seven reported tests before it was stopped.
+  No full host-suite result is claimed for this recheck.
+- Rechecked the optional operator checks: provider credentials are present but
+  were not used; ports 8000 and 5175 have no listeners and the persisted monitor
+  record has no config. No live provider calls, posts or 24-hour soak were
+  performed. No authorized representative media was supplied. The NVIDIA
+  contract remains statically verified only; this host has no GPU.
+
 The full Docker integration suite and production proxy smoke test were not run
-because neither Docker nor Podman is installed. OpenCV/PyTorch are also absent
-from the host Python environment, so the CV-dependent pipeline tests could not
-be substituted with a host run. Provider generation was tested with
-deterministic HTTP fixtures; real-account API calls remain a staging check
-because they need credentials and some can bill. GitHub Actions and PR merge
-remain deferred while its credits are exhausted.
+because the full integration run was interrupted during its render matrix.
+Provider generation was tested with deterministic HTTP fixtures; real-account
+API calls are optional checks on an operator's self-hosted installation and
+some may incur charges. GitHub Actions and PR merge remain deferred while its
+credits are exhausted.
 
 ## Execution contract
 
