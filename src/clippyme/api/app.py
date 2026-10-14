@@ -37,6 +37,8 @@ from pydantic import ValidationError
 from clippyme.jobs.job_results import build_main_cmd, canonical_reframe_mode
 from clippyme.editing.compose import compose_layers
 from clippyme.clips.reframe_service import run_reframe
+from clippyme.clips.clip_locks import clip_lock
+from clippyme.clips.review_service import set_clip_review
 from clippyme.core.errors import ClippyMeError
 from clippyme.jobs.uploads import stream_upload_within_limit, FileTooLarge
 from clippyme.clips.smartcut_service import run_smart_cut
@@ -51,6 +53,7 @@ from clippyme.publishing.publish_service import publish_clip_flow
 from clippyme.api.schemas import (
     BatchRequest,
     ComposeRequest,
+    ClipReviewRequest,
     EditAIRequest,
     LiveMonitorPublishingRequest,
     LiveMonitorStartRequest,
@@ -75,6 +78,7 @@ from clippyme.jobs.job_worker import make_workers
 from clippyme.jobs.history_service import scan_history, is_valid_job_id
 from clippyme.jobs.storage_usage import storage_overview
 from clippyme.api.config_routes import router as config_router
+from clippyme.pipeline.analysis.llm_service import PROVIDER_KEYS, PROVIDERS
 
 # Constants
 UPLOAD_DIR = "uploads"
@@ -304,9 +308,7 @@ async def process_endpoint(
     require_trusted_config_request(request)
     # ~20 single-job submissions/min per client; compute-heavy, so throttle.
     enforce_rate_limit(request, "process", capacity=20, refill_per_sec=20 / 60)
-    api_key = request.headers.get("X-Gemini-Key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    legacy_api_key = request.headers.get("X-Gemini-Key")
 
     # Handle JSON body via ProcessRequest for URL payloads. Pydantic
     # enforces the reframe_mode regex and the instructions length cap
@@ -372,6 +374,26 @@ async def process_endpoint(
         except ValidationError as exc:
             raise HTTPException(status_code=400, detail=exc.errors())
 
+    config = await asyncio.to_thread(load_persistent_config)
+    llm_provider = str(config.get("LLM_PROVIDER") or "gemini").lower()
+    if llm_provider not in PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported analysis provider in Settings")
+    api_key = legacy_api_key if llm_provider == "gemini" else None
+    api_key = api_key or config.get(PROVIDER_KEYS[llm_provider]) or os.environ.get(PROVIDER_KEYS[llm_provider])
+    if not skip_analysis and not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No API key configured for the selected {llm_provider.title()} provider",
+        )
+    selected_model = model or config.get("LLM_MODEL") or (
+        config.get("GEMINI_MODEL") if llm_provider == "gemini" else None
+    )
+    if not skip_analysis and not selected_model:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No analysis model selected for {llm_provider.title()}. Choose one in Settings.",
+        )
+
     if not url and not file:
         raise HTTPException(status_code=400, detail="Must provide URL or File")
 
@@ -380,7 +402,8 @@ async def process_endpoint(
     os.makedirs(job_output_dir, exist_ok=True)
     
     env = os.environ.copy()
-    env["GEMINI_API_KEY"] = api_key
+    if api_key and llm_provider == "gemini":
+        env["GEMINI_API_KEY"] = api_key
 
     input_path = None
     if not url:
@@ -457,9 +480,26 @@ async def batch_process(req: BatchRequest, request: Request):
     require_trusted_config_request(request)
     # Each batch can enqueue up to 20 jobs, so limit batch calls more tightly.
     enforce_rate_limit(request, "batch", capacity=10, refill_per_sec=10 / 60)
-    api_key = request.headers.get("X-Gemini-Key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Key header")
+    legacy_api_key = request.headers.get("X-Gemini-Key")
+    config = await asyncio.to_thread(load_persistent_config)
+    llm_provider = str(config.get("LLM_PROVIDER") or "gemini").lower()
+    if llm_provider not in PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported analysis provider in Settings")
+    api_key = legacy_api_key if llm_provider == "gemini" else None
+    api_key = api_key or config.get(PROVIDER_KEYS[llm_provider]) or os.environ.get(PROVIDER_KEYS[llm_provider])
+    if not req.skip_analysis and not api_key:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No API key configured for the selected {llm_provider.title()} provider",
+        )
+    selected_model = req.model or config.get("LLM_MODEL") or (
+        config.get("GEMINI_MODEL") if llm_provider == "gemini" else None
+    )
+    if not req.skip_analysis and not selected_model:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No analysis model selected for {llm_provider.title()}. Choose one in Settings.",
+        )
 
     batch_jobs = []
 
@@ -493,7 +533,8 @@ async def batch_process(req: BatchRequest, request: Request):
             raise HTTPException(status_code=400, detail=str(exc))
 
         env = os.environ.copy()
-        env["GEMINI_API_KEY"] = api_key
+        if api_key and llm_provider == "gemini":
+            env["GEMINI_API_KEY"] = api_key
 
         try:
             await submit_job(
@@ -824,6 +865,26 @@ async def compose_clip(job_id: str, clip_index: int, req: ComposeRequest, reques
     except Exception as e:
         logger.error("Compose error for job %s clip %d: %s", job_id, clip_index, e)
         raise HTTPException(status_code=500, detail="Compose pipeline failed")
+
+
+@app.patch("/api/review/{job_id}/{clip_index}")
+async def review_clip(job_id: str, clip_index: int, req: ClipReviewRequest, request: Request):
+    """Persist the operator's review decision for one finished clip."""
+    require_trusted_config_request(request)
+    enforce_rate_limit(request, "review", capacity=60, refill_per_sec=1)
+    if not is_valid_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+    if (jobs.get(job_id) or {}).get("status") in job_control.ACTIVE_STATES:
+        raise HTTPException(status_code=409, detail="Review clips once the job has finished")
+
+    resolved = await asyncio.to_thread(
+        resolve_clip, job_id, clip_index, OUTPUT_DIR, require_file=False,
+    )
+    async with clip_lock(resolved.job_dir, clip_index):
+        updated = await asyncio.to_thread(
+            set_clip_review, job_id, clip_index, OUTPUT_DIR, req.status, req.note,
+        )
+    return {"success": True, **updated}
 
 
 # ---------------------------------------------------------------------------

@@ -179,6 +179,26 @@ export async function publishClip(jobId, index, body) {
   return res.json().catch(() => ({}));
 }
 
+export async function reviewClip(jobId, index, { status, note = '' }) {
+  const res = await apiFetch(getApiUrl(`/api/review/${jobId}/${index}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status, note }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const error = new Error((err.detail || `HTTP ${res.status}`).toString());
+    error.status = res.status;
+    throw error;
+  }
+  const result = await res.json();
+  return {
+    review_status: result.review_status,
+    review_note: result.review_note,
+    review_updated_at: result.review_updated_at,
+  };
+}
+
 export async function restoreJob(jobId) {
   const res = await apiFetch(getApiUrl(`/api/history/${jobId}/restore`), { method: 'POST' });
   if (!res.ok) { const e = new Error('Restore failed'); e.status = res.status; throw e; }
@@ -246,8 +266,10 @@ export async function saveConfig(keys) {
   return res.json().catch(() => ({}));
 }
 
-export async function getModels(apiKey) {
-  const res = await apiFetch(getApiUrl('/api/config/models'), { headers: { 'X-Gemini-Key': apiKey } });
+export async function getModels(provider = 'gemini', { forceRefresh = false } = {}) {
+  const params = new URLSearchParams({ provider });
+  if (forceRefresh) params.set('force_refresh', 'true');
+  const res = await apiFetch(getApiUrl(`/api/config/models?${params.toString()}`));
   if (!res.ok) return { models: [] };
   return res.json();
 }
@@ -342,6 +364,16 @@ export async function saveZernio(payload) {
 export async function discoverZernioAccounts() {
   const res = await apiFetch(getApiUrl('/api/zernio/accounts'));
   if (!res.ok) throw new Error('Discover failed');
+  return res.json();
+}
+
+export async function getTikTokCreatorInfo(accountId) {
+  const params = new URLSearchParams({ account_id: accountId });
+  const res = await apiFetch(getApiUrl(`/api/zernio/tiktok/creator-info?${params}`));
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || 'TikTok creator options unavailable');
+  }
   return res.json();
 }
 

@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse
 
 from clippyme.api.schemas import ConfigUpdateRequest, ZernioConfigRequest
 from clippyme.api.security import require_trusted_config_request
-from clippyme.pipeline.analysis.gemini_service import list_available_models
+from clippyme.pipeline.analysis.llm_service import PROVIDER_KEYS, PROVIDERS, list_provider_models
 from clippyme.storage.config_store import (
     load_persistent_config,
     load_zernio_config,
@@ -89,13 +89,22 @@ def _delete_uploaded_font(name: str) -> bool:
 
 
 @router.get("/api/config/models")
-async def list_gemini_models(
+async def list_llm_models(
     request: Request,
+    provider: str = "gemini",
+    force_refresh: bool = False,
     api_key: Optional[str] = Header(None, alias="X-Gemini-Key"),
+    provider_key: Optional[str] = Header(None, alias="X-Provider-Key"),
 ):
-    """List available Gemini models using the provided API key."""
+    """List live models for one configured provider without exposing its key."""
     require_trusted_config_request(request)
-    return await asyncio.to_thread(list_available_models, api_key or os.environ.get("GEMINI_API_KEY"))
+    provider = (provider or "").strip().lower()
+    if provider not in PROVIDERS:
+        return {"provider": provider, "models": [], "error": "Unsupported provider"}
+    config = await asyncio.to_thread(load_persistent_config)
+    key = api_key or provider_key or config.get(PROVIDER_KEYS[provider]) or os.environ.get(PROVIDER_KEYS[provider])
+    result = await asyncio.to_thread(list_provider_models, provider, key, force_refresh=force_refresh)
+    return {"provider": provider, **result}
 
 
 @router.get("/api/config")
@@ -105,7 +114,8 @@ async def get_config(request: Request):
     config = await asyncio.to_thread(load_persistent_config)
     # Secret keys are never returned verbatim — even short values are masked so
     # a brief key can't leak. Non-secret flags (model/provider) pass through.
-    secret_keys = {"GEMINI_API_KEY", "HF_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY",
+    secret_keys = {"GEMINI_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY",
+                   "DEEPSEEK_API_KEY", "HF_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY",
                    "YOUTUBE_COOKIES", "TWITCH_CLIENT_SECRET"}
     masked = {}
     for k, v in config.items():
@@ -389,3 +399,43 @@ async def list_zernio_accounts(request: Request):
     except ZernioError as e:
         raise HTTPException(status_code=502, detail=f"Zernio API error: {e}")
     return {"accounts": accounts}
+
+
+@router.get("/api/zernio/tiktok/creator-info")
+async def get_zernio_tiktok_creator_info(account_id: str, request: Request):
+    """Return only the creator's TikTok privacy and interaction options."""
+    require_trusted_config_request(request)
+    if not account_id or len(account_id) > 128 or not all(
+        char.isascii() and (char.isalnum() or char in "_-") for char in account_id
+    ):
+        raise HTTPException(status_code=400, detail="Invalid Zernio account ID")
+    cfg = await asyncio.to_thread(load_zernio_config)
+    api_key = cfg.get("api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Zernio API key not configured")
+    from clippyme.integrations.social_publisher import ZernioClient, ZernioError
+    try:
+        client = ZernioClient(api_key)
+        info = await asyncio.to_thread(client.get_tiktok_creator_info, account_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except ZernioError as e:
+        raise HTTPException(status_code=502, detail=f"Zernio API error: {e}") from e
+    privacy_levels = info.get("privacyLevels")
+    posting_limits = info.get("postingLimits")
+    interactions = posting_limits.get("interactionSettings") if isinstance(posting_limits, dict) else {}
+    return {
+        "privacyLevels": [
+            {"value": item["value"], "label": item.get("label", item["value"])}
+            for item in privacy_levels
+            if isinstance(item, dict) and isinstance(item.get("value"), str) and item["value"]
+        ] if isinstance(privacy_levels, list) else [],
+        "interactionSettings": {
+            key: value for key, value in interactions.items()
+            if key in {"comment", "duet", "stitch"} and isinstance(value, bool)
+        } if isinstance(interactions, dict) else {},
+        "canPostMore": (info.get("creator") or {}).get("canPostMore")
+        if isinstance(info.get("creator"), dict) else None,
+        "maxVideoDurationSec": posting_limits.get("maxVideoDurationSec")
+        if isinstance(posting_limits, dict) else None,
+    }

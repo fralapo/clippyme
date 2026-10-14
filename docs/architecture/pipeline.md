@@ -7,7 +7,7 @@ Job queueing, retries and resume are in [jobs.md](jobs.md).
 flowchart LR
     S[Source<br/>URL or upload] --> DL[Download<br/>yt-dlp]
     DL --> TR[Transcribe]
-    TR --> AI[Pick moments<br/>Gemini]
+    TR --> AI[Pick moments<br/>configured LLM provider]
     AI --> SN[Snap edges<br/>word / sentence / silence]
     SN --> RF[Reframe 9:16]
     RF --> PP[Post-process<br/>zoom, loudness, cover]
@@ -40,12 +40,14 @@ or bad key never fails a job. Transcripts are cached for 7 days under
 
 **Pick moments** (`main.get_viral_clips`, `gemini_request.py`,
 `gemini_parser.py`). The transcript, with per-word timing encoded compactly
-(TOON), goes to Gemini (`GEMINI_MODEL`, default `gemini-3.5-flash`), which
-returns candidate clips scored on a five-axis rubric. On quota or high-demand
-errors the job walks `GEMINI_FALLBACK_MODELS`; a malformed response goes
-through a five-level JSON repair chain and a bounded reformat retry. How the
-prompt writes titles and hooks, and why, is in
-[research/title-hook-copy.md](../research/title-hook-copy.md).
+(TOON), goes to the provider and model selected in Settings; Gemini remains
+the default and uses `GEMINI_MODEL` (`gemini-3.5-flash`) plus its fallback
+chain. OpenAI, OpenRouter, Anthropic and DeepSeek use their own generation
+APIs. Every provider returns candidate clips scored on a five-axis rubric and
+uses the shared JSON repair chain. How the prompt writes titles and hooks, and
+why, is in [research/title-hook-copy.md](../research/title-hook-copy.md).
+Provider APIs and live model discovery are documented in
+[LLM provider integration](../development/llm-providers.md).
 If no AI result is available, the transcript is split by lexical TextTiling
 into several topic clips (heuristic, not ranked); rendering the whole video is
 the last resort. Live-monitor jobs disable both fallbacks: a segment with no AI

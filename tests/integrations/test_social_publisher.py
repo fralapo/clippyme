@@ -36,6 +36,20 @@ def test_scrub_secrets_redacts_bearer_token():
     assert "Bearer ***REDACTED***" in scrubbed
 
 
+def test_tiktok_creator_info_uses_validated_account_path(monkeypatch):
+    client = sp.ZernioClient("sk_test")
+    calls = []
+    monkeypatch.setattr(client._session, "request", lambda method, url, **kwargs: (
+        calls.append((method, url)) or type("Response", (), {
+            "status_code": 200, "json": lambda self: {"privacyLevels": []},
+        })()
+    ))
+    assert client.get_tiktok_creator_info("creator_1") == {"privacyLevels": []}
+    assert calls == [("GET", f"{DEFAULT}/accounts/creator_1/tiktok/creator-info")]
+    with pytest.raises(ValueError, match="Invalid Zernio account ID"):
+        client.get_tiktok_creator_info("../accounts")
+
+
 def test_scrub_secrets_handles_empty():
     client = sp.ZernioClient("k")
     assert client._scrub_secrets("") == ""

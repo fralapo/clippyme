@@ -76,3 +76,25 @@ test('processing and empty results states pass the rendered accessibility gate',
   )
   await expectAccessible(results.container)
 })
+
+test('operator review controls have accessible labels and a labelled change-request field', async () => {
+  const results = render(
+    <ResultsView
+      clips={[{
+        original_index: 0, video_title_for_youtube_short: 'Interview highlight',
+        viral_score: 88, start: 0, end: 12, review_status: 'pending',
+      }]}
+      jobId="job-review"
+      preselections={{}}
+      clipStates={{}}
+      onUpdateClipState={vi.fn()}
+      onReviewClip={vi.fn()}
+      onPublish={vi.fn()}
+      onPublishAll={vi.fn()}
+      onEdit={vi.fn()}
+      onApplyToAll={vi.fn()}
+      onEditSelected={vi.fn()}
+    />,
+  )
+  await expectAccessible(results.container)
+})

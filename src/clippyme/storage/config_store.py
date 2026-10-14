@@ -13,6 +13,12 @@ CONFIG_FILE = os.path.join(DATA_DIR, "config.json")
 VALID_CONFIG_KEYS = (
     "GEMINI_API_KEY",
     "GEMINI_MODEL",
+    "LLM_PROVIDER",
+    "LLM_MODEL",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "DEEPSEEK_API_KEY",
     "YOUTUBE_COOKIES",
     "HF_TOKEN",
     "DEEPGRAM_API_KEY",
@@ -160,6 +166,12 @@ def load_persistent_config() -> dict:
     config = {
         "GEMINI_API_KEY": os.environ.get("GEMINI_API_KEY", ""),
         "GEMINI_MODEL": os.environ.get("GEMINI_MODEL", "gemini-3.5-flash"),
+        "LLM_PROVIDER": os.environ.get("LLM_PROVIDER", "gemini"),
+        "LLM_MODEL": os.environ.get("LLM_MODEL", ""),
+        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", ""),
+        "OPENROUTER_API_KEY": os.environ.get("OPENROUTER_API_KEY", ""),
+        "ANTHROPIC_API_KEY": os.environ.get("ANTHROPIC_API_KEY", ""),
+        "DEEPSEEK_API_KEY": os.environ.get("DEEPSEEK_API_KEY", ""),
         "YOUTUBE_COOKIES": os.environ.get("YOUTUBE_COOKIES", ""),
         "HF_TOKEN": os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_TOKEN") or "",
         "DEEPGRAM_API_KEY": os.environ.get("DEEPGRAM_API_KEY", ""),
@@ -170,6 +182,10 @@ def load_persistent_config() -> dict:
     }
     raw = _read_raw_config()
     config.update({key: value for key, value in raw.items() if key in VALID_CONFIG_KEYS})
+    # Preserve the pre-multi-provider setting for existing Gemini installs;
+    # never leak a Gemini model id into another provider's selection.
+    if config.get("LLM_PROVIDER", "gemini") == "gemini" and not config.get("LLM_MODEL"):
+        config["LLM_MODEL"] = config.get("GEMINI_MODEL") or "gemini-3.5-flash"
     return config
 
 

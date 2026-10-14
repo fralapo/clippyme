@@ -79,6 +79,22 @@ def test_empty_upload_returns_400_and_cleans_up(client):
     assert os.listdir(outputs) == []
 
 
+def test_external_provider_without_selected_model_is_rejected_before_upload(client, monkeypatch):
+    tc, uploads, outputs = client
+    monkeypatch.setattr(app_module, "load_persistent_config", lambda: {
+        "LLM_PROVIDER": "openai", "LLM_MODEL": "", "OPENAI_API_KEY": "configured-key",
+    })
+    monkeypatch.setattr(app_module, "MAX_FILE_SIZE_MB", 10)
+    response = tc.post(
+        "/api/process",
+        files={"file": ("v.mp4", b"video", "video/mp4")},
+    )
+    assert response.status_code == 400
+    assert "No analysis model selected" in response.json()["detail"]
+    assert os.listdir(uploads) == []
+    assert os.listdir(outputs) == []
+
+
 def test_build_command_failure_removes_uploaded_input(client, monkeypatch):
     tc, uploads, outputs = client
     monkeypatch.setattr(app_module, "MAX_FILE_SIZE_MB", 10)

@@ -27,7 +27,7 @@ PRICES = {  # USD / 1M tokens — test table, not the real one
 def preflight(monkeypatch, tmp_path):
     """Run the real _run_preflight on a 10-minute source; returns the
     PreflightInputs it built and the report it enforced."""
-    for name in ("GEMINI_MODEL", "GEMINI_FALLBACK_MODELS", "GEMINI_RETRY_MODEL",
+    for name in ("LLM_PROVIDER", "LLM_MODEL", "GEMINI_MODEL", "GEMINI_FALLBACK_MODELS", "GEMINI_RETRY_MODEL",
                  "CLIPPYME_MAX_CLIPS", "CLIPPYME_MAX_ESTIMATED_COST_USD",
                  "CLIPPYME_MAX_DURATION_SECONDS", "CLIPPYME_MAX_INPUT_GB"):
         monkeypatch.delenv(name, raising=False)

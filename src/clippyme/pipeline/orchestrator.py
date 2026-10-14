@@ -188,10 +188,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _configure_overrides(args: argparse.Namespace) -> None:
     if args.model:
-        if not re.match(r"^gemini-[A-Za-z0-9.\-]{1,64}$", args.model):
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}", args.model):
             raise ValueError(f"invalid --model: {args.model!r}")
-        os.environ["GEMINI_MODEL"] = args.model
-        print(f"🤖 Gemini model override: {args.model}", flush=True)
+        os.environ["LLM_MODEL"] = args.model
+        print(f"🤖 LLM model override: {args.model}", flush=True)
     if args.language:
         if not re.match(r"^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,8})?$", args.language):
             raise ValueError(f"invalid --language: {args.language!r}")
@@ -335,22 +335,29 @@ def _run_preflight(args, input_video: str, output_dir: str, state: RuntimeState,
         free_disk = shutil.disk_usage(output_dir).free
     except OSError:
         free_disk = None
-    model = args.model or os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+    model = args.model or os.getenv("LLM_MODEL") or (
+        os.getenv("GEMINI_MODEL", "gemini-3.5-flash") if provider == "gemini" else ""
+    )
     fallback_env = os.getenv("GEMINI_FALLBACK_MODELS")
+    fallback_models = tuple(build_model_chain(model, fallback_env)[1:]) if provider == "gemini" and model else ()
+    retry_models = tuple(build_model_chain(
+        os.getenv("GEMINI_RETRY_MODEL") or DEFAULT_RETRY_MODEL, fallback_env
+    )) if provider == "gemini" else ()
     report = build_preflight(
         PreflightInputs(
             duration_seconds=duration,
             input_bytes=int(probe.get("size_bytes") or os.path.getsize(input_video)),
             width=probe.get("width"),
             height=probe.get("height"),
+            provider=provider,
             model=model,
             aspect=args.aspect,
             has_gpu=bool(getattr(legacy, "CUDA_AVAILABLE", False)),
             max_clips=_max_clips_from_env(),
             analysis_enabled=not args.skip_analysis,
-            fallback_models=tuple(build_model_chain(model, fallback_env)[1:]),
-            retry_models=tuple(build_model_chain(
-                os.getenv("GEMINI_RETRY_MODEL") or DEFAULT_RETRY_MODEL, fallback_env)),
+            fallback_models=fallback_models,
+            retry_models=retry_models,
         ),
         pricing=getattr(legacy, "MODEL_PRICING", {}),
         free_disk_bytes=free_disk,

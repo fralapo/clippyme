@@ -14,17 +14,17 @@ vi.mock('../../components/LazyVideo', () => ({
 }));
 
 const clips = [
-  { original_index: 0, video_title_for_youtube_short: 'First clip', viral_score: 90, start: 0, end: 10 },
-  { original_index: 1, video_title_for_youtube_short: 'Second clip', viral_score: 85, start: 10, end: 20 },
+  { original_index: 0, video_title_for_youtube_short: 'First clip', viral_score: 90, start: 0, end: 10, review_status: 'approved' },
+  { original_index: 1, video_title_for_youtube_short: 'Second clip', viral_score: 85, start: 10, end: 20, review_status: 'approved' },
 ];
 
-function mount(selected = clips, clipStates = {}, onPublishAll = vi.fn()) {
+function mount(selected = clips, clipStates = {}, onPublishAll = vi.fn(), onReviewClip = vi.fn().mockResolvedValue({})) {
   const pushToast = vi.fn();
   render(<ResultsView
     clips={selected} jobId="results-qa" preselections={{}}
     clipStates={clipStates} onUpdateClipState={vi.fn()}
     onPublish={vi.fn()} onPublishAll={onPublishAll} onEdit={vi.fn()}
-    onApplyToAll={vi.fn()} onEditSelected={vi.fn()} pushToast={pushToast}
+    onApplyToAll={vi.fn()} onEditSelected={vi.fn()} onReviewClip={onReviewClip} pushToast={pushToast}
   />);
   return pushToast;
 }
@@ -104,20 +104,64 @@ test('immediate accepted requests show submitted while persisted legacy entries 
   expect(screen.getByText('published')).toBeInTheDocument();
 });
 
-test('Publish all excludes clips still reprocessing and identifies the ready count', () => {
+test('manual bulk publish includes only approved clips that are not reprocessing', () => {
   const onPublishAll = vi.fn();
   mount(clips, { 0: { processing: true } }, onPublishAll);
   expect(screen.getByText(/1 clip still reprocessing/i)).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Publish ready 1' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Publish approved 1' }));
   expect(onPublishAll).toHaveBeenCalledTimes(1);
   expect(onPublishAll.mock.calls[0][0].map((c) => c.original_index)).toEqual([1]);
 });
 
-test('Publish all is disabled when all clips are processing', () => {
+test('manual bulk publish is disabled when none are approved and ready', () => {
   const onPublishAll = vi.fn();
-  mount(clips, { 0: { processing: true }, 1: { processing: true } }, onPublishAll);
-  expect(screen.getByRole('button', { name: 'Publish all' })).toBeDisabled();
+  mount(clips.map((clip) => ({ ...clip, review_status: 'pending' })), {}, onPublishAll);
+  expect(screen.getByRole('button', { name: 'Publish approved 0' })).toBeDisabled();
   expect(onPublishAll).not.toHaveBeenCalled();
+});
+
+test('operator approval is saved before the clip can enter manual publish batches', async () => {
+  const pending = [{ ...clips[0], review_status: 'pending' }];
+  const onReviewClip = vi.fn().mockResolvedValue({ review_status: 'approved' });
+  const onPublishAll = vi.fn();
+  mount(pending, {}, onPublishAll, onReviewClip);
+
+  expect(screen.getByRole('button', { name: 'Publish First clip' })).toBeDisabled();
+  fireEvent.click(screen.getByText('Optional approval feedback'));
+  fireEvent.change(screen.getByLabelText('Why is this clip worth keeping?'), { target: { value: 'strong_payoff' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Approve First clip' }));
+
+  await waitFor(() => expect(onReviewClip).toHaveBeenCalledWith(0, 'approved', '', 'strong_payoff'));
+  expect(screen.getByText('Pending review')).toBeInTheDocument();
+  expect(onPublishAll).not.toHaveBeenCalled();
+});
+
+test('request changes requires a note and exposes a retry after persistence fails', async () => {
+  const onReviewClip = vi.fn().mockRejectedValueOnce(new Error('Disk unavailable'));
+  mount([{ ...clips[0], review_status: 'changes_requested', review_note: 'Keep the whole sentence.' }], {}, vi.fn(), onReviewClip);
+
+  expect(screen.getByText('Keep the whole sentence.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Edit request' }));
+  const note = screen.getByRole('textbox', { name: 'What should change?' });
+  expect(note).toHaveValue('Keep the whole sentence.');
+  fireEvent.change(note, { target: { value: 'Keep the full sentence and ending.' } });
+  fireEvent.change(screen.getByLabelText('Optional feedback reason'), { target: { value: 'cut_loses_context' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save change request' }));
+
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Disk unavailable'));
+  expect(onReviewClip).toHaveBeenCalledWith(0, 'changes_requested', 'Keep the full sentence and ending.', 'cut_loses_context');
+  expect(screen.getByRole('button', { name: 'Save change request' })).toBeEnabled();
+});
+
+test('discard can save one explicit reason without sending free-form clip data', async () => {
+  const onReviewClip = vi.fn().mockResolvedValue({ review_status: 'discarded' });
+  mount([{ ...clips[0], review_status: 'pending' }], {}, vi.fn(), onReviewClip);
+
+  fireEvent.click(screen.getByRole('button', { name: 'Discard' }));
+  fireEvent.change(screen.getByLabelText('Optional feedback reason'), { target: { value: 'weak_moment' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm discard' }));
+
+  await waitFor(() => expect(onReviewClip).toHaveBeenCalledWith(0, 'discarded', '', 'weak_moment'));
 });
 
 test('selection mode does not publish a clip currently being reprocessed', () => {
@@ -126,8 +170,8 @@ test('selection mode does not publish a clip currently being reprocessed', () =>
   fireEvent.click(screen.getByRole('button', { name: 'Select' }));
   // Mocked onUpdateClipState does not rerender the harness. Both original
   // clips were selected, so Select-all is already in its checked state.
-  expect(screen.getByRole('button', { name: 'Publish ready 1' })).toBeEnabled();
-  fireEvent.click(screen.getByRole('button', { name: 'Publish ready 1' }));
+  expect(screen.getByRole('button', { name: 'Publish approved 1' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Publish approved 1' }));
   expect(onPublishAll.mock.calls[0][0].map((c) => c.original_index)).toEqual([1]);
 });
 

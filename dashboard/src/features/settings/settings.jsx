@@ -1,7 +1,6 @@
 // ClippyMe — SettingsView + ApiKeyModal, wired to the real backend
 // (config keys, cookies, Zernio).
 import { useState, useEffect, useRef } from 'react';
-import { useModalA11y } from '../../hooks/useModalA11y';
 import { Icon, Btn, Badge, Switch, Segmented, Panel } from '../../components/primitives';
 import { Hero } from '../../components/headers';
 import {
@@ -13,14 +12,14 @@ import { SUB_FONTS } from '../../lib/uiOptions';
 import { getApiToken, setApiToken } from '../../api/apiToken';
 import { getCredentialMode, setCredentialMode } from '../../lib/credentialStorage';
 
-// Curated fallback when live discovery is unavailable (no key yet / offline).
-// Mirrors the allow-list prefixes (gemini-2.5- / gemini-3) the backend accepts.
-const FALLBACK_MODELS = [
-  { name: 'gemini-3.5-flash', display_name: 'Gemini 3.5 Flash — recommended' },
-  { name: 'gemini-2.5-flash', display_name: 'Gemini 2.5 Flash — budget' },
-  { name: 'gemini-3.1-pro-preview', display_name: 'Gemini 3.1 Pro — max quality' },
-  { name: 'gemini-2.5-pro', display_name: 'Gemini 2.5 Pro — max quality' },
+const LLM_PROVIDERS = [
+  ['gemini', 'Google Gemini'], ['openai', 'OpenAI'], ['openrouter', 'OpenRouter'],
+  ['anthropic', 'Claude (Anthropic)'], ['deepseek', 'DeepSeek'],
 ];
+const LLM_KEY_NAMES = {
+  gemini: 'GEMINI_API_KEY', openai: 'OPENAI_API_KEY', openrouter: 'OPENROUTER_API_KEY',
+  anthropic: 'ANTHROPIC_API_KEY', deepseek: 'DEEPSEEK_API_KEY',
+};
 
 function KeyRow({ icon, name, desc, value, onChange, onSave, onClear, placeholder, present }) {
   const [reveal, setReveal] = useState(false);
@@ -54,6 +53,10 @@ function KeyRow({ icon, name, desc, value, onChange, onSave, onClear, placeholde
 
 export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesChange, pushToast }) {
   const [gemini, setGemini] = useState(apiKey || '');
+  const [openai, setOpenai] = useState('');
+  const [openrouter, setOpenrouter] = useState('');
+  const [anthropic, setAnthropic] = useState('');
+  const [deepseek, setDeepseek] = useState('');
   const [deepgram, setDeepgram] = useState('');
   const [elevenlabs, setElevenlabs] = useState('');
   const [hf, setHf] = useState('');
@@ -70,25 +73,38 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
   const [fonts, setFonts] = useState([]);
   const [provider, setProvider] = useState('deepgram');
   const [model, setModel] = useState('');
-  const [models, setModels] = useState(FALLBACK_MODELS);
+  const [models, setModels] = useState([]);
   const [loadingModels, setLoadingModels] = useState(false);
+  const [modelsError, setModelsError] = useState('');
+  const modelsRequestId = useRef(0);
+  const [llmConfigLoaded, setLlmConfigLoaded] = useState(false);
 
-  // Pull the live model list from the backend (uses the saved key if the
-  // header is empty). Merges discovery with the curated fallback + the
-  // currently-selected model so the dropdown is never empty and never drops
-  // the active choice.
-  const loadModels = async (key) => {
+  // Fetch the selected provider's live catalog through the local backend.
+  // Provider credentials never leave the machine and the UI has no free-text
+  // model input or stale hard-coded catalog.
+  const loadModels = async (provider = 'gemini', forceRefresh = false, preferredModel = model) => {
+    const requestId = ++modelsRequestId.current;
     setLoadingModels(true);
+    setModelsError('');
     try {
-      const { models: live } = await getModels(key || gemini || apiKey || '');
-      const seen = new Set();
-      const merged = [];
-      [...(live || []), ...FALLBACK_MODELS].forEach((m) => {
-        if (m?.name && !seen.has(m.name)) { seen.add(m.name); merged.push(m); }
-      });
-      if (merged.length) setModels(merged);
-    } catch { /* keep fallback */ }
-    finally { setLoadingModels(false); }
+      const result = await getModels(provider, { forceRefresh });
+      if (requestId !== modelsRequestId.current) return;
+      const live = Array.isArray(result?.models) ? result.models : [];
+      setModels(live);
+      setModelsError(result?.error || (!live.length ? 'No compatible models were returned for this API key.' : ''));
+      if (live.length && !live.some((item) => item.name === preferredModel)) {
+        const latest = live[0]?.name || '';
+        setModel(latest);
+        if (latest) await saveConfig({ LLM_MODEL: latest, ...(provider === 'gemini' ? { GEMINI_MODEL: latest } : {}) });
+      } else if (preferredModel) setModel(preferredModel);
+    } catch (error) {
+      if (requestId === modelsRequestId.current) {
+        setModels([]);
+        setModelsError(error?.message || 'Could not load the provider model catalog.');
+      }
+    } finally {
+      if (requestId === modelsRequestId.current) setLoadingModels(false);
+    }
   };
 
   // Source of truth for "is this key set" is always the backend's response,
@@ -99,14 +115,24 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
     if (!c) { pushToast?.('warn', 'Could not refresh key status'); return; }
     setPresent({
       gemini: !!c.GEMINI_API_KEY, hf: !!c.HF_TOKEN, deepgram: !!c.DEEPGRAM_API_KEY, elevenlabs: !!c.ELEVENLABS_API_KEY,
+      openai: !!c.OPENAI_API_KEY, openrouter: !!c.OPENROUTER_API_KEY,
+      anthropic: !!c.ANTHROPIC_API_KEY, deepseek: !!c.DEEPSEEK_API_KEY,
       twitchId: !!c.TWITCH_CLIENT_ID, twitchSecret: !!c.TWITCH_CLIENT_SECRET,
     });
     if (c.TRANSCRIPTION_PROVIDER) setProvider(c.TRANSCRIPTION_PROVIDER);
-    if (c.GEMINI_MODEL) setModel(c.GEMINI_MODEL);
+    if (c.LLM_PROVIDER) setLlmProvider(c.LLM_PROVIDER);
+    const savedModel = c.LLM_MODEL || c.GEMINI_MODEL || '';
+    setModel(savedModel);
+    return c;
   };
 
+  const [llmProvider, setLlmProvider] = useState('gemini');
+
   useEffect(() => {
-    refreshConfig().then(loadModels);
+    refreshConfig().then((c) => {
+      setLlmConfigLoaded(true);
+      return loadModels(c?.LLM_PROVIDER || 'gemini', false, c?.LLM_MODEL || c?.GEMINI_MODEL || '');
+    }).catch(() => setLlmConfigLoaded(true));
     getZernio().then((z) => { setZernioState(z); if (z.accounts) setAccts({ tiktok: '', instagram: '', youtube: '', ...z.accounts }); }).catch(() => {});
     cookiesStatus().then((s) => setCookies(!!s.configured)).catch(() => {});
     logoStatus().then((s) => setLogoOn(!!s.configured)).catch(() => {});
@@ -116,8 +142,31 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
   }, []);
 
   const saveKeys = async (patch) => {
-    try { await saveConfig(patch); pushToast?.('success', 'Saved'); await refreshConfig(); }
+    try {
+      await saveConfig(patch);
+      pushToast?.('success', 'Saved');
+      await refreshConfig();
+      const activeKey = LLM_KEY_NAMES[llmProvider];
+      if (activeKey && Object.hasOwn(patch, activeKey)) await loadModels(llmProvider, true, model);
+    }
     catch { pushToast?.('error', 'Save failed'); }
+  };
+
+  const selectLlmProvider = async (next) => {
+    setLlmProvider(next);
+    setModel('');
+    setModels([]);
+    setModelsError('');
+    try {
+      await saveConfig({ LLM_PROVIDER: next, LLM_MODEL: '' });
+      await loadModels(next, true, '');
+      pushToast?.('success', 'AI provider updated');
+    } catch { pushToast?.('error', 'Could not update AI provider'); }
+  };
+
+  const selectLlmModel = (next) => {
+    setModel(next);
+    saveKeys({ LLM_MODEL: next, ...(llmProvider === 'gemini' ? { GEMINI_MODEL: next } : {}) });
   };
 
   const saveZernioCfg = async () => {
@@ -206,6 +255,18 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
         <KeyRow icon="sparkles" name="Gemini" desc="Viral-moment detection" value={gemini} present={present.gemini}
           onChange={(v) => { setGemini(v); onApiKey?.(v); }} onSave={() => saveKeys({ GEMINI_API_KEY: gemini })}
           onClear={() => { setGemini(''); onApiKey?.(''); saveKeys({ GEMINI_API_KEY: '' }); }} placeholder="AIza…" />
+        <KeyRow icon="sparkles" name="OpenAI" desc="LLM video-moment detection" value={openai} present={present.openai}
+          onChange={setOpenai} onSave={() => saveKeys({ OPENAI_API_KEY: openai })}
+          onClear={() => { setOpenai(''); saveKeys({ OPENAI_API_KEY: '' }); }} placeholder="sk-…" />
+        <KeyRow icon="network" name="OpenRouter" desc="One key for models from multiple providers" value={openrouter} present={present.openrouter}
+          onChange={setOpenrouter} onSave={() => saveKeys({ OPENROUTER_API_KEY: openrouter })}
+          onClear={() => { setOpenrouter(''); saveKeys({ OPENROUTER_API_KEY: '' }); }} placeholder="sk-or-v1-…" />
+        <KeyRow icon="sparkles" name="Claude (Anthropic)" desc="Claude model detection" value={anthropic} present={present.anthropic}
+          onChange={setAnthropic} onSave={() => saveKeys({ ANTHROPIC_API_KEY: anthropic })}
+          onClear={() => { setAnthropic(''); saveKeys({ ANTHROPIC_API_KEY: '' }); }} placeholder="sk-ant-…" />
+        <KeyRow icon="sparkles" name="DeepSeek" desc="DeepSeek model detection" value={deepseek} present={present.deepseek}
+          onChange={setDeepseek} onSave={() => saveKeys({ DEEPSEEK_API_KEY: deepseek })}
+          onClear={() => { setDeepseek(''); saveKeys({ DEEPSEEK_API_KEY: '' }); }} placeholder="sk-…" />
         <KeyRow icon="audio-lines" name="Deepgram" desc="Nova-3 transcription" value={deepgram} present={present.deepgram}
           onChange={setDeepgram} onSave={() => saveKeys({ DEEPGRAM_API_KEY: deepgram })}
           onClear={() => { setDeepgram(''); saveKeys({ DEEPGRAM_API_KEY: '' }); }} placeholder="dg_…" />
@@ -236,18 +297,29 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
         {provider === 'elevenlabs' && !present.elevenlabs && (
           <div className="od" style={{ color: 'var(--warn, #f5a623)', padding: '0 0 8px 44px' }}>⚠ No ElevenLabs key saved — pipeline will use local Whisper.</div>
         )}
+        <div className="opt">
+          <div className="oico"><Icon n="sparkles" /></div>
+          <div className="otxt"><div className="ot">Analysis provider</div><div className="od">Choose the API used to find viral moments · applied to new jobs</div></div>
+          <div className="r">
+            <select aria-label="Analysis provider" className="key-input" value={llmProvider}
+              onChange={(e) => selectLlmProvider(e.target.value)} disabled={!llmConfigLoaded}>
+              {LLM_PROVIDERS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </div>
+        </div>
         <div className="opt" style={{ borderBottom: 0 }}>
           <div className="oico"><Icon n="sparkles" /></div>
-          <div className="otxt"><div className="ot">Gemini model</div><div className="od">Viral-moment detection model · applied to new jobs</div></div>
+          <div className="otxt"><div className="ot">Available models</div><div className="od">Loaded from the selected provider&apos;s live API catalog</div>
+            {modelsError && <div className="od" role="status" style={{ color: 'var(--warn, #f5a623)' }}>{modelsError}</div>}
+          </div>
           <div className="r" style={{ gap: 8 }}>
-            <select className="key-input" style={{ width: 'auto', minWidth: 200, fontFamily: 'var(--font-sans)' }}
-              value={model}
-              onChange={(e) => { setModel(e.target.value); saveKeys({ GEMINI_MODEL: e.target.value }); }}>
-              {!model && <option value="">Default (gemini-3.5-flash)</option>}
-              {model && !models.some((m) => m.name === model) && <option value={model}>{model}</option>}
+            <select aria-label="Analysis model" className="key-input" style={{ width: 'auto', minWidth: 200, fontFamily: 'var(--font-sans)' }}
+              value={model} onChange={(e) => selectLlmModel(e.target.value)} disabled={loadingModels || !models.length}>
+              {!model && <option value="">{loadingModels ? 'Loading models…' : 'Add a provider API key'}</option>}
+              {model && !models.some((m) => m.name === model) && <option value={model}>{model} · saved selection</option>}
               {models.map((m) => <option key={m.name} value={m.name}>{m.display_name || m.name}</option>)}
             </select>
-            <Btn variant="ghost" size="sm" icon="refresh-cw" onClick={() => loadModels()} disabled={loadingModels}>
+            <Btn variant="ghost" size="sm" icon="refresh-cw" onClick={() => loadModels(llmProvider, true)} disabled={loadingModels}>
               {loadingModels ? '…' : 'Refresh'}
             </Btn>
           </div>
@@ -331,29 +403,6 @@ export function SettingsView({ apiKey, onApiKey, cookiesConfigured, onCookiesCha
           </div>
         </div>
       </Panel>
-    </div>
-  );
-}
-
-export function ApiKeyModal({ onClose, onGoToSettings }) {
-  const panelRef = useModalA11y(onClose);
-  return (
-    // Backdrop click is a mouse-only convenience; keyboard users close via
-    // Esc (useModalA11y). currentTarget guard replaces stopPropagation.
-    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal" ref={panelRef}
-        role="dialog" aria-modal="true" aria-labelledby="apikey-modal-title">
-        <div className="modal-head"><h3 id="apikey-modal-title">Add your Gemini key</h3><button className="x" onClick={onClose} aria-label="Close"><Icon n="x" /></button></div>
-        <div className="modal-body">
-          <p style={{ color: 'var(--fg-2)', fontSize: 14, lineHeight: 1.55 }}>
-            ClippyMe needs a Gemini key to score the transcript and find viral moments. It&apos;s stored locally and never leaves your machine.
-          </p>
-        </div>
-        <div className="modal-foot">
-          <Btn variant="ghost" onClick={onClose}>Later</Btn>
-          <div className="mf-right"><Btn variant="primary" icon="settings" onClick={onGoToSettings}>Open settings</Btn></div>
-        </div>
-      </div>
     </div>
   );
 }

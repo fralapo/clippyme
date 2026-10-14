@@ -4,6 +4,13 @@ ClippyMe publishes to TikTok, Instagram and YouTube through
 [Zernio](https://zernio.com). Clips are published manually from the dashboard,
 or automatically by the [live monitor](live-monitor.md).
 
+When TikTok is selected for manual publishing, the dashboard loads the
+account-specific privacy levels and interaction settings from
+`GET /api/zernio/tiktok/creator-info`. It submits the selected audience and
+only the interaction settings supported by that creator. Creator-info errors,
+empty privacy options, or a provider-reported posting limit block TikTok
+submission until the operator can make a valid choice or the account can post.
+
 ## Manual publish
 
 `POST /api/publish/{job_id}/{clip_index}` (`publishing/publish_service.py`,
@@ -40,8 +47,28 @@ mode each clip starts its slot search one day later than the previous one
 to reduce daily-limit collisions. Zernio error bodies are passed through
 so the dashboard can show a platform's daily-limit 429.
 
-Manual publish answers 409 while the job is still running, or while a live
-monitor owns the clip.
+Manual publish answers 409 while the job is still running, while a live
+monitor owns the clip, or until the operator has approved that clip in Results.
+
+## Operator review
+
+Each finished clip stores `review_status` in its job metadata. A clip starts as
+`pending`; Results lets the operator approve it, request changes with a note,
+or discard it from manual publishing. Discarded clips can be restored to
+pending review. Approval is required by both the Results controls and the
+manual publish API, and edits to an approved or change-requested clip reset it
+to pending before any media is replaced. Review decisions use the same
+per-clip lock and atomic metadata writer as publishing. This gate is specific
+to manual publishing: unattended Live Monitor posts keep their configured
+automatic behavior.
+
+Optional approval and rejection reasons are separate from server review notes.
+When the operator explicitly picks a reason, the browser stores only its fixed category,
+clip score and rounded duration in the bounded local taste history. It does not
+store a clip/job identifier, title, transcript or free-form note. Three
+repeated reasons can add a short hint to future clip-selection instructions;
+caption/framing feedback is retained locally but does not steer Gemini's
+selection prompt.
 
 ## Publish identities
 

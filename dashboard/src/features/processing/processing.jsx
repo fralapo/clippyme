@@ -44,7 +44,7 @@ function Operations({ runtime, preflight }) {
       <Metric label="planned clips" value={formatMetric(preflight.clips)} />
       <Metric label="estimated time" value={formatEta(Number(preflight.runtime_min) * 60)} />
       <Metric label="peak disk" value={formatMetric(preflight.disk_gb, ' GB')} />
-      <Metric label="Gemini estimate" value={Number.isFinite(Number(preflight.cost_usd)) ? `$${Number(preflight.cost_usd).toFixed(4)}` : '—'} hint="upper-bound estimate" />
+      <Metric label={`${preflight.provider || 'Gemini'} estimate`} value={Number.isFinite(Number(preflight.cost_usd)) ? `$${Number(preflight.cost_usd).toFixed(4)}` : 'unknown'} hint="provider pricing may be unavailable; excludes paid transcription and optional audio isolation" />
     </div>}
   </section>;
 }

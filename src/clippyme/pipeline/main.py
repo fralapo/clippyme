@@ -408,24 +408,32 @@ def transcribe_video(video_path):
                     pass
 
 def get_viral_clips(transcript_result, video_duration, instructions=None):
-    print("🤖  Analyzing with Gemini...")
+    from clippyme.pipeline.analysis.llm_service import PROVIDER_KEYS, PROVIDERS
+
+    provider = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+    if provider not in PROVIDERS:
+        print(f"❌ Unsupported analysis provider: {provider}")
+        return None
+    print(f"🤖  Analyzing with {provider.title()}...")
     get_viral_clips._last_gemini_exhausted = False
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv(PROVIDER_KEYS[provider])
     if not api_key:
-        print("❌ Error: GEMINI_API_KEY not found in environment variables.")
+        print(f"❌ Error: {PROVIDER_KEYS[provider]} not found in environment variables.")
         return None
 
-    client = genai.Client(api_key=api_key)
-    
-    # Use selected model from env, or default to gemini-3.5-flash
-    model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+    model_name = os.getenv("LLM_MODEL") or (
+        os.getenv("GEMINI_MODEL", "gemini-3.5-flash") if provider == "gemini" else ""
+    )
+    if not model_name:
+        print(f"❌ No {provider.title()} model selected. Choose a model in Settings.")
+        return None
+    client = genai.Client(api_key=api_key) if provider == "gemini" else None
+    model_chain = build_model_chain(model_name, os.getenv("GEMINI_FALLBACK_MODELS")) if provider == "gemini" else [model_name]
+    print(f"🤖  Model: {model_name}")
 
-    model_chain = build_model_chain(model_name, os.getenv("GEMINI_FALLBACK_MODELS"))
-    print(f"🤖  Initializing Gemini with model chain: {' → '.join(model_chain)}")
-
-    if any(old in model_name for old in ("1.0", "1.5", "2.0")):
-        print(f"⚠️  WARNING: {model_name} is deprecated. Please switch to gemini-3.5-flash or later via the dashboard.")
+    if provider == "gemini" and any(old in model_name for old in ("1.0", "1.5", "2.0")):
+        print(f"⚠️  WARNING: {model_name} is deprecated. Please select a current model in Settings.")
 
     # Prompt building (word flattening, untrusted-instructions fencing,
     # template fill) is pure — it lives in gemini_request, host-tested.
@@ -441,19 +449,44 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
 
     max_attempts = int(os.getenv("GEMINI_MAX_RETRIES", "3") or "3")
     try:
-        response, model_name = generate_with_model_fallback(
-            client, prompt, model_chain, max_attempts=max_attempts)
+        if provider == "gemini":
+            response, model_name = generate_with_model_fallback(
+                client, prompt, model_chain, max_attempts=max_attempts)
+        else:
+            from clippyme.pipeline.analysis.llm_service import generate_text
+
+            response = generate_text(provider, model_name, prompt, api_key)
     except Exception as e:
-        if is_rate_limit_error(e):
+        if provider == "gemini" and is_rate_limit_error(e):
             get_viral_clips._last_gemini_exhausted = True
             print("🚫 All Gemini models rate-limited — no clips this run.")
-        print(f"❌ Gemini API failed across model chain: {e}")
+        print(f"❌ {provider.title()} API failed: {e}")
         return None
 
     # --- Cost Calculation (pure math in gemini_request) ---
     cost_analysis = None
     try:
-        cost_analysis = usage_cost(getattr(response, "usage_metadata", None), model_name)
+        if provider == "gemini":
+            cost_analysis = usage_cost(getattr(response, "usage_metadata", None), model_name)
+        else:
+            usage = getattr(response, "usage", {}) or {}
+            input_tokens = int(usage.get("prompt_tokens") or 0)
+            output_tokens = int(usage.get("completion_tokens") or 0)
+            reported_cost = usage.get("cost")
+            cost_analysis = {
+                "provider": provider,
+                "model": model_name,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "thinking_tokens": 0,
+                "input_cost": None,
+                "output_cost": None,
+                "thinking_cost": None,
+                "total_cost": reported_cost,
+                "pricing_known": reported_cost is not None,
+            }
+            if reported_cost is None:
+                cost_analysis["note"] = "Provider did not report a charge; cost is unknown"
         if cost_analysis:
             print(f"💰 Token Usage ({model_name}): input={cost_analysis['input_tokens']} "
                   f"output={cost_analysis['output_tokens']} "
@@ -488,17 +521,31 @@ def get_viral_clips(transcript_result, video_duration, instructions=None):
             it to reformat. That avoids paying the input-token cost of
             the transcript twice and keeps the retry latency-bounded.
             """
-            retry_model = os.getenv("GEMINI_RETRY_MODEL") or DEFAULT_RETRY_MODEL
             retry_prompt = build_reformat_prompt(err_msg, text)
             try:
-                retry_chain = build_model_chain(
-                    retry_model, os.getenv("GEMINI_FALLBACK_MODELS"))
-                retry_resp, retry_model = generate_with_model_fallback(
-                    client, retry_prompt, retry_chain, max_attempts=1,
-                )
+                if provider == "gemini":
+                    retry_model = os.getenv("GEMINI_RETRY_MODEL") or DEFAULT_RETRY_MODEL
+                    retry_chain = build_model_chain(retry_model, os.getenv("GEMINI_FALLBACK_MODELS"))
+                    retry_resp, retry_model = generate_with_model_fallback(
+                        client, retry_prompt, retry_chain, max_attempts=1,
+                    )
+                else:
+                    retry_model = model_name
+                    from clippyme.pipeline.analysis.llm_service import generate_text
+
+                    retry_resp = generate_text(provider, retry_model, retry_prompt, api_key)
                 print(f"🔁 Retry via {retry_model} (cheap reformatter)")
-                retry_costs.append(
-                    usage_cost(getattr(retry_resp, "usage_metadata", None), retry_model))
+                if provider == "gemini":
+                    retry_costs.append(usage_cost(getattr(retry_resp, "usage_metadata", None), retry_model))
+                else:
+                    retry_usage = getattr(retry_resp, "usage", {}) or {}
+                    retry_costs.append({
+                        "provider": provider, "model": retry_model,
+                        "input_tokens": int(retry_usage.get("prompt_tokens") or 0),
+                        "output_tokens": int(retry_usage.get("completion_tokens") or 0),
+                        "thinking_tokens": 0, "total_cost": retry_usage.get("cost"),
+                        "pricing_known": retry_usage.get("cost") is not None,
+                    })
                 return retry_resp.text or ""
             except Exception as e:
                 print(f"⚠️  Gemini retry failed: {e}")
@@ -676,14 +723,13 @@ if __name__ == '__main__':
     # reads GEMINI_MODEL at call time (main.py get_viral_clips). Lets the user
     # pick a different model per run without changing the global Settings value.
     if args.model:
-        # Validate here too, not just at the API→subprocess boundary: a direct
-        # CLI invocation (`--model '$(evil)'`) would otherwise set an arbitrary
-        # value in the child env. Mirrors GEMINI_MODEL_RE in job_results.
-        if not re.match(r"^gemini-[A-Za-z0-9.\-]{1,64}$", args.model):
+        # Provider model IDs (including OpenRouter's owner/model form) must
+        # remain constrained even for direct CLI calls.
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}", args.model):
             print(f"❌ invalid --model: {args.model!r}")
             sys.exit(2)
-        os.environ["GEMINI_MODEL"] = args.model
-        print(f"🤖  Gemini model override: {args.model}")
+        os.environ["LLM_MODEL"] = args.model
+        print(f"🤖  LLM model override: {args.model}")
 
     # Per-job language override — propagate to the env BEFORE any transcription
     # call so deepgram_transcribe.transcribe_with_deepgram reads the user's

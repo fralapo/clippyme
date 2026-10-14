@@ -16,7 +16,7 @@ vi.mock('../api/apiToken', () => ({
   apiFetch: vi.fn(),
 }));
 
-import { submitBatchJob } from '../api/jobs';
+import { submitBatchJob, submitProcessJob } from '../api/jobs';
 import { apiFetch } from '../api/apiToken';
 import { useJobSubmission } from './useJobSubmission';
 
@@ -46,6 +46,7 @@ function okStatus(status) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  submitProcessJob.mockResolvedValue({ job_id: 'job-single' });
   submitBatchJob.mockResolvedValue({
     jobs: [{ job_id: 'job-a' }, { job_id: 'job-b' }],
     total: 2,
@@ -55,6 +56,18 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.clearAllMocks();
+});
+
+test('a non-Gemini provider can submit without a browser Gemini key', async () => {
+  const { handlers, props } = mountHook({ apiKey: '' });
+
+  await act(() => handlers.handleProcess({ type: 'url', payload: 'https://example.com/video' }));
+
+  expect(submitProcessJob).toHaveBeenCalledWith(
+    { type: 'url', payload: 'https://example.com/video' }, '',
+  );
+  expect(props.setJobId).toHaveBeenCalledWith('job-single');
+  expect(props.setStatus).toHaveBeenCalledWith('processing');
 });
 
 test('all jobs terminal → status complete and onBatchFinished fires once', async () => {

@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Icon, Social, Btn, Switch, PlatPill, PLATFORMS } from '../../components/primitives';
 import { LazyVideo } from '../../components/LazyVideo';
 import { clipVideoSrc } from '../../api/client';
-import { publishClip, getZernio } from '../../api/client';
+import { publishClip, getZernio, getTikTokCreatorInfo } from '../../api/client';
 import { seedToggles, seedHookParams, seedSubtitleParams, seedLogoParams, seedBannerParams } from '../../lib/seedClipParams';
 import { dateInTimezonePlus, manualScheduleIso, manualScheduleProblem, schedulePreview } from './scheduleDates';
 import { clearPublishIntent, publishIntent } from './publishIntent';
@@ -78,6 +78,11 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   const [stage, setStage] = useState('setup'); // setup | uploading | done
   const [progress, setProgress] = useState({});
   const [outcome, setOutcome] = useState(null); // actual confirmed/failed requests
+  const [tiktokInfo, setTiktokInfo] = useState(null);
+  const [tiktokInfoAccount, setTiktokInfoAccount] = useState('');
+  const [tiktokInfoError, setTiktokInfoError] = useState('');
+  const [tiktokPrivacy, setTiktokPrivacy] = useState('');
+  const [tiktokInteractions, setTiktokInteractions] = useState({});
 
   useEffect(() => { getZernio().then(setZernio).catch(() => setZernio({ configured: false })); }, []);
 
@@ -111,12 +116,43 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
   }, []);
 
   const accounts = zernio?.accounts || {};
+  useEffect(() => {
+    if (!plats.tiktok || !accounts.tiktok || !zernio?.configured) return undefined;
+    let active = true;
+    setTiktokInfo(null);
+    setTiktokInfoAccount('');
+    setTiktokInfoError('');
+    getTikTokCreatorInfo(accounts.tiktok).then((info) => {
+      if (!active) return;
+      const options = Array.isArray(info?.privacyLevels) ? info.privacyLevels : [];
+      setTiktokInfo(info);
+      setTiktokInfoAccount(accounts.tiktok);
+      setTiktokPrivacy((current) => options.some((option) => option.value === current)
+        ? current
+        : (options.find((option) => option.value === 'PUBLIC_TO_EVERYONE') || options[0])?.value || '');
+      setTiktokInteractions(info?.interactionSettings || {});
+    }).catch((error) => {
+      if (!active) return;
+      setTiktokInfoError(error?.message || 'TikTok creator options unavailable');
+    });
+    return () => { active = false; };
+  }, [plats.tiktok, accounts.tiktok, zernio?.configured]);
+
   const toggle = (k) => setPlats((p) => ({ ...p, [k]: !p[k] }));
   const platTargets = () => Object.keys(plats)
     .filter((k) => plats[k] && accounts[PLAT[k].acct])
     .map((k) => ({ platform: PLAT[k].platform, accountId: accounts[PLAT[k].acct] }));
   const targets = platTargets();
-  const ready = zernio?.configured && targets.length > 0;
+  const tiktokSelected = plats.tiktok && !!accounts.tiktok;
+  const tiktokMaxDuration = Number(tiktokInfo?.maxVideoDurationSec);
+  const tiktokOverlengthClips = tiktokSelected && Number.isFinite(tiktokMaxDuration)
+    ? clips.filter((clip) => Number.isFinite(Number(clip.start)) && Number.isFinite(Number(clip.end))
+      && Number(clip.end) - Number(clip.start) > tiktokMaxDuration)
+    : [];
+  const tiktokReady = !tiktokSelected || (tiktokInfoAccount === accounts.tiktok
+    && !!tiktokInfo && !!tiktokPrivacy && tiktokInfo.canPostMore !== false
+    && tiktokOverlengthClips.length === 0);
+  const ready = zernio?.configured && targets.length > 0 && tiktokReady;
 
   // `batchPos` is the clip's position within this batch (0-based). When
   // scheduling, each clip gets its own day (start_date = today + batchPos) so
@@ -143,9 +179,10 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
       ...(mode === 'auto' ? { start_date: dateInTimezonePlus(batchPos, zernio?.timezone) } : {}),
       ...(mode === 'manual' ? { scheduled_for: scheduledFor } : {}),
       timezone: zernio?.timezone || 'Europe/Rome',
-      tiktok_settings: plats.tiktok && accounts.tiktok ? {
-        privacy_level: 'PUBLIC_TO_EVERYONE', allow_comment: true, allow_duet: true,
-        allow_stitch: true, content_preview_confirmed: true, express_consent_given: true,
+      tiktok_settings: tiktokSelected ? {
+        privacy_level: tiktokPrivacy,
+        ...Object.fromEntries(Object.entries(tiktokInteractions).map(([key, value]) => [`allow_${key}`, value])),
+        content_preview_confirmed: true, express_consent_given: true,
       } : undefined,
       ...(any ? { compose_first: true, hook_params: toggles.hook ? hookParams : {}, subtitle_params: toggles.subtitles ? subtitleParams : {}, logo_params: toggles.logo ? logoParams : {}, grade_params: toggles.grade ? gradeParams : {}, banner_params: toggles.banner ? bannerParams : {}, drop_ranges: toggles.smartcut ? (cs.dropRanges || []) : [] } : {}),
     };
@@ -250,6 +287,30 @@ export function PublishModal({ clips, jobId, clipStates = {}, preselections, onC
                       })}
                     </div>
                   </div>
+                  {tiktokSelected && <div className="field" aria-label="TikTok publishing options">
+                    <label className="field-label" htmlFor="tiktok-privacy-level">TikTok audience</label>
+                    {!tiktokInfo && !tiktokInfoError && <div className="cm-small" role="status">Loading options from TikTok…</div>}
+                    {tiktokInfoError && <div className="cm-small" role="alert">Could not load TikTok options: {tiktokInfoError}</div>}
+                    {tiktokInfo && !tiktokInfoError && !tiktokInfo.privacyLevels?.length && <div className="cm-small" role="alert">TikTok did not return any available audience options for this account.</div>}
+                    {tiktokInfo?.privacyLevels?.length > 0 && <>
+                      <select id="tiktok-privacy-level" value={tiktokPrivacy}
+                        onChange={(event) => setTiktokPrivacy(event.target.value)}>
+                        {tiktokInfo.privacyLevels.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>
+                      <div className="cm-small">These audience options come from the connected TikTok account.</div>
+                      {tiktokInfo.canPostMore === false && <div role="alert" className="cm-small">TikTok reports that this account cannot publish more posts right now.</div>}
+                      {tiktokOverlengthClips.length > 0 && <div role="alert" className="cm-small">
+                        {tiktokOverlengthClips.length === 1 ? 'A clip exceeds' : `${tiktokOverlengthClips.length} clips exceed`} this account’s TikTok duration limit of {tiktokMaxDuration} seconds. Deselect TikTok or shorten the clip before publishing.
+                      </div>}
+                      <div role="group" aria-label="TikTok interaction settings">
+                        {Object.entries(tiktokInfo.interactionSettings || {}).map(([key]) => <label className="field-label" key={key}>
+                          <input type="checkbox" checked={!!tiktokInteractions[key]}
+                            onChange={(event) => setTiktokInteractions((current) => ({ ...current, [key]: event.target.checked }))} />
+                          {key === 'comment' ? 'Allow comments' : key === 'duet' ? 'Allow Duet' : 'Allow Stitch'}
+                        </label>)}
+                      </div>
+                    </>}
+                  </div>}
                   <div className="field">
                     {all && <label className="field-label">
                       <input type="checkbox" checked={useSharedCaption}

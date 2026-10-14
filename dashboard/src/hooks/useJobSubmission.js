@@ -19,7 +19,6 @@ function withTaste(data) {
  */
 export function useJobSubmission({
   apiKey,
-  setShowKeyModal,
   setStatus,
   setLogs,
   setResults,
@@ -43,10 +42,6 @@ export function useJobSubmission({
   );
 
   const handleProcess = async (data) => {
-    if (!apiKey) {
-      setShowKeyModal(true);
-      return;
-    }
     setStatus('processing');
     setLogs(['Initializing engine...']);
     setResults(null);
@@ -63,10 +58,6 @@ export function useJobSubmission({
   };
 
   const handleBatchProcess = async (data) => {
-    if (!apiKey) {
-      setShowKeyModal(true);
-      return;
-    }
     setStatus('processing');
     setLogs(['Launching batch processing...']);
     setResults(null);

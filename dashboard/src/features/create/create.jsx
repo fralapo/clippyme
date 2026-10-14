@@ -2,7 +2,7 @@
 import { useState, useRef } from 'react';
 import { Icon, Btn, Panel, Segmented, Switch, Stepper } from '../../components/primitives';
 import { Hero } from '../../components/headers';
-import { LANGUAGES, GEMINI_MODELS, HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
+import { LANGUAGES, HOOK_STYLE_DEFAULT } from '../../lib/uiOptions';
 import { HookStyleControls, HookPreview } from '../../components/controls/hookStyle';
 import { useFontCatalog } from '../../hooks/useFontList';
 import { SubtitleControls } from '../../components/controls/subtitleControls';
@@ -298,19 +298,8 @@ function OptionsPanel({ opts, set }) {
       </div>
 
       <div className="label" style={{ margin: '16px 0 4px' }}>AI &amp; reframe</div>
-      <OptRow icon="sparkles" label="Find viral moments" desc="Gemini scores the transcript · off = whole video"
+      <OptRow icon="sparkles" label="Find viral moments" desc="Uses the provider and live model selected in Settings · off = whole video"
         on={opts.detect} set={(v) => set({ detect: v })} />
-      {opts.detect && (
-        <div className="opt">
-          <div className="oico"><Icon n="sparkles" /></div>
-          <div className="otxt" style={{ flex: 1 }}><div className="ot">Gemini model</div><div className="od">Override for this job · blank uses the Settings default</div></div>
-          <div className="r" style={{ flex: '0 0 184px' }}>
-            <select className="sel" value={opts.model || ''} onChange={(e) => set({ model: e.target.value })}>
-              {GEMINI_MODELS.map(([v, l]) => <option key={v || 'default'} value={v}>{l}</option>)}
-            </select>
-          </div>
-        </div>
-      )}
       <div className="opt">
         <div className="oico"><Icon n="scan-face" /></div>
         <div className="otxt"><div className="ot">Reframe</div><div className="od">Auto face-track · Subject FrameShift crop · Off letterbox bands</div></div>

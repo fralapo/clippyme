@@ -2,7 +2,7 @@
 
 ClippyMe is configured in two places:
 
-- **Settings tab** in the dashboard — API keys, default Gemini model,
+- **Settings tab** in the dashboard — provider API keys, live model catalog,
   transcription provider, cookies, logo, fonts, Zernio and Twitch credentials.
   Stored in `data/config.json` (owner-only, git-ignored). This is the normal
   way to configure an installation.
@@ -36,18 +36,33 @@ variable is unset; a few differ in `docker-compose.yml`, noted as *compose*.
 | `MAX_LOG_LINES` | `2000` | Lines kept in a job's visible log. | Rarely. |
 | `JOB_RETENTION_SECONDS` | 30 days (*compose*: `0`) | Auto-purge age for `output/` and `uploads/`; `0` disables purging. | To reclaim disk automatically. |
 
-## AI clip selection (Gemini)
+## AI clip selection
 
 | Name | Default | Purpose | When to change |
 |------|---------|---------|----------------|
 | `GEMINI_API_KEY` | unset | Gemini key. Usually entered in Settings. | — |
-| `GEMINI_MODEL` | `gemini-3.5-flash` | Preferred model; also selectable per job. | To use a different model by default. |
-| `GEMINI_FALLBACK_MODELS` | `gemini-3-flash-preview,gemini-2.5-flash,gemini-3.1-flash-lite,gemini-2.5-flash-lite` | Models tried in order after quota or high-demand errors. Each job starts again from `GEMINI_MODEL`. | Paid plans that can use pro models. |
+| `OPENAI_API_KEY` | unset | OpenAI API key. Usually entered in Settings. | — |
+| `OPENROUTER_API_KEY` | unset | OpenRouter key for its hosted model catalog. | — |
+| `ANTHROPIC_API_KEY` | unset | Anthropic API key for Claude models. | — |
+| `DEEPSEEK_API_KEY` | unset | DeepSeek API key. | — |
+| `LLM_PROVIDER` | `gemini` | `gemini`, `openai`, `openrouter`, `anthropic` or `deepseek`. Select it in Settings. | To change the API used for viral-moment detection. |
+| `LLM_MODEL` | `GEMINI_MODEL` or `gemini-3.5-flash` | Selected model ID. Settings discovers compatible models from the selected provider and stores this value; no model text entry is required. | To change the model used for new jobs. |
+| `GEMINI_MODEL` | `gemini-3.5-flash` | Legacy Gemini default, used to migrate existing configurations to `LLM_MODEL`. | Keep for older deployments. |
+| `GEMINI_FALLBACK_MODELS` | `gemini-3-flash-preview,gemini-2.5-flash,gemini-3.1-flash-lite,gemini-2.5-flash-lite` | Gemini-only fallback chain tried after quota or high-demand errors. | Paid plans that can use pro models. |
 | `GEMINI_MAX_RETRIES` | `3` | Attempts per model call before moving on. | Rarely. |
 | `GEMINI_RETRY_MODEL` | `gemini-2.5-flash` | Model used to reformat a malformed response. | Rarely. |
 
-Prices used for cost estimates are in `pipeline/analysis/gemini_request.py`
-(`MODEL_PRICING`), not configurable.
+Settings fetches the current model list from each provider when opened, when the
+provider changes, and when **Refresh** is selected. Results are briefly cached
+by the backend, sorted by release date when the provider exposes one, and
+filtered to text models that can return JSON. API keys remain in local backend
+configuration and are never sent to the browser during model discovery.
+
+Gemini preflight cost estimates use `pipeline/analysis/gemini_request.py`
+(`MODEL_PRICING`). The other providers report token usage; a cost is shown only
+when the API itself returns one. If `CLIPPYME_MAX_ESTIMATED_COST_USD` is set,
+jobs using a provider/model without a trustworthy preflight price are rejected
+so the limit cannot be silently bypassed.
 
 ## Transcription
 

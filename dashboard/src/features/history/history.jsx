@@ -73,7 +73,7 @@ export function HistoryView({ history, availableIds, offline = false, storageUsa
                 <div className="hm">
                   <Icon n={h.sourceType === 'url' ? 'globe' : 'file-video'} style={{ width: 11, height: 11, verticalAlign: '-1px', marginRight: 5 }} />
                   {removed ? 'Files removed (rebuild/cleanup) · delete to dismiss'
-                    : `${h.clipCount || 0} clips${h.cost != null ? ` · $${Number(h.cost).toFixed(2)}` : ''} · ${relTime(h.timestamp)}`}
+                    : <>{h.clipCount || 0} clips{h.cost != null && <span title="Gemini API usage only. Paid transcription and optional audio isolation are not included."> · Gemini ${Number(h.cost).toFixed(2)}</span>} · {relTime(h.timestamp)}</>}
                 </div>
               </div>
               <div className="hr">

@@ -62,6 +62,6 @@ def test_invalid_model_override_is_a_deterministic_rejection(tmp_path, monkeypat
     """Real argv validation, before any stage: exit 2, not resumable."""
     reached = []
     monkeypatch.setattr(orchestrator, "_prepare_input", lambda *a, **k: reached.append(1))
-    rc, out = _run(tmp_path, "--model", "not-a-gemini-model")
+    rc, out = _run(tmp_path, "--model", "not a model")
     assert rc == 2 and reached == []
     assert load_runtime_state(out)["resumable"] is False

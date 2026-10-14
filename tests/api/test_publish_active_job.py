@@ -27,7 +27,9 @@ def job(monkeypatch, tmp_path):
     job_dir = outputs / JOB_ID
     job_dir.mkdir(parents=True)
     (job_dir / "vid_clip_1.mp4").write_bytes(b"RAW")
-    (job_dir / "vid_metadata.json").write_text(json.dumps({"shorts": [{"start": 0, "end": 5}]}))
+    (job_dir / "vid_metadata.json").write_text(json.dumps({"shorts": [{
+        "start": 0, "end": 5, "review_status": "approved",
+    }]}))
     monkeypatch.setattr(app_module, "OUTPUT_DIR", str(outputs))
     monkeypatch.setattr(app_module, "load_zernio_config", lambda: {"api_key": "k"})
     uploads = []

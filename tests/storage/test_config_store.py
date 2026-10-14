@@ -57,6 +57,28 @@ def test_save_and_load_core_keys(tmp_config, monkeypatch):
     assert on_disk["GEMINI_API_KEY"] == "g-key"
 
 
+def test_mult_provider_keys_round_trip_and_model_fallback_is_provider_specific(tmp_config, monkeypatch):
+    for key in config_store.VALID_CONFIG_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    config_store.save_persistent_config({
+        "OPENAI_API_KEY": "openai-key",
+        "LLM_PROVIDER": "openai",
+        "LLM_MODEL": "gpt-4.1",
+        "GEMINI_MODEL": "gemini-3.5-flash",
+    })
+    loaded = config_store.load_persistent_config()
+    assert loaded["OPENAI_API_KEY"] == "openai-key"
+    assert loaded["LLM_PROVIDER"] == "openai"
+    assert loaded["LLM_MODEL"] == "gpt-4.1"
+
+    config_store.save_persistent_config({"LLM_MODEL": "", "LLM_PROVIDER": "openrouter"})
+    loaded = config_store.load_persistent_config()
+    assert loaded["LLM_MODEL"] == ""
+
+    config_store.save_persistent_config({"LLM_PROVIDER": "gemini"})
+    assert config_store.load_persistent_config()["LLM_MODEL"] == "gemini-3.5-flash"
+
+
 def test_unknown_keys_are_dropped(tmp_config, monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     config_store.save_persistent_config({"GEMINI_API_KEY": "g", "BOGUS": "x"})

@@ -27,6 +27,7 @@ class PreflightInputs:
     input_bytes: int
     width: int | None = None
     height: int | None = None
+    provider: str = "gemini"
     model: str = "gemini-3.5-flash"
     aspect: str = "9:16"
     has_gpu: bool = False
@@ -175,14 +176,22 @@ def build_preflight(
     )
     disk_required = estimate_disk_bytes(inputs, clip_count)
     runtime_seconds = estimate_runtime_seconds(inputs, clip_count)
-    cost = estimate_gemini_cost(
-        inputs.duration_seconds,
-        inputs.model,
-        pricing,
-        enabled=inputs.analysis_enabled,
-        fallback_models=tuple(inputs.fallback_models),
-        retry_models=tuple(inputs.retry_models),
-    )
+    if inputs.provider == "gemini" or not inputs.analysis_enabled:
+        cost = estimate_gemini_cost(
+            inputs.duration_seconds,
+            inputs.model,
+            pricing,
+            enabled=inputs.analysis_enabled,
+            fallback_models=tuple(inputs.fallback_models),
+            retry_models=tuple(inputs.retry_models),
+        )
+    else:
+        cost = {
+            "model": inputs.model,
+            "estimated_cost_usd": None,
+            "pricing_known": False,
+            "cost_note": "Provider pricing is not available for preflight estimation",
+        }
     report = {
         "duration_seconds": round(max(0.0, float(inputs.duration_seconds)), 3),
         "input_bytes": max(0, int(inputs.input_bytes)),
@@ -192,6 +201,7 @@ def build_preflight(
         "aspect": inputs.aspect,
         "gpu": bool(inputs.has_gpu),
         "analysis_enabled": bool(inputs.analysis_enabled),
+        "provider": inputs.provider,
         "expected_clips": clip_count,
         "estimated_runtime_seconds": runtime_seconds,
         "estimated_runtime_minutes": round(runtime_seconds / 60.0, 1),
@@ -233,12 +243,13 @@ def enforce_preflight(report: dict[str, Any], env: dict[str, str] | None = None)
         estimated_cost = report.get("estimated_cost_usd")
         if estimated_cost is None:
             raise PreflightRejected(
-                f"Gemini pricing unknown for model {report.get('model')} or one of its "
-                "fallbacks, so CLIPPYME_MAX_ESTIMATED_COST_USD cannot be enforced"
+                f"pricing unknown for {report.get('provider', 'Gemini')} model "
+                f"{report.get('model')} or one of its fallbacks, so "
+                "CLIPPYME_MAX_ESTIMATED_COST_USD cannot be enforced"
             )
         if float(estimated_cost) > max_cost:
             raise PreflightRejected(
-                f"estimated Gemini cost ${float(estimated_cost):.4f} exceeds configured "
+                f"estimated {report.get('provider', 'Gemini')} cost ${float(estimated_cost):.4f} exceeds configured "
                 f"limit ${max_cost:.4f}"
             )
 
@@ -262,5 +273,6 @@ def format_preflight_log(report: dict[str, Any]) -> str:
         f"clips={report.get('expected_clips', 0)} "
         f"runtime_min={report.get('estimated_runtime_minutes', 0)} "
         f"disk_gb={report.get('required_disk_gb', 0)} "
+        f"provider={report.get('provider', 'gemini')} "
         f"cost_usd={'unknown' if cost is None else round(cost, 6)}"
     )

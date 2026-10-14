@@ -122,17 +122,17 @@ def test_model_omitted_when_none_or_blank():
     assert "--model" not in build_main_cmd(url="https://x.com/v", output_dir="o", model="   ")
 
 
-def test_model_future_gemini_family_accepted():
-    cmd = build_main_cmd(url="https://x.com/v", output_dir="o", model="gemini-3-pro")
-    assert cmd[cmd.index("--model") + 1] == "gemini-3-pro"
+@pytest.mark.parametrize("model", ["gemini-3-pro", "gpt-5.1", "anthropic/claude-sonnet", "deepseek-chat"])
+def test_provider_model_ids_accepted(model):
+    cmd = build_main_cmd(url="https://x.com/v", output_dir="o", model=model)
+    assert cmd[cmd.index("--model") + 1] == model
 
 
 @pytest.mark.parametrize("bad", [
-    "gpt-4o",
-    "gemini",
     "gemini-2.5-pro; rm -rf",
     "--inject",
-    "gemini-" + "x" * 100,
+    "not a model",
+    "x" * 161,
 ])
 def test_model_rejects_invalid(bad):
     with pytest.raises(ValueError):

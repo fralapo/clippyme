@@ -5,6 +5,7 @@
 import { test, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { SettingsView } from './settings.jsx';
+import { getModels } from '../../api/client';
 
 const getConfig = vi.fn();
 const saveConfig = vi.fn();
@@ -109,4 +110,38 @@ test('Twitch client id/secret rows show empty when unset', async () => {
   mount();
   const idRow = () => screen.getByLabelText('Twitch client ID').closest('.keyrow');
   await waitFor(() => expect(within(idRow()).getByText('empty')).toBeInTheDocument());
+});
+
+test('model picker is populated from the selected provider live catalog', async () => {
+  getConfig.mockResolvedValue({ ...EMPTY_CONFIG, LLM_PROVIDER: 'openai', LLM_MODEL: 'gpt-5.1-mini', OPENAI_API_KEY: 'sk-...key' });
+  getModels.mockResolvedValue({ models: [
+    { name: 'gpt-5.1', display_name: 'GPT 5.1' },
+    { name: 'gpt-5.1-mini', display_name: 'GPT 5.1 mini' },
+  ] });
+  mount();
+
+  expect(await screen.findByRole('option', { name: 'GPT 5.1' })).toBeInTheDocument();
+  expect(screen.getByLabelText('Analysis model')).toHaveValue('gpt-5.1-mini');
+  expect(getModels).toHaveBeenCalledWith('openai', { forceRefresh: false });
+  expect(saveConfig).not.toHaveBeenCalled();
+  expect(screen.queryByRole('textbox', { name: 'Analysis model' })).toBeNull();
+});
+
+test('changing provider loads its catalog and never asks for a model ID as text', async () => {
+  getConfig.mockResolvedValue({ ...EMPTY_CONFIG, LLM_PROVIDER: 'gemini', LLM_MODEL: 'gemini-3.5-flash' });
+  getModels.mockImplementation(async (provider) => ({ models: [
+    { name: `${provider}-live-model`, display_name: `${provider} live model` },
+  ] }));
+  mount();
+
+  const providerSelect = screen.getByLabelText('Analysis provider');
+  await waitFor(() => expect(providerSelect).toBeEnabled());
+  fireEvent.change(providerSelect, { target: { value: 'deepseek' } });
+
+  expect(await screen.findByRole('option', { name: 'deepseek live model' })).toBeInTheDocument();
+  expect(getModels).toHaveBeenCalledWith('deepseek', { forceRefresh: true });
+  expect(screen.getByLabelText('Analysis model')).toHaveValue('deepseek-live-model');
+  expect(saveConfig).toHaveBeenCalledWith({ LLM_PROVIDER: 'deepseek', LLM_MODEL: '' });
+  expect(saveConfig).toHaveBeenCalledWith({ LLM_MODEL: 'deepseek-live-model' });
+  expect(screen.queryByRole('textbox', { name: 'Analysis model' })).toBeNull();
 });

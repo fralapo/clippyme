@@ -226,6 +226,15 @@ class ZernioClient:
             return data.get("accounts", []) or []
         return data or []
 
+    def get_tiktok_creator_info(self, account_id: str) -> dict:
+        """GET creator-specific TikTok posting options for an account."""
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", str(account_id)):
+            raise ValueError("Invalid Zernio account ID")
+        result = self._request("GET", f"/accounts/{account_id}/tiktok/creator-info")
+        if not isinstance(result, dict):
+            raise ZernioError("Malformed TikTok creator info response")
+        return result
+
     def get_post(self, post_id: str) -> dict:
         """GET /v1/posts/{postId}; only exact IDs, never a fuzzy title lookup."""
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", str(post_id)):

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from clippyme.clips.clip_locks import clip_lock
 from clippyme.clips.clip_resolve import ResolvedClip, composed_clip_basename
+from clippyme.clips.review_service import require_clip_approved
 from clippyme.editing.compose import compose_layers
 from clippyme.core.errors import ClippyMeError, NotFoundError, ValidationError
 from clippyme.publishing.intent_journal import read_intent, begin_intent, confirm_intent, reject_intent
@@ -85,6 +86,12 @@ async def publish_clip_flow(*, job_id: str, clip_index: int,
                     except (ZernioError, ValueError):
                         logger.info("Remote verification unavailable for saved post %s", outcome["post_id"])
                 return {"success": True, "replayed": True, **outcome}
+        # Approval is checked under the same per-clip lock as compose/upload,
+        # so a concurrent edit or review change cannot race the manual post.
+        await asyncio.to_thread(
+            require_clip_approved, job_id, clip_index,
+            os.path.dirname(resolved.job_dir),
+        )
         return await _compose_and_upload(
             job_id=job_id, clip_index=clip_index, resolved=resolved, req=req,
             api_key=api_key, zernio_cfg=zernio_cfg)

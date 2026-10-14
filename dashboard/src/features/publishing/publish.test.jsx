@@ -5,10 +5,11 @@ import { StrictMode } from 'react';
 import { beforeEach, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { PublishModal } from './publish.jsx';
-import { getZernio, publishClip } from '../../api/client';
+import { getZernio, getTikTokCreatorInfo, publishClip } from '../../api/client';
 
 vi.mock('../../api/client', () => ({
   getZernio: vi.fn(),
+  getTikTokCreatorInfo: vi.fn(),
   publishClip: vi.fn(),
   clipVideoSrc: () => '/videos/clip.mp4',
 }));
@@ -32,6 +33,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getZernio).mockResolvedValue({
     configured: true, accounts: { tiktok: 'tiktok-account' }, timezone: 'Europe/Rome',
+  });
+  vi.mocked(getTikTokCreatorInfo).mockResolvedValue({
+    privacyLevels: [
+      { value: 'PUBLIC_TO_EVERYONE', label: 'Public' },
+      { value: 'SELF_ONLY', label: 'Only me' },
+    ],
+    interactionSettings: { comment: true, duet: true, stitch: false },
+    canPostMore: true,
+    maxVideoDurationSec: 600,
   });
   vi.mocked(publishClip).mockResolvedValue({ success: true });
 });
@@ -58,9 +68,43 @@ test('Publish now sends now, even though the scheduling switch defaults to on', 
   });
   expect(body).not.toHaveProperty('compose_first');
   expect(body).toHaveProperty('intent_id');
+  expect(body.tiktok_settings).toEqual({
+    privacy_level: 'PUBLIC_TO_EVERYONE', allow_comment: true, allow_duet: true,
+    allow_stitch: false, content_preview_confirmed: true, express_consent_given: true,
+  });
   await waitFor(() => expect(onPublished).toHaveBeenCalledWith(0, 'now'));
   await waitFor(() => expect(screen.getByText('Clip submitted')).toBeInTheDocument());
   expect(screen.queryByText('Clip scheduled')).toBeNull();
+});
+
+test('TikTok audience and interaction options are loaded for the connected account', async () => {
+  mount();
+  await waitFor(() => expect(getTikTokCreatorInfo).toHaveBeenCalledWith('tiktok-account'));
+  const audience = await screen.findByLabelText('TikTok audience');
+  fireEvent.change(audience, { target: { value: 'SELF_ONLY' } });
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Allow comments' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Publish now' }));
+  await waitFor(() => expect(publishClip).toHaveBeenCalledTimes(1));
+  expect(publishClip.mock.calls[0][2].tiktok_settings).toMatchObject({
+    privacy_level: 'SELF_ONLY', allow_comment: false,
+  });
+});
+
+test('TikTok publishing stays disabled if creator options cannot be loaded', async () => {
+  vi.mocked(getTikTokCreatorInfo).mockRejectedValueOnce(new Error('Zernio unavailable'));
+  mount();
+  expect(await screen.findByRole('alert')).toHaveTextContent('Zernio unavailable');
+  expect(screen.getByRole('button', { name: 'Publish now' })).toBeDisabled();
+});
+
+test('TikTok publishing blocks clips longer than the creator limit', async () => {
+  vi.mocked(getTikTokCreatorInfo).mockResolvedValueOnce({
+    privacyLevels: [{ value: 'SELF_ONLY', label: 'Only me' }],
+    interactionSettings: {}, canPostMore: true, maxVideoDurationSec: 20,
+  });
+  mount([{ ...clips[0], start: 0, end: 25 }]);
+  expect(await screen.findByRole('alert')).toHaveTextContent(/exceeds.*20 seconds/);
+  expect(screen.getByRole('button', { name: 'Publish now' })).toBeDisabled();
 });
 
 test('Schedule keeps auto mode and gives each batch clip its own day', async () => {

@@ -43,7 +43,7 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
   paths are fixed (`python -m`, persisted argv). Stages live in
   `transcription/` (Deepgram, ElevenLabs, cache, diarization; local Whisper
   stays in `main.py`, device/model choice in `hardware.py`), `analysis/`
-  (Gemini request/parser/service, TextTiling), `reframe/` (engine, detectors,
+  (LLM provider catalogs/generation, Gemini prompt/parser, TextTiling), `reframe/` (engine, detectors,
   tracking, decision math, scene detection) and `quality/` (clip QA, media
   QA, quality suite).
 - `src/clippyme/integrations/` — Zernio, Kick, Twitch, YouTube RSS,

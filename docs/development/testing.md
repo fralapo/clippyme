@@ -81,6 +81,22 @@ CPU/GPU Compose configuration; physical GPU execution remains a staging task.
 The `pip-audit` ignore list lives only in `ci.yml`; each entry is an advisory
 without a usable fix. See [dependencies.md](dependencies.md).
 
+For a local audit of the fully pinned files without creating pip's temporary
+environment, run:
+
+```bash
+uvx --from pip-audit pip-audit -r requirements.lock --disable-pip --no-deps --desc \
+  --ignore-vuln CVE-2025-3000 --ignore-vuln PYSEC-2026-1805 \
+  --ignore-vuln PYSEC-2026-3447
+uvx --from pip-audit pip-audit -r requirements-runtime-tools.txt \
+  --disable-pip --no-deps --desc
+```
+
+Both files pin every listed package, and `requirements.lock` is a resolved
+transitive lock. `--no-deps` therefore audits the same pinned package set
+without asking pip to resolve or install it. The CI commands remain the
+authoritative checks before merge.
+
 ## Browser journeys
 
 From `dashboard/`, after `npm ci`:
@@ -152,6 +168,10 @@ is false. The suite needs `ffprobe`/`ffmpeg`, so run it in the backend
 container. The Docker integration suite additionally generates two short
 synthetic MP4s to verify a real ASS karaoke burn and rejection of a broken
 landscape/no-audio export without external API keys.
+
+On a host, check that its FFmpeg build includes the `subtitles`/`ass` filters
+before running render integration tests. Some packaged builds omit libass;
+those runs fail at filter parsing and do not test ClippyMe's subtitle output.
 
 ## Real-provider staging checks
 

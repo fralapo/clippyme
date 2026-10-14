@@ -340,6 +340,21 @@ select.sel:focus{outline:0;border-color:var(--brand-blue)}
 .dur{font-family:var(--font-mono);font-size:var(--text-3xs);background:rgba(0,0,0,.6);padding:3px 7px;border-radius:var(--r-xs);color:#fff;display:inline-block}
 .clip-foot{padding:11px 12px;display:flex;align-items:center;gap:8px}
 .clip-foot .ttl{font-size:var(--text-sm);font-weight:600;color:var(--fg-1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.clip-review{padding:0 12px 12px;display:grid;gap:8px;cursor:default}
+.clip-review-status{margin:0;font-family:var(--font-mono);font-size:var(--text-4xs);letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3)}
+.clip-review-status.status-approved{color:var(--brand-teal)}
+.clip-review-status.status-changes_requested{color:var(--warning, #f0b44d)}
+.clip-review-status.status-discarded{color:var(--danger)}
+.clip-review-note,.clip-review-hint,.clip-review-error{margin:0;font-size:var(--text-xs);line-height:1.4;color:var(--fg-3)}
+.clip-review-actions{display:flex;gap:6px;flex-wrap:wrap}
+.clip-review-optional{display:grid;gap:6px;font-size:var(--text-xs);color:var(--fg-2)}
+.clip-review-optional summary{cursor:pointer;color:var(--fg-3)}
+.clip-review-request{display:grid;gap:6px}
+.clip-review-request label{font-size:var(--text-xs);color:var(--fg-2)}
+.clip-review-request textarea{width:100%;min-height:64px;padding:8px;border:1px solid var(--line-2);border-radius:var(--r-xs);background:var(--bg-1);color:var(--fg-1);font:inherit;font-size:var(--text-xs);resize:vertical}
+.clip-review-request select{width:100%;padding:8px;border:1px solid var(--line-2);border-radius:var(--r-xs);background:var(--bg-1);color:var(--fg-1);font:inherit;font-size:var(--text-xs)}
+.clip-review-error{color:var(--danger)}
+.clip-review-error span{color:var(--fg-2)}
 .mini{width:32px;height:32px;padding:0;font:inherit;border-radius:var(--r-xs);display:flex;align-items:center;justify-content:center;background:var(--bg-3);border:1px solid var(--line-1);color:var(--fg-3);cursor:pointer;flex:none;transition:.12s}
 .mini:hover{color:var(--fg-1);background:var(--bg-4);border-color:var(--line-2)}
 .mini svg{width:14px;height:14px}

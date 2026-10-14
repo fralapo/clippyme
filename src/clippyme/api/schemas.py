@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import ipaddress
 import math
+import re
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from urllib.parse import urlparse
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from clippyme.jobs.job_results import ALLOWED_LANGUAGES, GEMINI_MODEL_RE, MAX_INSTRUCTIONS_LEN
 from clippyme.core.netutil import resolve_host_addresses
@@ -93,7 +94,7 @@ class ProcessRequest(BaseModel):
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
     model: Optional[str] = Field(
-        None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$"
+        None, max_length=160, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$"
     )
 
     @field_validator("url")
@@ -121,7 +122,7 @@ class BatchRequest(BaseModel):
     no_zoom: Optional[bool] = False
     skip_analysis: Optional[bool] = False
     model: Optional[str] = Field(
-        None, max_length=72, pattern=r"^gemini-[A-Za-z0-9.\-]{1,64}$"
+        None, max_length=160, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$"
     )
 
     @field_validator("urls")
@@ -139,7 +140,9 @@ class BatchRequest(BaseModel):
 
 
 _ALLOWED_CONFIG_KEYS = frozenset({
-    "GEMINI_API_KEY", "GEMINI_MODEL", "YOUTUBE_COOKIES", "HF_TOKEN",
+    "GEMINI_API_KEY", "GEMINI_MODEL", "LLM_PROVIDER", "LLM_MODEL",
+    "OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY",
+    "YOUTUBE_COOKIES", "HF_TOKEN",
     "HUGGINGFACE_TOKEN", "DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY",
     "TRANSCRIPTION_PROVIDER", "TWITCH_CLIENT_ID", "TWITCH_CLIENT_SECRET",
 })
@@ -160,9 +163,15 @@ class ConfigUpdateRequest(BaseModel):
         provider = values.get("TRANSCRIPTION_PROVIDER")
         if provider not in (None, "", "deepgram", "elevenlabs", "whisper"):
             raise ValueError("TRANSCRIPTION_PROVIDER must be deepgram, elevenlabs or whisper")
+        llm_provider = values.get("LLM_PROVIDER")
+        if llm_provider not in (None, "", "gemini", "openai", "openrouter", "anthropic", "deepseek"):
+            raise ValueError("LLM_PROVIDER must be gemini, openai, openrouter, anthropic or deepseek")
         model = values.get("GEMINI_MODEL")
         if model and not GEMINI_MODEL_RE.fullmatch(model):
             raise ValueError("GEMINI_MODEL is not a valid Gemini model id")
+        llm_model = values.get("LLM_MODEL")
+        if llm_model and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}", llm_model):
+            raise ValueError("LLM_MODEL is not a valid provider model id")
         return values
 
 
@@ -335,6 +344,7 @@ class PublishRequest(BaseModel):
             raise ValueError("scheduled_for must be an ISO 8601 timestamp") from exc
         return value
 
+
     @field_validator("toggles")
     @classmethod
     def _bound_toggles(cls, value):
@@ -361,6 +371,22 @@ class PublishRequest(BaseModel):
     @classmethod
     def _bound_tiktok_settings(cls, value):
         return _validate_overlay_params(value)
+
+
+class ClipReviewRequest(BaseModel):
+    status: Literal["pending", "approved", "changes_requested", "discarded"]
+    note: str = Field("", max_length=500)
+
+    @field_validator("note")
+    @classmethod
+    def _normalize_note(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def _require_change_note(self):
+        if self.status == "changes_requested" and not self.note:
+            raise ValueError("A note is required when requesting changes")
+        return self
 
 
 class LiveMonitorStopRequest(BaseModel):

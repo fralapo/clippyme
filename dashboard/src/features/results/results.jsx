@@ -3,6 +3,7 @@ import { memo, useCallback, useMemo, useState } from 'react';
 import { Icon, Btn, Badge } from '../../components/primitives';
 import { LazyVideo } from '../../components/LazyVideo';
 import { clipPreviewSrc, fmtDuration, downloadClip, exportClip } from '../../api/client';
+import { REVIEW_APPROVAL_REASONS, REVIEW_FEEDBACK_REASONS } from '../../lib/taste';
 
 const REFRAME_ICON = { auto: 'crop', subject: 'scan-face', object: 'scan-face', disabled: 'square' };
 const REFRAME_LABEL = { auto: 'Auto', subject: 'Subject', object: 'Subject', disabled: 'Off' };
@@ -24,8 +25,116 @@ function acceptedPublicationStatus(clip, state) {
   return null;
 }
 
+const REVIEW_LABELS = {
+  pending: 'Pending review',
+  approved: 'Approved for manual publishing',
+  changes_requested: 'Changes requested',
+  discarded: 'Discarded from manual publishing',
+};
 
-const ClipCard = memo(function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, onApplyToAll, selectMode, onPublish, pushToast }) {
+function ReviewControls({ clip, index, onReviewClip, disabled }) {
+  const title = clip.video_title_for_youtube_short || `Clip ${index + 1}`;
+  const status = clip.review_status || 'pending';
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [showRequest, setShowRequest] = useState(false);
+  const [note, setNote] = useState(clip.review_note || '');
+  const [reason, setReason] = useState('');
+  const [approvalReason, setApprovalReason] = useState('');
+  const [showDiscard, setShowDiscard] = useState(false);
+
+  const save = async (nextStatus, noteText = '', feedbackReason = '') => {
+    if (saving || disabled) return;
+    setSaving(true);
+    setError('');
+    try {
+      await onReviewClip(index, nextStatus, noteText, feedbackReason);
+      setShowRequest(false);
+      setShowDiscard(false);
+      setReason('');
+      setApprovalReason('');
+      if (nextStatus !== 'changes_requested') setNote('');
+    } catch (failure) {
+      setError(failure?.message || 'Could not save review decision. Try again.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="clip-review" aria-label={`Review ${title}`}>
+      <p className={`clip-review-status status-${status}`} role="status">{REVIEW_LABELS[status] || REVIEW_LABELS.pending}</p>
+      {status === 'changes_requested' && clip.review_note && !showRequest && (
+        <p className="clip-review-note">{clip.review_note}</p>
+      )}
+      {status === 'discarded' ? (
+        <Btn size="sm" disabled={saving || disabled} loading={saving}
+          onClick={() => save('pending')}>Restore for review</Btn>
+      ) : <div className="clip-review-actions">
+        {status !== 'approved' && <Btn size="sm" variant="grad" disabled={saving || disabled} loading={saving}
+          onClick={() => save('approved', '', approvalReason)} aria-label={`Approve ${title}`}>Approve</Btn>}
+        {status !== 'changes_requested' ? (
+          <Btn size="sm" disabled={saving || disabled} onClick={() => setShowRequest((value) => !value)}>
+            Request changes
+          </Btn>
+        ) : (
+          <Btn size="sm" disabled={saving || disabled} onClick={() => setShowRequest((value) => !value)}>
+            Edit request
+          </Btn>
+        )}
+        <Btn size="sm" variant="ghost" disabled={saving || disabled} onClick={() => setShowDiscard((value) => !value)}>
+          Discard
+        </Btn>
+      </div>}
+      {status !== 'discarded' && status !== 'approved' && (
+        <details className="clip-review-optional">
+          <summary>Optional approval feedback</summary>
+          <label htmlFor={`approval-reason-${index}`}>Why is this clip worth keeping?</label>
+          <select id={`approval-reason-${index}`} value={approvalReason}
+            onChange={(event) => setApprovalReason(event.target.value)}>
+            <option value="">Do not save a reason</option>
+            {Object.entries(REVIEW_APPROVAL_REASONS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </details>
+      )}
+      {showRequest && status !== 'discarded' && (
+        <div className="clip-review-request">
+          <label htmlFor={`review-note-${index}`}>What should change?</label>
+          <textarea id={`review-note-${index}`} maxLength={500} value={note}
+            onChange={(event) => setNote(event.target.value)} />
+          <label htmlFor={`review-reason-${index}`}>Optional feedback reason</label>
+          <select id={`review-reason-${index}`} value={reason} onChange={(event) => setReason(event.target.value)}>
+            <option value="">Do not save a reason</option>
+            {Object.entries(REVIEW_FEEDBACK_REASONS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <Btn size="sm" variant="secondary" disabled={saving || disabled || !note.trim()} loading={saving}
+            onClick={() => save('changes_requested', note.trim(), reason)}>Save change request</Btn>
+        </div>
+      )}
+      {showDiscard && status !== 'discarded' && (
+        <div className="clip-review-request">
+          <label htmlFor={`discard-reason-${index}`}>Optional feedback reason</label>
+          <select id={`discard-reason-${index}`} value={reason} onChange={(event) => setReason(event.target.value)}>
+            <option value="">Do not save a reason</option>
+            {Object.entries(REVIEW_FEEDBACK_REASONS).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+          <Btn size="sm" variant="secondary" disabled={saving || disabled} loading={saving}
+            onClick={() => save('discarded', '', reason)}>Confirm discard</Btn>
+        </div>
+      )}
+      {error && <p className="clip-review-error" role="alert">{error} <span>You can retry.</span></p>}
+      {disabled && <p className="clip-review-hint">Review is available after reprocessing finishes.</p>}
+    </section>
+  );
+}
+
+const ClipCard = memo(function ClipCard({ clip, index, jobId, state, preselections, onUpdate, onEdit, onApplyToAll, selectMode, onPublish, onReviewClip, pushToast }) {
   const [downloading, setDownloading] = useState(false);
   const selected = state?.selected !== false;
   const score = Math.round(clip.viral_score || 0);
@@ -104,28 +213,32 @@ const ClipCard = memo(function ClipCard({ clip, index, jobId, state, preselectio
         <button type="button" className="mini" title="Apply these settings to all clips" aria-label="Apply settings to all clips" disabled={processing}
           onClick={(event) => { event.stopPropagation(); if (!processing && window.confirm("Apply this clip's settings to every other clip? Manual trim and per-clip hook text are not copied.")) onApplyToAll(index); }}><Icon n="copy" /></button>
         <button type="button" className="mini" title="Download with edits" aria-label={`Download ${title}`} disabled={downloading || processing} onClick={doDownload}><Icon n={downloading ? 'loader' : 'download'} /></button>
-        <button type="button" className="mini" title="Publish" aria-label={`Publish ${title}`} disabled={processing} onClick={(event) => { event.stopPropagation(); onPublish({ ...clip, _idx: index, _apiIdx: clip.original_index ?? index }); }}><Icon n="send" /></button>
+        <button type="button" className="mini" title={clip.review_status === 'approved' ? 'Publish' : 'Approve this clip before publishing'} aria-label={`Publish ${title}`} disabled={processing || clip.review_status !== 'approved'} onClick={(event) => { event.stopPropagation(); onPublish({ ...clip, _idx: index, _apiIdx: clip.original_index ?? index }); }}><Icon n="send" /></button>
         <button type="button" className="mini" title="Remove from grid" aria-label={`Remove ${title}`} onClick={(event) => {
           event.stopPropagation();
           if (window.confirm('Remove this clip from the grid? The file stays on disk.')) { onUpdate(index, { deleted: true }); pushToast?.('info', 'Clip removed'); }
         }}><Icon n="trash-2" /></button>
         </>}
       </div>
+      {!selectMode && <ReviewControls clip={clip} index={index} onReviewClip={onReviewClip} disabled={processing} />}
     </article>
   );
 });
 
 export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUpdateClipState,
-  doneIn, onBack, onPublish, onPublishAll, onEdit, onApplyToAll, onEditSelected, embedded, pushToast }) {
+  doneIn, onBack, onPublish, onPublishAll, onEdit, onApplyToAll, onEditSelected, onReviewClip = async () => {}, embedded, pushToast }) {
   const [selectMode, setSelectMode] = useState(false);
   const [exporting, setExporting] = useState(false);
   const visible = useMemo(() => clips.map((clip, index) => ({ c: clip, i: index })).filter(({ i }) => !clipStates[i]?.deleted), [clips, clipStates]);
   const selected = useMemo(() => visible.filter(({ i }) => clipStates[i]?.selected !== false), [visible, clipStates]);
-  // A reframe/compose holds a per-clip lock and may overwrite media: never
-  // include an in-flight clip in a multi-post operation.
-  const ready = useMemo(() => visible.filter(({ i }) => !clipStates[i]?.processing), [visible, clipStates]);
-  const selectedReady = useMemo(() => selected.filter(({ i }) => !clipStates[i]?.processing), [selected, clipStates]);
-  const processingCount = visible.length - ready.length;
+  // Manual publishing requires an explicit durable operator approval.
+  const ready = useMemo(() => visible.filter(({ c, i }) =>
+    !clipStates[i]?.processing && c.review_status === 'approved'), [visible, clipStates]);
+  const selectedReady = useMemo(() => selected.filter(({ c, i }) =>
+    !clipStates[i]?.processing && c.review_status === 'approved'), [selected, clipStates]);
+  const processingCount = visible.filter(({ i }) => clipStates[i]?.processing).length;
+  const awaitingReviewCount = visible.filter(({ c }) =>
+    c.review_status !== 'approved' && c.review_status !== 'discarded').length;
   const topScore = useMemo(() => visible.length ? Math.max(...visible.map(({ c }) => Math.round(c.viral_score || 0))) : 0, [visible]);
   const allSelected = visible.length > 0 && selected.length === visible.length;
 
@@ -181,10 +294,11 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
             return !current;
           })}>{selectMode ? 'Cancel' : 'Select'}</Btn>
           {!selectMode && <Btn variant="secondary" size="sm" icon="download" loading={exporting} disabled={!visible.length} onClick={() => exportMany(visible)}>{exporting ? 'Exporting…' : 'Export all'}</Btn>}
-          {!selectMode && <Btn variant="grad" size="sm" icon="send" disabled={!ready.length} onClick={() => publishMany(ready)}>{processingCount && ready.length ? `Publish ready ${ready.length}` : 'Publish all'}</Btn>}
+          {!selectMode && <Btn variant="grad" size="sm" icon="send" disabled={!ready.length} onClick={() => publishMany(ready)}>{`Publish approved ${ready.length}`}</Btn>}
         </div>
       </div>
       <div className="results-sub">Sorted by virality score · top moment {topScore}
+        {awaitingReviewCount > 0 && <span role="status"> · {awaitingReviewCount} clip{awaitingReviewCount === 1 ? '' : 's'} need operator review before manual publishing</span>}
         {processingCount > 0 && <span role="status"> · {processingCount} clip{processingCount === 1 ? '' : 's'} still reprocessing — excluded from publishing until ready</span>}
       </div>
 
@@ -194,13 +308,14 @@ export function ResultsView({ clips, jobId, preselections, clipStates = {}, onUp
         <div className="ab-right">
           <Btn variant="secondary" size="sm" icon="sliders-horizontal" disabled={!selected.length} onClick={() => onEditSelected(selected)}>Edit {selected.length || ''}</Btn>
           <Btn variant="secondary" size="sm" icon="download" loading={exporting} disabled={!selected.length} onClick={() => exportMany(selected)}>{exporting ? 'Exporting…' : 'Export'}</Btn>
-          <Btn variant="grad" size="sm" icon="send" disabled={!selectedReady.length} onClick={() => publishMany(selectedReady)}>{selectedReady.length < selected.length && selectedReady.length ? `Publish ready ${selectedReady.length}` : `Publish ${selectedReady.length || ''}`}</Btn>
+          <Btn variant="grad" size="sm" icon="send" disabled={!selectedReady.length} onClick={() => publishMany(selectedReady)}>{`Publish approved ${selectedReady.length}`}</Btn>
         </div>
       </div>}
 
-      {visible.length ? <div className="results-grid" role="list" aria-label="Generated clips">
+      {visible.length ? <div className="results-grid" role="group" aria-label="Generated clips">
         {visible.map(({ c, i }) => <ClipCard key={c.original_index ?? i} clip={c} index={i} jobId={jobId} state={clipStates[i]}
           preselections={preselections} onUpdate={onUpdateClipState} selectMode={selectMode} onPublish={onPublish}
+          onReviewClip={onReviewClip}
           onEdit={onEdit} onApplyToAll={onApplyToAll} pushToast={pushToast} />)}
       </div> : <div className="empty" role="status"><div className="ei"><Icon n="film" /></div><h3>No visible clips</h3><p>All clips were removed from this view. Start over to generate a new set.</p></div>}
     </main>

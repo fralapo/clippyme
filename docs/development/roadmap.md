@@ -1,9 +1,11 @@
 # ClippyMe — development execution roadmap
 
-Updated: 2026-10-13. Status is based on actual GitHub code and pull requests,
-not unverified browser-chat history. This is a living **execution tracker**, not
-a source of runtime behavior: architecture docs, tests and code remain
-authoritative (see [CLAUDE.md](../../CLAUDE.md)).
+Updated: 2026-10-14. The latest follow-up changes in this checkout are local,
+validated below, and not merged; GitHub Actions is paused while free credits are
+exhausted. Earlier integrated work is based on actual GitHub code and pull
+requests, not unverified browser-chat history. This is a living **execution
+tracker**, not a source of runtime behavior: architecture docs, tests and code
+remain authoritative (see [CLAUDE.md](../../CLAUDE.md)).
 
 ## Completed and integrated
 
@@ -60,6 +62,21 @@ authoritative (see [CLAUDE.md](../../CLAUDE.md)).
 - [x] [#51](https://github.com/fralapo/clippyme/pull/51): restore publication state from server metadata.
 - [x] [#52](https://github.com/fralapo/clippyme/pull/52): exclude reprocessing clips from bulk publish.
 
+## Multi-provider LLM — local, not merged
+
+- [x] Add OpenAI, OpenRouter, Anthropic and DeepSeek credentials and route
+  analysis through each provider's documented API while preserving Gemini as
+  the default.
+- [x] Replace manual model IDs with provider-backed Settings catalogs,
+  refresh controls, safe failure behavior and a short cache. Keep provider keys
+  in owner-only backend configuration.
+- [x] Add offline catalog, auth, pagination, JSON-output, usage-normalization,
+  request-security and UI regression tests. Record the API contracts in
+  [the provider integration note](llm-providers.md).
+- [ ] Run catalog and analysis smoke checks against real provider accounts.
+  Local tests stub HTTP; model generation can incur provider charges, so no
+  live call is claimed here.
+
 ## Product and reliability review candidates
 
 These are **discovery tasks**, not verified missing features. Before
@@ -72,50 +89,109 @@ user-visible gap. One independently testable change per PR.
   fallback ([#43](https://github.com/fralapo/clippyme/pull/43)).
 - [x] [#56](https://github.com/fralapo/clippyme/pull/56): display user-device,
   configured Zernio and exact UTC scheduling times before confirmation.
-- [ ] Audit the Publish modal's close/escape behavior while a request is
-  in progress: after submission, closing the dialog must not suggest a post
-  was cancelled. Verify idempotent retry and durable status visibility.
-- [ ] Confirm publish-with-edits matches the **actual resulting composition**.
-  Preserve the locking, metadata, `intent_id` and Zernio guarantees in
-  [publishing architecture](../architecture/publishing.md).
+- [x] Publish modal close/Escape behavior and recovery are covered: the dialog
+  stays visible while uploads are in flight, retries reuse the same intent,
+  and the backend keeps a durable receipt/status for reconciliation
+  (`publish.test.jsx`, `publishIntent.test.js`, publishing intent tests).
+- [x] Publish-with-edits was verified through the API and a real FFmpeg render:
+  the provider boundary receives the graded MP4, while the clip lock is held;
+  the derived `request_id` and confirmed intent receipt are preserved
+  (`test_publish_with_edits_uploads_the_real_composition_and_records_its_intent`).
 
 ### P2 — review-before-publish and editorial quality
 
 - [x] [#56](https://github.com/fralapo/clippyme/pull/56): label the Edit
   preview as the saved video and explain that staged changes are not rendered
   live. Apply still starts the background reprocessing flow.
-- [ ] Define the smallest operator-approval workflow (approve, request
-  changes, or discard a clip) with clear failure/retry states, accessibility,
-  and no accidental blocking of unattended Live Monitor posting.
+- [x] Operator review now persists per-clip approval, change requests and
+  discard state in job metadata. Manual publish fails closed until approval;
+  edits revoke approval, failures expose a retry, and the Live Monitor path
+  remains automatic. API/UI and Axe coverage added.
 - [ ] Evaluate quality by representative talking-head, podcast, gameplay,
   screen-capture and no-face samples. Automated media-signal quality does not
-  prove editorial coherence, retention value or caption legibility.
-- [ ] Investigate opt-in editorial feedback (accept/reject reasons) as input
-  to future clip selection. Specify safe local persistence before adding it.
+  prove editorial coherence, retention value or caption legibility. The
+  [review rubric](editorial-quality-review.md) is ready; representative media
+  was not present in the checkout, so no editorial pass is claimed.
+- [x] Optional, categorized approval/rejection feedback now uses bounded local
+  storage: only an explicitly selected reason, coarse score and rounded
+  duration are retained; repeated selection-relevant reasons add a restrained
+  future prompt hint. No clip identifiers, titles, transcripts or free-form
+  notes are saved.
 
 ### P3 — delivery profiles and operational visibility
 
-- [ ] Inventory current platform aspect, subtitle safe-zone, branding and
-  output controls; only add truly missing per-platform options.
-- [ ] Inventory existing per-job Gemini/Deepgram/ElevenLabs accounting and
-  user-facing visibility; add costs/queue insights only if an actual gap
-  remains. Never price unknown models at zero.
-- [ ] Reassess publishing queue/restart durability against the existing
-  file-backed journal, monitor ownership and at-least-once Zernio behavior
-  before proposing an independent queue.
+- [x] Inventory current platform aspect, subtitle safe-zone, branding and
+  output controls in [the platform review](platform-output-inventory.md). The
+  concrete gap was TikTok's hard-coded public audience and enabled interaction
+  settings; the local Publish modal now loads creator-specific choices and
+  blocks submission when options are unavailable. Locally verified; GitHub CI
+  and merge remain unavailable while Actions credits are exhausted.
+- [x] Audited cost visibility in [the operations review](operations-inventory.md).
+  Gemini usage is priced and the UI identifies its preflight value as an
+  upper bound; History now labels its stored amount as Gemini-only. Paid cloud
+  transcription and optional audio isolation remain unpriced/untracked, so the
+  UI explicitly excludes them instead of implying a total bill. No zero-price
+  fallback was added.
+- [x] Reassessed queue and restart durability in
+  [the operations review](operations-inventory.md): the bounded single-process
+  asyncio queue is journaled atomically, queued work is restored on restart,
+  and checkpoint-capable interrupted jobs resume. The monitor has its own
+  persisted pending-publication journal and stable idempotency identity.
+  An independent distributed queue is not justified for the supported local
+  single-instance deployment; multi-process/shared-storage operation remains
+  outside the current contract.
 
 ### P4 — staging acceptance still required
 
-- [ ] Run the read-only Deepgram, ElevenLabs, Gemini and Zernio provider
-  checks with scoped staging credentials. No provider credentials were
-  configured in the development environment during this review. Billable
-  audio/generation checks require explicit opt-in; no real social post is sent.
+- [ ] Run read-only provider checks with scoped staging credentials, including
+  current LLM catalog calls. Generation and audio checks may be billable; no
+  live provider call or social post is claimed in the local test suite.
 - [ ] Run the Live Monitor soak against an already configured local instance
-  for 24 hours and review the JSONL report. CI verifies the anomaly detector,
-  but does not establish live-stream recovery or sustained operation.
-- [ ] Exercise a production deployment on physical NVIDIA hardware. CI
-  validates the GPU Compose overlay and the CPU/nginx deployment; it does not
-  run a GPU workload on a physical GPU.
+  for 24 hours and review the JSONL report. Rechecked locally on 2026-10-14:
+  ports 8000 and 5175 are closed; the persisted monitor record has no config,
+  so it is not an already configured/running monitor. CI verifies the anomaly
+  detector, but does not establish live-stream recovery or sustained operation.
+- [x] Simulated the NVIDIA deployment contract on the host by parsing
+  `docker-compose.gpu.yml` and asserting its NVIDIA build runtime, device
+  driver and GPU capability. Physical GPU execution is explicitly skipped per
+  user request; this static check does not claim a real CUDA workload ran.
+
+## Local verification — 2026-10-14
+
+GitHub Actions was not used because the repository's free Actions credits are
+exhausted. The current local checkout passed the CI-equivalent checks
+available on this host:
+
+- Backend host suite: **1,778 passed, 10 skipped, 159 deselected**, with
+  **71.09% coverage** against the 68% CI minimum.
+- Backend static checks: Ruff bug-class rules and Bandit medium/high scan
+  passed. `pip-audit` found no known vulnerabilities in either pinned
+  requirements set, with the three documented core advisories ignored as in
+  CI.
+- Frontend: **374 tests passed across 39 files**. Coverage passed every CI
+  floor (71.14% statements, 69.28% branches, 64.86% functions, 76.77% lines);
+  ESLint and the Vite production build passed.
+- Frontend dependency audit: `npm audit --package-lock-only
+  --audit-level=high` found **0 vulnerabilities**.
+- Browser journeys: **3 Playwright tests passed** (Create → Processing →
+  Results → Edit → Publish; History → Restore; Settings live-provider model
+  discovery without a browser Gemini key).
+- Local FFmpeg integration subset: **7 real render tests passed** for grading,
+  hooks and smart-cut audio; **1 synthetic quality-suite test** and **1 broken
+  export rejection test** passed. The subtitle-render suite was also attempted,
+  but the installed macOS FFmpeg 8.0.1 build has no `subtitles`/`ass` filters
+  (libass), so **147 subtitle-dependent cases failed before rendering**. This
+  is an environment limitation, not a passing result; a libass-enabled FFmpeg
+  or the CI container is required to verify those cases.
+- `git diff --check` passed.
+
+The full Docker integration suite and production proxy smoke test were not run
+because neither Docker nor Podman is installed. OpenCV/PyTorch are also absent
+from the host Python environment, so the CV-dependent pipeline tests could not
+be substituted with a host run. Provider generation was tested with
+deterministic HTTP fixtures; real-account API calls remain a staging check
+because they need credentials and some can bill. GitHub Actions and PR merge
+remain deferred while its credits are exhausted.
 
 ## Execution contract
 

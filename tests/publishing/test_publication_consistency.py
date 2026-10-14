@@ -18,9 +18,11 @@ Concurrency is driven with Events (no sleeps): each test pins the exact
 interleaving it needs.
 """
 import asyncio
+import hashlib
 import json
 import os
 import shutil
+import subprocess
 import threading
 
 import httpx
@@ -72,7 +74,8 @@ def _job(output_dir, titles=("Same title",)):
         name = f"vid_clip_{i + 1}.mp4"
         (job_dir / name).write_bytes(b"RAW%d" % i)
         shorts.append({"start": 0, "end": 5, "title": title,
-                       "video_url": f"/videos/{JOB}/{name}"})
+                       "video_url": f"/videos/{JOB}/{name}",
+                       "review_status": "approved"})
     (job_dir / "vid_metadata.json").write_text(json.dumps({"shorts": shorts}))
     return job_dir
 
@@ -200,6 +203,23 @@ def test_retry_after_a_lost_create_response_does_not_duplicate_the_post(tmp_path
     asyncio.run(mon._publish_one(entry))
 
     assert [p["_id"] for p in zernio.posts] == ["post1"]
+    assert mon._pending_publish == [] and mon._failed_publish == []
+
+
+def test_live_monitor_publish_does_not_wait_for_manual_operator_approval(tmp_path, zernio):
+    """The review gate applies only to manual publishing from Results."""
+    mon = _monitor(tmp_path)
+    composed = tmp_path / "monitor-pending-review.mp4"
+    composed.write_bytes(b"MONITOR-CLIP")
+    entry = {
+        "job_id": JOB,
+        "clip": {**_clip(), "review_status": "pending"},
+        "composed_path": str(composed),
+    }
+
+    asyncio.run(mon._publish_one(entry))
+
+    assert [post["_id"] for post in zernio.posts] == ["post1"]
     assert mon._pending_publish == [] and mon._failed_publish == []
 
 
@@ -670,6 +690,89 @@ def test_publish_without_an_intent_keeps_the_legacy_behaviour(manual, zernio):
     assert _publish(http, intent=None).status_code == 200
     assert _publish(http, intent=None).status_code == 200
     assert len(zernio.posts) == 2 and zernio.by_key == {}
+
+
+@pytest.mark.integration
+def test_publish_with_edits_uploads_the_real_composition_and_records_its_intent(
+    manual, zernio, monkeypatch,
+):
+    """Exercise edit settings through the real API and FFmpeg compose path.
+
+    Provider networking is stubbed, but the MP4 uploaded to the provider
+    boundary must be the freshly graded render, created while the clip lock is
+    held, and the confirmed result must retain the request's intent identity.
+    """
+    job_dir = manual / JOB
+    raw_clip = job_dir / "vid_clip_1.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", "color=c=gray:s=320x568:r=24:d=1.5",
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+            "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", str(raw_clip),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    metadata_path = job_dir / "vid_metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["shorts"][0]["end"] = 1.5
+    metadata_path.write_text(json.dumps(metadata))
+
+    def center_pixel(path):
+        result = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", "0.5",
+                "-i", str(path), "-frames:v", "1", "-f", "rawvideo",
+                "-pix_fmt", "rgb24", "pipe:1",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        frame = result.stdout
+        pixel_offset = ((568 // 2) * 320 + (320 // 2)) * 3
+        return tuple(frame[pixel_offset:pixel_offset + 3])
+
+    captured = {}
+
+    def capture_upload(**kwargs):
+        upload_path = kwargs["clip_path"]
+        lock = clip_locks._LOCKS.get((os.path.abspath(str(job_dir)), 0))
+        captured.update(
+            path=upload_path,
+            raw_pixel=center_pixel(raw_clip),
+            upload_pixel=center_pixel(upload_path),
+            lock_held=bool(lock and lock[0].locked()),
+            request_id=kwargs.get("request_id"),
+        )
+        return {"post_id": "rendered-post", "status": "scheduled"}
+
+    monkeypatch.setattr(sp, "publish_clip", capture_upload)
+    body = {
+        **PUBLISH,
+        "intent_id": INTENT,
+        "compose_first": True,
+        "toggles": {"grade": True},
+        "grade_params": {"preset": "vivid_pop"},
+    }
+    response = TestClient(app_module.app, headers=ORIGIN).post(
+        f"/api/publish/{JOB}/0", json=body,
+    )
+
+    assert response.status_code == 200, response.text
+    composed_path = job_dir / "A_1.mp4"
+    assert captured["path"] == str(composed_path)
+    assert composed_path.is_file()
+    assert captured["upload_pixel"] != captured["raw_pixel"]
+    assert captured["lock_held"] is True
+    expected_request_id = f"manual-{hashlib.sha256(f'{JOB}:0:{INTENT}'.encode()).hexdigest()[:48]}"
+    assert captured["request_id"] == expected_request_id
+    records = load_job_metadata(JOB, str(manual))[1]["shorts"][0]["published"]
+    assert records[-1]["intent_id"] == INTENT
+    assert records[-1]["post_id"] == "rendered-post"
 
 
 @pytest.mark.parametrize("bad", ["short", "has space in it", "x" * 65, "../../etc/passwd"])

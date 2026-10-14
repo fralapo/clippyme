@@ -9,7 +9,7 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
 };
 
-const { summarizeTaste, loadTasteEvents, recordTasteEvent, tasteInstructionSuffix } =
+const { summarizeTaste, loadTasteEvents, recordTasteEvent, tasteInstructionSuffix, REVIEW_FEEDBACK_REASONS, REVIEW_APPROVAL_REASONS } =
   await import('./taste.js');
 
 test('summarizeTaste returns empty below the signal threshold', () => {
@@ -49,6 +49,32 @@ test('recordTasteEvent silently drops invalid actions', () => {
   recordTasteEvent({ viralScore: 80, duration: 20, action: 'published' });
   recordTasteEvent({ viralScore: 80, duration: 20 });
   assert.deepEqual(loadTasteEvents(), []);
+});
+
+test('explicit review reasons store only an allowed category beside coarse clip signals', () => {
+  store.clear();
+  recordTasteEvent({ viralScore: 81, duration: 22, action: 'changes_requested', reason: 'cut_loses_context' });
+  recordTasteEvent({ viralScore: 81, duration: 22, action: 'discarded', reason: 'https://private.example/video' });
+  assert.deepEqual(loadTasteEvents(), [
+    { s: 81, d: 22, a: 'changes_requested', r: 'cut_loses_context' },
+    { s: 81, d: 22, a: 'discarded' },
+  ]);
+  assert.equal(Object.hasOwn(REVIEW_FEEDBACK_REASONS, 'cut_loses_context'), true);
+  recordTasteEvent({ viralScore: 92, duration: 21, action: 'approved', reason: 'strong_payoff' });
+  assert.deepEqual(loadTasteEvents()[2], { s: 92, d: 21, a: 'approved', r: 'strong_payoff' });
+  assert.equal(Object.hasOwn(REVIEW_APPROVAL_REASONS, 'strong_payoff'), true);
+});
+
+test('repeated explicit reasons add a bounded suggestion to future clip instructions', () => {
+  const kept = Array.from({ length: 3 }, () => ({ a: 'kept', d: 20, s: 80 }));
+  const changes = Array.from({ length: 3 }, () => ({
+    a: 'changes_requested', d: 20, s: 80, r: 'cut_loses_context',
+  }));
+  assert.match(summarizeTaste([...kept, ...changes]), /avoid starting or ending mid-thought/);
+  const tooFew = [...kept, ...changes.slice(0, 2)];
+  assert.doesNotMatch(summarizeTaste(tooFew), /mid-thought/);
+  const accepted = Array.from({ length: 3 }, () => ({ a: 'approved', d: 20, s: 90, r: 'strong_payoff' }));
+  assert.match(summarizeTaste([...accepted, ...kept]), /favor hooks that are supported by the clip payoff/);
 });
 
 test('recordTasteEvent trims to the 120-event rolling window', () => {

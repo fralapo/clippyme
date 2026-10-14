@@ -21,18 +21,6 @@ export const PRESETS = [
   },
 ];
 
-// Per-job Gemini model quick-picker (Create → Clip Options). '' = use the
-// global Settings model. Live discovery lives in Settings; here we keep a small
-// curated list so the picker works offline. Mirrors the allow-list prefixes
-// (gemini-2.5- / gemini-3) the backend accepts.
-export const GEMINI_MODELS = [
-  ['', 'Default (Settings)'],
-  ['gemini-3.5-flash', '3.5 Flash · recommended'],
-  ['gemini-2.5-flash', '2.5 Flash · budget'],
-  ['gemini-3.1-pro-preview', '3.1 Pro · max quality'],
-  ['gemini-2.5-pro', '2.5 Pro · max quality'],
-];
-
 // Classic-mode subtitle fonts. Values are the bundled TTF basenames libass
 // resolves from `fonts/` (Verdana falls back to a system face). The backend
 // validates the name against `_FONT_NAME_RE` in subtitles.py.

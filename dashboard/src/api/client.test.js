@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 // Vitest runs with a jsdom environment, so window.location.origin is real —
 // the old plain-Node `globalThis.window` stub is gone.
-import { optsToPreselections, clipVideoSrc, clipPreviewSrc, fmtDuration, exportClip, deleteHistoryJob, listHistoryJobs, getStorageUsage } from './client.js';
+import { optsToPreselections, clipVideoSrc, clipPreviewSrc, fmtDuration, exportClip, deleteHistoryJob, listHistoryJobs, getStorageUsage, reviewClip, getTikTokCreatorInfo } from './client.js';
 
 // --- optsToPreselections: the Create-tab → backend translation layer --------
 
@@ -185,5 +185,43 @@ test('storage summary requests the backend and rejects invalid responses', async
     assert.match(globalThis.fetch.mock.calls[0][0], /\/api\/storage$/);
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ jobs: [] }) });
     await assert.rejects(getStorageUsage(), /Malformed/);
+  } finally { globalThis.fetch = previous; }
+});
+
+test('reviewClip persists one review decision and returns canonical metadata fields', async () => {
+  const previous = globalThis.fetch;
+  const calls = [];
+  try {
+    globalThis.fetch = vi.fn((url, init) => {
+      calls.push({ url, init });
+      return Promise.resolve({ ok: true, json: async () => ({
+        success: true, review_status: 'changes_requested',
+        review_note: 'Keep the full sentence.', review_updated_at: '2030-01-01T00:00:00Z',
+      }) });
+    });
+    const saved = await reviewClip('job-1', 3, {
+      status: 'changes_requested', note: 'Keep the full sentence.',
+    });
+    assert.deepEqual(saved, {
+      review_status: 'changes_requested', review_note: 'Keep the full sentence.',
+      review_updated_at: '2030-01-01T00:00:00Z',
+    });
+    assert.match(String(calls[0].url), /\/api\/review\/job-1\/3$/);
+    assert.equal(calls[0].init.method, 'PATCH');
+    assert.deepEqual(JSON.parse(calls[0].init.body), {
+      status: 'changes_requested', note: 'Keep the full sentence.',
+    });
+  } finally { globalThis.fetch = previous; }
+});
+
+test('TikTok creator info URL encodes the account and returns provider options', async () => {
+  const previous = globalThis.fetch;
+  try {
+    const options = { privacyLevels: [{ value: 'SELF_ONLY', label: 'Only me' }] };
+    globalThis.fetch = vi.fn(async (url) => {
+      assert.match(String(url), /account_id=creator%2B1/);
+      return { ok: true, json: async () => options };
+    });
+    assert.deepEqual(await getTikTokCreatorInfo('creator+1'), options);
   } finally { globalThis.fetch = previous; }
 });

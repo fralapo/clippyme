@@ -19,7 +19,11 @@
 
 - [CONTRIBUTING.md](../CONTRIBUTING.md) · [Testing](development/testing.md) · [Dependencies](development/dependencies.md)
 - [Agent skill routing](development/agent-skills.md) — FFmpeg, editorial quality and UX workflows; optional external references, not runtime dependencies
+- [Editorial quality review](development/editorial-quality-review.md) — repeatable human review across representative source types
+- [Platform output inventory](development/platform-output-inventory.md) — aspect, subtitle, branding and creator-specific publish controls
+- [Operations inventory](development/operations-inventory.md) — cost coverage and queue/restart durability findings
 - [Development roadmap](development/roadmap.md) — completed PRs, verified next gates and discovery candidates
+- [LLM provider integration](development/llm-providers.md) — live model catalogs, API contracts and selection policy
 
 **Background** (not current documentation)
 

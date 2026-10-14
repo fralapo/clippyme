@@ -15,11 +15,18 @@ rules, and the conventions they share.
 |-------|--------|-------|
 | Jobs | `POST /api/process`, `POST /api/batch`, `GET /api/status/{job_id}`, `POST /api/pause\|resume\|stop\|cancel/{job_id}` | `stop` keeps finished clips; `cancel` deletes the job. See [jobs](../architecture/jobs.md). |
 | Clip editing | `POST /api/compose/{job_id}/{clip_index}`, `POST /api/smartcut/…`, `GET /api/transcript/…`, `POST /api/edit-ai/…`, `POST /api/reframe/…` | See [pipeline](../architecture/pipeline.md#compose-edit-layers). |
-| Publishing | `POST /api/publish/{job_id}/{clip_index}`, `GET /api/zernio/accounts` | See [publishing](../architecture/publishing.md). |
+| Publishing and review | `PATCH /api/review/{job_id}/{clip_index}`, `POST /api/publish/{job_id}/{clip_index}`, `GET /api/zernio/accounts`, `GET /api/zernio/tiktok/creator-info` | Manual publish requires a saved operator approval; TikTok options come from the selected creator account. Live Monitor publishing is independent. See [publishing](../architecture/publishing.md). |
 | History | `GET /api/history`, `POST /api/history/{job_id}/restore`, `DELETE /api/history/{job_id}` | Jobs found on disk. |
 | Live monitor | `POST /api/live-monitor/start\|stop`, `POST /api/live-monitor/{id}/config`, `POST /api/live-monitor/{id}/publishing`, `GET /api/live-monitor/status` | See [live monitor](../architecture/live-monitor.md). |
 | Settings | `/api/config`, `/api/config/models`, `/api/config/cookies…`, `/api/config/fonts…`, `/api/config/logo…`, `/api/config/zernio` | Trusted clients only (below). |
 | Health | `GET /api/health` | Liveness. |
+
+`GET /api/config/models?provider={gemini|openai|openrouter|anthropic|deepseek}`
+fetches the selected provider's current text-generation catalog using its
+saved backend key. It returns `{provider, models, cached?, error?}`; secrets
+are never returned. `force_refresh=true` bypasses the short catalog cache.
+Provider setup and selection are described in
+[Configuration](configuration.md#ai-clip-selection).
 
 Static, read-only mounts: `/videos` (job output; refuses `*_metadata.json`,
 `source_*` and runtime files), `/thumbnails`, `/fonts`.
@@ -35,7 +42,7 @@ Static, read-only mounts: `/videos` (job output; refuses `*_metadata.json`,
 - **API token.** When `CLIPPYME_API_TOKEN` is set, every `/api` request needs
   it in `X-API-Token` or `Authorization: Bearer`. Static mounts stay
   token-free because `<video>` elements cannot send headers.
-- **Rate limit.** Expensive endpoints — process, batch, compose, smart cut,
+- **Rate limit.** Expensive endpoints — process, batch, compose, review, smart cut,
   reframe, publish and the live-monitor actions — are rate-limited per client
   IP (`RATE_LIMIT_ENABLED`).
 - **Client IP** comes from the TCP peer, or from the last `X-Forwarded-For`

@@ -63,7 +63,7 @@ def _make_job(root, titles):
         name = f"clip{i}_clip_{i + 1}.mp4"
         shorts.append({"start": 0.0, "end": 5.0, "clip_filename": name,
                        "video_title_for_youtube_short": title,
-                       "reframe_mode": "auto"})
+                       "reframe_mode": "auto", "review_status": "approved"})
         _write(os.path.join(job_dir, name), f"RAW{i}".encode())
         _write(os.path.join(job_dir, f"source_{name}"), f"SRC{i}".encode())
     with open(os.path.join(job_dir, "vid_metadata.json"), "w", encoding="utf-8") as fh:

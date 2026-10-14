@@ -13,10 +13,10 @@ import { ProcessingView } from '../features/processing/processing';
 import { ResultsView } from '../features/results/results';
 import { PublishModal } from '../features/publishing/publish';
 import { HistoryView } from '../features/history/history';
-import { SettingsView, ApiKeyModal } from '../features/settings/settings';
+import { SettingsView } from '../features/settings/settings';
 import { LiveMonitorView } from '../features/live-monitor/live';
 import { EditClipModal } from '../features/clip-editor/editClipModal';
-import { optsToPreselections, restoreJob, deleteHistoryJob, getStorageUsage, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip } from '../api/client';
+import { optsToPreselections, restoreJob, deleteHistoryJob, getStorageUsage, cancelJob, pauseJob, resumeJob, stopJob, reframeClip, composeClip, reviewClip } from '../api/client';
 import { allPresets, getDefaultPresetOpts, getDefaultPresetId, saveUserPreset, deleteUserPreset, setDefaultPreset } from '../features/create/presets';
 import { HOOK_STYLE_DEFAULT } from '../lib/uiOptions';
 import { clipStateToParams, buildBulkPlan } from '../features/clip-editor/bulkApply';
@@ -84,7 +84,6 @@ export default function App() {
   // Storage retention is user-selectable; the backend still owns provider
   // configuration. Session-only avoids leaving this browser copy on disk.
   const [apiKey, setApiKey] = useState(() => readBrowserCredential('gemini_key'));
-  const [showKeyModal, setShowKeyModal] = useState(false);
   const [tab, setTab] = useState(restoredSession?.activeTab || 'create');
   const [jobId, setJobId] = useState(restoredSession?.jobId || null);
   const [status, setStatus] = useState(restoredSession?.status || 'idle'); // idle | processing | complete | error
@@ -167,21 +166,6 @@ export default function App() {
     const tid = setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 3600);
     toastTimerIds.current.push(tid);
   }, []);
-
-  // Background clip reprocess: the Edit modal stages the changes and hands them
-  // here, then closes immediately. The reframe (subprocess) + compose
-  // (subtitles → smart-cut → hook) run here, OUTSIDE the modal lifecycle, so the
-  // user can keep editing other clips while this one renders. The clip's
-  // `processing` flag drives the per-card spinner; each clip is an independent
-  // async chain → several can render concurrently.
-  const reprocessClip = useCallback(async (idx, clip, params) => runApplyEdit({
-    // apiIdx resolves to the backend's ABSOLUTE `shorts` position — diverges
-    // from the local array position `idx` once a manual-publish gap skips a
-    // deleted_after_publish clip.
-    jobId, idx, apiIdx: clip?.original_index ?? idx, params,
-    api: { reframeClip, composeClip },
-    updateClipState, pushToast,
-  }), [jobId, updateClipState, pushToast]);
 
   const setPreselections = (value) => {
     setPreselectionsRaw(value);
@@ -295,7 +279,7 @@ export default function App() {
   });
 
   const { handleProcess, handleBatchProcess } = useJobSubmission({
-    apiKey, setShowKeyModal, setStatus, setLogs, setResults, setProcessingMedia,
+    apiKey, setStatus, setLogs, setResults, setProcessingMedia,
     setPreselections, setJobId,
     onBatchFinished: ({ succeeded, failed, total }) => {
       setTab('history');
@@ -393,6 +377,50 @@ export default function App() {
 
   const clips = results?.clips || [];
 
+  const saveReviewDecision = useCallback(async (idx, status, note = '', feedbackReason = '') => {
+    const clip = results?.clips?.[idx];
+    if (!clip) throw new Error('Clip is no longer available');
+    const apiIdx = clip.original_index ?? idx;
+    const saved = await reviewClip(jobId, apiIdx, { status, note });
+    if (feedbackReason && ['approved', 'changes_requested', 'discarded'].includes(status)) {
+      recordTasteEvent({
+        viralScore: clip.viral_score,
+        duration: (clip.end || 0) - (clip.start || 0),
+        action: status,
+        reason: feedbackReason,
+      });
+      pushToast('info', 'Optional feedback saved in this browser only');
+    }
+    setResults((previous) => {
+      if (!previous?.clips) return previous;
+      const position = previous.clips.findIndex((item, i) => (item.original_index ?? i) === apiIdx);
+      if (position < 0) return previous;
+      const nextClips = [...previous.clips];
+      nextClips[position] = { ...nextClips[position], ...saved };
+      return { ...previous, clips: nextClips };
+    });
+    return saved;
+  }, [jobId, results?.clips, pushToast]);
+
+  // Reprocessing invalidates a prior editorial approval before any media file
+  // can be replaced. A failed save keeps the old approved render untouched.
+  const reprocessClip = useCallback(async (idx, clip, params) => {
+    const apiIdx = clip?.original_index ?? idx;
+    if (clip?.review_status === 'approved' || clip?.review_status === 'changes_requested') {
+      try {
+        await saveReviewDecision(idx, 'pending');
+      } catch (error) {
+        pushToast('error', `Could not reset clip approval: ${error?.message || error}`);
+        return;
+      }
+    }
+    return runApplyEdit({
+      jobId, idx, apiIdx, params,
+      api: { reframeClip, composeClip },
+      updateClipState, pushToast,
+    });
+  }, [jobId, saveReviewDecision, updateClipState, pushToast]);
+
   // Visible (non-removed) clips as {i, c} — shared by both bulk paths.
   const visibleClips = () => clips.map((c, i) => ({ i, c })).filter(({ i }) => !clipStates[i]?.deleted);
 
@@ -462,6 +490,7 @@ export default function App() {
       {tab === 'create' && status === 'complete' && (
         <ResultsView clips={clips} jobId={jobId} preselections={preselections}
           clipStates={clipStates} onUpdateClipState={updateClipStateT} onBack={resetToCreate}
+          onReviewClip={saveReviewDecision}
           onPublish={openPublish} onPublishAll={openPublish} onEdit={(c, i) => setEditClip({ clip: c, idx: i })}
           onApplyToAll={applyClipToAll} onEditSelected={(targets) => setBulkEdit({ targets })}
           pushToast={pushToast} />
@@ -482,6 +511,7 @@ export default function App() {
           </div>
           <ResultsView clips={clips} jobId={jobId} preselections={preselections} embedded
             clipStates={clipStates} onUpdateClipState={updateClipStateT}
+          onReviewClip={saveReviewDecision}
             onPublish={openPublish} onPublishAll={openPublish} onEdit={(c, i) => setEditClip({ clip: c, idx: i })}
             onApplyToAll={applyClipToAll} onEditSelected={(targets) => setBulkEdit({ targets })}
             pushToast={pushToast} />
@@ -516,7 +546,6 @@ export default function App() {
           onClose={() => setBulkEdit(null)}
           onApply={(params) => { applyBulkEdit(params, bulkEdit.targets); setBulkEdit(null); }} />
       )}
-      {showKeyModal && <ApiKeyModal onClose={() => setShowKeyModal(false)} onGoToSettings={() => { setShowKeyModal(false); setTab('settings'); }} />}
 
       <Toasts items={toasts} onDismiss={dismissToast} />
     </div>

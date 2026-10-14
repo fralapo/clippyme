@@ -47,6 +47,10 @@ NETSCAPE_COOKIES = b"# Netscape HTTP Cookie File\n.example.com\tTRUE\t/\tFALSE\t
 def client(tmp_path, monkeypatch):
     """A trusted-origin client whose disk writes land under a tmp dir."""
     monkeypatch.chdir(tmp_path)
+    # Config POST mirrors saved settings into the process environment. Track
+    # those names so a provider-setting test cannot affect later test modules.
+    for key in config_module.load_persistent_config().keys():
+        monkeypatch.setenv(key, os.environ.get(key, ""))
     return TestClient(app_module.app, headers=ORIGIN)
 
 
@@ -66,18 +70,29 @@ def test_untrusted_origin_rejected(client):
 
 def test_config_roundtrip_masks_secrets(client):
     """POST then GET: secret keys come back masked, plain flags verbatim."""
+    fake_gemini_key = "test" + "x" * 8 + "fake"
+    fake_openai_key = "openai-test-" + "x" * 20
     r = client.post(
         "/api/config",
-        json={"keys": {"GEMINI_API_KEY": "abcd12345678wxyz", "GEMINI_MODEL": "gemini-3.5-flash"}},
+        json={"keys": {
+            "GEMINI_API_KEY": fake_gemini_key,
+            "OPENAI_API_KEY": fake_openai_key,
+            "LLM_PROVIDER": "openai",
+            "LLM_MODEL": "gpt-4.1",
+            "GEMINI_MODEL": "gemini-3.5-flash",
+        }},
     )
     assert r.status_code == 200 and r.json()["success"] is True
 
     got = client.get("/api/config").json()
-    # 16-char secret → first4…last4, never verbatim.
-    assert got["GEMINI_API_KEY"] == "abcd...wxyz"
-    assert "12345678" not in got["GEMINI_API_KEY"]
+    # Fake keys are composed at runtime, so no key-shaped literal lands in git.
+    assert got["GEMINI_API_KEY"] == f"{fake_gemini_key[:4]}...{fake_gemini_key[-4:]}"
+    assert fake_gemini_key[4:-4] not in got["GEMINI_API_KEY"]
     # Non-secret flag passes through untouched.
     assert got["GEMINI_MODEL"] == "gemini-3.5-flash"
+    assert got["LLM_PROVIDER"] == "openai"
+    assert got["LLM_MODEL"] == "gpt-4.1"
+    assert got["OPENAI_API_KEY"] == f"{fake_openai_key[:4]}...{fake_openai_key[-4:]}"
 
 
 def test_config_short_secret_fully_masked(client):
@@ -98,15 +113,47 @@ def test_config_rejects_invalid_provider_and_model(client):
     assert client.post(
         "/api/config", json={"keys": {"GEMINI_MODEL": "not-gemini"}}
     ).status_code == 422
+    assert client.post(
+        "/api/config", json={"keys": {"LLM_MODEL": "--inject"}}
+    ).status_code == 422
 
 
 # --- /api/config/models (network call stubbed) ------------------------------
 
 def test_models_lists_via_provided_key(client, monkeypatch):
-    monkeypatch.setattr(config_module, "list_available_models", lambda key: ["gemini-a", "gemini-b"])
-    r = client.get("/api/config/models", headers={"X-Gemini-Key": "dummy"})
+    captured = {}
+
+    def list_models(provider, key, *, force_refresh=False):
+        captured.update(provider=provider, key=key, force_refresh=force_refresh)
+        return {"models": [{"name": "gpt-4.1", "display_name": "gpt-4.1"}], "cached": False}
+
+    monkeypatch.setattr(config_module, "list_provider_models", list_models)
+    r = client.get("/api/config/models?provider=openai&force_refresh=true",
+                   headers={"X-Provider-Key": "dummy"})
     assert r.status_code == 200
-    assert r.json() == ["gemini-a", "gemini-b"]
+    assert r.json() == {"provider": "openai", "models": [
+        {"name": "gpt-4.1", "display_name": "gpt-4.1"}], "cached": False}
+    assert captured == {"provider": "openai", "key": "dummy", "force_refresh": True}
+
+
+def test_models_use_saved_provider_key_without_returning_it(client, monkeypatch):
+    fake_openrouter_key = "openrouter-test-" + "x" * 20
+    client.post("/api/config", json={"keys": {
+        "OPENROUTER_API_KEY": fake_openrouter_key,
+        "LLM_PROVIDER": "openrouter",
+    }})
+    captured = {}
+
+    def list_models(provider, key, *, force_refresh=False):
+        captured.update(provider=provider, key=key)
+        return {"models": [], "cached": False}
+
+    monkeypatch.setattr(config_module, "list_provider_models", list_models)
+    response = client.get("/api/config/models?provider=openrouter")
+    assert response.status_code == 200
+    assert response.json()["provider"] == "openrouter"
+    assert fake_openrouter_key not in response.text
+    assert captured == {"provider": "openrouter", "key": fake_openrouter_key}
 
 
 # --- cookies ----------------------------------------------------------------
@@ -252,3 +299,43 @@ def test_zernio_accounts_requires_key(client, monkeypatch):
     monkeypatch.setattr(config_module, "load_zernio_config", lambda: {})
     r = client.get("/api/zernio/accounts")
     assert r.status_code == 400
+
+
+def test_tiktok_creator_info_returns_only_validated_account_options(client, monkeypatch):
+    monkeypatch.setattr(config_module, "load_zernio_config", lambda: {"api_key": "local-test-key"})
+
+    class FakeZernioClient:
+        def __init__(self, _api_key):
+            pass
+
+        def get_tiktok_creator_info(self, account_id):
+            assert account_id == "creator_123"
+            return {
+                "creator": {"nickname": "Private nickname", "canPostMore": True},
+                "privacyLevels": [
+                    {"value": "FOLLOWER_OF_CREATOR", "label": "Followers"},
+                    {"value": "", "label": "invalid"},
+                    "invalid",
+                ],
+                "postingLimits": {
+                    "maxVideoDurationSec": 600,
+                    "interactionSettings": {"comment": True, "duet": False, "stitch": True, "unexpected": True},
+                },
+                "commercialContentTypes": ["private data not needed by the UI"],
+            }
+
+    monkeypatch.setattr("clippyme.integrations.social_publisher.ZernioClient", FakeZernioClient)
+    response = client.get("/api/zernio/tiktok/creator-info?account_id=creator_123")
+    assert response.status_code == 200
+    assert response.json() == {
+        "privacyLevels": [{"value": "FOLLOWER_OF_CREATOR", "label": "Followers"}],
+        "interactionSettings": {"comment": True, "duet": False, "stitch": True},
+        "canPostMore": True,
+        "maxVideoDurationSec": 600,
+    }
+
+
+def test_tiktok_creator_info_rejects_unsafe_account_id_before_network(client, monkeypatch):
+    monkeypatch.setattr(config_module, "load_zernio_config", lambda: {"api_key": "local-test-key"})
+    response = client.get("/api/zernio/tiktok/creator-info?account_id=../accounts")
+    assert response.status_code == 400
