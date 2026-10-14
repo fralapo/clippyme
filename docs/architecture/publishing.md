@@ -67,8 +67,8 @@ When the operator explicitly picks a reason, the browser stores only its fixed c
 clip score and rounded duration in the bounded local taste history. It does not
 store a clip/job identifier, title, transcript or free-form note. Three
 repeated reasons can add a short hint to future clip-selection instructions;
-caption/framing feedback is retained locally but does not steer Gemini's
-selection prompt.
+caption/framing feedback is retained locally but does not steer the selected
+analysis provider's prompt.
 
 ## Publish identities
 

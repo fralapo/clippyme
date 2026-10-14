@@ -53,6 +53,20 @@ def test_gemini_key_can_discover_models():
     assert isinstance(body.get("models"), list)
 
 
+@pytest.mark.parametrize(("provider", "key_name"), [
+    ("openai", "OPENAI_API_KEY"),
+    ("openrouter", "OPENROUTER_API_KEY"),
+    ("anthropic", "ANTHROPIC_API_KEY"),
+    ("deepseek", "DEEPSEEK_API_KEY"),
+])
+def test_llm_provider_key_can_discover_models(provider, key_name):
+    from clippyme.pipeline.analysis.llm_service import list_provider_models
+
+    result = list_provider_models(provider, _key(key_name), force_refresh=True)
+    assert not result.get("error"), result.get("error")
+    assert isinstance(result.get("models"), list)
+
+
 def test_zernio_key_can_list_accounts_without_publishing():
     body = _request_json("https://zernio.com/api/v1/accounts",
                          {"Authorization": f"Bearer {_key('ZERNIO_API_KEY')}"})

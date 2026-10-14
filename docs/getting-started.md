@@ -14,7 +14,7 @@ programming knowledge beyond running a few commands.
 
 | Service | What it does in ClippyMe | Without it |
 |---------|--------------------------|------------|
-| [Google Gemini](https://aistudio.google.com/apikey) | Picks the best moments and writes titles | Clips are split by topic instead, not ranked |
+| One analysis provider: [Google Gemini](https://aistudio.google.com/apikey) (default), OpenAI, OpenRouter, Anthropic or DeepSeek | Picks and ranks moments, and writes titles and hooks | Analysis can be skipped for unranked topic-based clips; otherwise configure a key for the selected provider |
 | [Deepgram](https://console.deepgram.com) (default) or [ElevenLabs](https://elevenlabs.io) | Fast, accurate transcription | Local Whisper transcribes on your CPU/GPU (slower) |
 | [Zernio](https://zernio.com) | Publishes to TikTok, Instagram and YouTube | You download clips and post them yourself |
 | [Twitch developer app](https://dev.twitch.tv/console/apps) | Watching Twitch channels with the live monitor | Twitch monitoring is unavailable |
@@ -36,13 +36,18 @@ read [Deployment → Network exposure](deployment.md#network-exposure) first.
 
 ## Configure
 
-Open **Settings** in the dashboard and enter the keys you have. They are stored
-locally in `data/config.json`, readable only by the app's user. You can also:
+Open **Settings** in the dashboard, choose an analysis provider and enter its
+key. The provider catalog is loaded for that account so you can select a
+compatible model. Keys are stored locally in `data/config.json`, readable only
+by the app's user. Model generation can incur provider charges; Gemini is the
+only provider with ClippyMe's local price table. See the
+[LLM provider integration note](development/llm-providers.md) for cost and
+failure behavior. You can also:
 
 - upload a `cookies.txt` (Netscape format) for age-restricted or
   region-locked YouTube videos;
 - upload a brand logo and custom fonts for captions and hooks;
-- choose the transcription provider and the default Gemini model.
+- choose the transcription provider, analysis provider and model.
 
 Advanced settings are environment variables; see the
 [configuration reference](reference/configuration.md). Most installations

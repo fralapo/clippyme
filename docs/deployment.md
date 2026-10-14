@@ -71,7 +71,7 @@ the [configuration reference](reference/configuration.md).
 | YouTube download fails with a bot check or "sign in to confirm" | Upload a fresh `cookies.txt` in Settings. If a specific player client broke, adjust `YTDLP_PLAYER_CLIENTS`. |
 | Dashboard shows old code after a `git pull` | Run `docker compose down -v`, then `docker compose up --build`. |
 | Transcription is slow | No cloud key is set, so local Whisper runs on the CPU. Add a Deepgram or ElevenLabs key, or use the GPU overlay. |
-| Clips are split by topic, not ranked, and titles are generic | No Gemini key, or Gemini quota exhausted across the fallback chain. Check the job log. |
+| Clips are split by topic, not ranked, and titles are generic | Analysis was skipped or the selected provider was unavailable. Check the job log and configure the selected provider and model in Settings. Gemini also has a model fallback chain for quota/high-demand errors. |
 | A job is rejected immediately with a preflight message | A configured limit was hit (duration, size, disk, estimated cost). The message names the variable. |
 | API calls return 401 | `CLIPPYME_API_TOKEN` is set; enter the same value in Settings → API token. |
 | API calls return 403 when the dashboard is opened from another device | Its address is not in `ALLOWED_ORIGINS`, or the containers were not recreated (`docker compose down`, then `up -d`) after editing `.env`; see [Network exposure](#network-exposure). |

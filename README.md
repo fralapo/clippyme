@@ -20,9 +20,11 @@ do all of that automatically.
 
 ## What it does
 
-- **Finds the best moments.** The video is transcribed, and Google Gemini
-  picks and ranks self-contained clips, with a title, hook and captions for
-  each. Clip edges land on sentence boundaries and silences, never mid-word.
+- **Finds the best moments.** The video is transcribed, and the selected AI
+  provider picks and ranks self-contained clips, with a title, hook and
+  captions for each. Gemini is the default; OpenAI, OpenRouter, Anthropic and
+  DeepSeek are also supported. Clip edges land on sentence boundaries and
+  silences, never mid-word.
 - **Frames them for vertical.** Active-speaker tracking keeps the person
   talking in frame, with a camera that stays still within each shot. You can
   switch a clip to subject-centred framing or to a letterboxed full frame at
@@ -51,8 +53,11 @@ flowchart LR
 ```
 
 Transcription uses Deepgram (the default) or ElevenLabs when you add its key
-and select it in Settings, and local Whisper otherwise. Without a Gemini key, ClippyMe still splits the video by
-topic, but clips are not ranked. The [architecture
+and select it in Settings, and local Whisper otherwise. Viral-moment analysis
+uses Gemini by default or another supported LLM provider selected in Settings.
+If analysis is explicitly skipped or a configured provider request fails,
+manual jobs can create unranked topic-based clips instead; the Live Monitor
+does not publish a segment without AI-selected clips. The [architecture
 overview](docs/architecture/overview.md) explains the design.
 
 ## Quick start
@@ -65,19 +70,24 @@ cd clippyme
 docker compose up --build
 ```
 
-Open <http://localhost:5175>, go to **Settings**, and add the API keys you
-have:
+Open <http://localhost:5175>, go to **Settings**, choose an analysis provider
+and add the key for that provider. Gemini is the default; you can also select
+OpenAI, OpenRouter, Anthropic or DeepSeek. Add transcription and publishing
+keys only if you want those services:
 
 | Key | Needed for |
 |-----|-----------|
-| Gemini | Choosing and ranking moments, titles (recommended) |
+| One LLM provider key: Gemini, OpenAI, OpenRouter, Anthropic or DeepSeek | Choosing and ranking moments, titles and hooks; Gemini is the default |
 | Deepgram or ElevenLabs | Fast cloud transcription (optional; local Whisper otherwise) |
 | Zernio | Publishing and scheduling (optional) |
 | Twitch app credentials | Monitoring Twitch channels (optional) |
 
 Then paste a video link in **Create**. The [getting started
 guide](docs/getting-started.md) walks through the first job, updating, and
-where files are stored.
+where files are stored. Provider charges depend on the model and service;
+ClippyMe has local preflight prices for Gemini, while other providers may
+report an unknown cost. See the [provider and cost
+details](docs/development/llm-providers.md#pricing-and-failure-behavior).
 
 An NVIDIA GPU is optional
 (`docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build`);
@@ -118,7 +128,9 @@ It builds on [yt-dlp](https://github.com/yt-dlp/yt-dlp),
 [auto-editor](https://github.com/WyattBlue/auto-editor),
 [FFmpeg](https://ffmpeg.org), [FastAPI](https://fastapi.tiangolo.com) and
 [React](https://react.dev), and on the services
-[Google Gemini](https://ai.google.dev), [Deepgram](https://deepgram.com),
+[Google Gemini](https://ai.google.dev), [OpenAI](https://openai.com),
+[OpenRouter](https://openrouter.ai), [Anthropic](https://www.anthropic.com),
+[DeepSeek](https://www.deepseek.com), [Deepgram](https://deepgram.com),
 [ElevenLabs](https://elevenlabs.io) and [Zernio](https://zernio.com).
 Ideas ported from other open-source projects —
 [ClipsAI](https://github.com/ClipsAI/clipsai) (topic segmentation),

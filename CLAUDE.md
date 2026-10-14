@@ -34,12 +34,12 @@ The source-of-truth table is in [docs/README.md](docs/README.md).
   cut and reframe requests); `editing/` compose layers (grade, subtitles, smart cut, hook,
   logo, banner, AI trim); `monitoring/` live monitor; `publishing/` manual
   publish.
-- `src/clippyme/core/` — errors, SSRF-safe DNS (`netutil`), Gemini clip
+- `src/clippyme/core/` — errors, SSRF-safe DNS (`netutil`), shared clip
   schema (`clip_schema`). `media/` — ffmpeg/ffprobe primitives shared by the pipeline and
   the compose layers: `encode`, `media_probe`, `ffmpeg_exec`.
 - `src/clippyme/pipeline/` — the per-job subprocess. Entrypoint is
   `orchestrator.py` (preflight, checkpoints, retries, output QA) wrapping
-  `main.py` (download, transcription, Gemini, cut, reframe); both module
+  `main.py` (download, transcription, LLM analysis, cut, reframe); both module
   paths are fixed (`python -m`, persisted argv). Stages live in
   `transcription/` (Deepgram, ElevenLabs, cache, diarization; local Whisper
   stays in `main.py`, device/model choice in `hardware.py`), `analysis/`

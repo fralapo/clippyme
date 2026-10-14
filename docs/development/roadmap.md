@@ -1,11 +1,11 @@
 # ClippyMe — development execution roadmap
 
-Updated: 2026-10-14. The latest follow-up changes in this checkout are local,
-validated below, and not merged; GitHub Actions is paused while free credits are
-exhausted. Earlier integrated work is based on actual GitHub code and pull
-requests, not unverified browser-chat history. This is a living **execution
-tracker**, not a source of runtime behavior: architecture docs, tests and code
-remain authoritative (see [CLAUDE.md](../../CLAUDE.md)).
+Updated: 2026-10-14. The latest follow-up changes are pushed to
+`codex/local-roadmap-follow-up` and are not merged; GitHub Actions is paused
+while free credits are exhausted. Earlier integrated work is based on actual
+GitHub code and pull requests, not unverified browser-chat history. This is a
+living **execution tracker**, not a source of runtime behavior: architecture
+docs, tests and code remain authoritative (see [CLAUDE.md](../../CLAUDE.md)).
 
 ## Completed and integrated
 
@@ -219,6 +219,17 @@ The local environment differs from the earlier verification above:
   PyPI DNS access was unavailable, so the plugin could not be installed. The
   host run made no progress beyond seven reported tests before it was stopped.
   No full host-suite result is claimed for this recheck.
+- README, onboarding, deployment and test documentation now describe all five
+  analysis providers and treat real-account/GPU checks as optional operator
+  checks. The live-provider suite now includes opt-in, read-only catalog checks
+  for OpenAI, OpenRouter, Anthropic and DeepSeek. The tracked-document link
+  regression suite passed (**42 passed**); no live provider check was run.
+- The optional docs-governance scanner also traverses ignored `.worktrees/` and
+  `.local/` directories and treats inline code path examples in `CLAUDE.md` as
+  links, so its 23 reported path errors are not tracked-document link failures.
+  `tests/repository/test_docs.py`, which checks tracked Markdown links, passed.
+- GitHub was rechecked on 2026-10-14: there are no open repository issues or
+  pull requests. No Actions workflow was rerun.
 - Rechecked the optional operator checks: provider credentials are present but
   were not used; ports 8000 and 5175 have no listeners and the persisted monitor
   record has no config. No live provider calls, posts or 24-hour soak were

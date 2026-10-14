@@ -76,7 +76,9 @@ Any other skip or failure is a real result.
 
 Frontend coverage minimums are 65% statements, 60% branches, 60% functions
 and 70% lines. The Docker integration job also checks production nginx and
-CPU/GPU Compose configuration; physical GPU execution remains a staging task.
+CPU/GPU Compose configuration; physical GPU execution is an optional hardware
+check on a machine with a supported GPU, not a requirement for the standard
+self-hosted CPU deployment.
 
 The `pip-audit` ignore list lives only in `ci.yml`; each entry is an advisory
 without a usable fix. See [dependencies.md](dependencies.md).
@@ -111,9 +113,10 @@ ln -s ../../../tmp/playwright/node_modules/@playwright/test node_modules/@playwr
 
 The suite covers Create → Processing → Results, opening and cancelling Edit,
 Publish now, and History → Restore in a clean browser. It checks navigation
-and requests against fixtures; video rendering and real provider delivery
-need separate integration/staging validation. Failure traces are retained in
-`dashboard/test-results/` and uploaded by CI.
+and requests against fixtures; video rendering needs integration validation,
+and actual account behavior is covered by the optional live-provider checks
+below. Failure traces are retained in `dashboard/test-results/` and uploaded
+by CI.
 
 ## Before you push
 
@@ -173,19 +176,23 @@ On a host, check that its FFmpeg build includes the `subtitles`/`ass` filters
 before running render integration tests. Some packaged builds omit libass;
 those runs fail at filter parsing and do not test ClippyMe's subtitle output.
 
-## Real-provider staging checks
+## Optional real-provider checks
 
 The `tests/live/test_providers_live.py` suite is excluded from normal CI
-unless explicitly enabled. Run it in a trusted environment with scoped,
-temporary staging keys and no production accounts:
+unless explicitly enabled. No staging environment is required: run it only
+when the operator wants to verify the accounts configured for a self-hosted
+installation. Use credentials whose scope and provider billing are understood;
+export the required key variables first (the suite does not read
+`data/config.json`). The test suite never submits a social post:
 
 ```bash
 CLIPPYME_LIVE_SMOKE=1 pytest -m live tests/live -q
 ```
 
 Read-only checks exercise Deepgram project listing, ElevenLabs user discovery,
-Gemini model listing, and Zernio account listing. Optional **billable** checks
-exercise real Deepgram and ElevenLabs audio transcription and Gemini generation:
+model catalogs for Gemini, OpenAI, OpenRouter, Anthropic and DeepSeek, and
+Zernio account listing. Optional **billable** checks exercise real Deepgram
+and ElevenLabs audio transcription and Gemini generation:
 
 ```bash
 CLIPPYME_LIVE_SMOKE=1 CLIPPYME_LIVE_BILLABLE=1 \
@@ -196,7 +203,7 @@ Each provider test skips independently if its key is unset. Zernio is **never**
 asked to create a live social post by this suite: actual scheduling/publishing
 requires an explicit isolated account approval test. CI's deterministic
 provider mocks cannot establish real provider uptime, authorization or billing.
-No staging provider keys are stored in the repository or uploaded as CI
+Provider credentials are not stored in the repository or uploaded as CI
 artifacts. Results must be recorded after a real run, not inferred from skips.
 
 ## Live Monitor observation
