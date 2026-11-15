@@ -37,7 +37,7 @@ which git ignores. Never put them in a committed file.
 | Gemini | <https://aistudio.google.com/apikey> | Picks and ranks the moments. Without it the monitor publishes nothing useful. |
 | Deepgram | <https://console.deepgram.com> | Fast transcription. Makes a CPU-only server workable. |
 | Twitch app (client ID and secret) | <https://dev.twitch.tv/console/apps> | Required to monitor Twitch. Kick and YouTube need no key. |
-| Zernio | <https://zernio.com> | Posts to TikTok, Instagram and YouTube. Connect your accounts inside Zernio. It saves you TikTok's app audit: a TikTok app you register yourself can only post privately until it passes. Check that test posts show as public. |
+| Zernio | <https://zernio.com> | Required by the live monitor, which refuses to start without a Zernio key, even with publishing paused. The first 2 connected accounts are free. Posts to TikTok, Instagram and YouTube. Connect your accounts inside Zernio. It saves you TikTok's app audit: a TikTok app you register yourself can only post privately until it passes. Check that test posts show as public. |
 
 Also set your timezone in `.env` (copy `.env.example` first). The scheduler
 defaults to Italy:
